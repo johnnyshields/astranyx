@@ -1,7 +1,17 @@
-import type { Renderer } from '../core/Renderer.ts'
+import type { Renderer, MeshHandle } from '../core/Renderer.ts'
 import type { Input } from '../core/Input.ts'
 import { Simulation, type EnemyType, type BulletType, type PowerupType, type BossType } from './Simulation.ts'
 import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
+import {
+  createPlayerShipMesh,
+  createEnemyShipMesh,
+  createTankMesh,
+  createBossCoreMesh,
+  createDroneMesh,
+  createOrbMesh,
+  createPowerupMesh,
+  createMineMesh,
+} from '../graphics/MeshGenerator.ts'
 
 export type GameState = 'title' | 'lobby' | 'connecting' | 'playing' | 'paused' | 'gameover'
 
@@ -97,12 +107,43 @@ export class Game {
   // Screen shake tracking
   private shakeOffset = { x: 0, y: 0 }
 
+  // 3D Meshes
+  private meshes: {
+    playerShip: MeshHandle | null
+    enemyShip: MeshHandle | null
+    tank: MeshHandle | null
+    bossCore: MeshHandle | null
+    drone: MeshHandle | null
+    orb: MeshHandle | null
+    powerup: MeshHandle | null
+    mine: MeshHandle | null
+  } = {
+    playerShip: null,
+    enemyShip: null,
+    tank: null,
+    bossCore: null,
+    drone: null,
+    orb: null,
+    powerup: null,
+    mine: null,
+  }
+
   constructor(renderer: Renderer, input: Input) {
     this.renderer = renderer
     this.input = input
   }
 
   async init(): Promise<void> {
+    // Initialize 3D meshes
+    this.meshes.playerShip = this.renderer.createMesh('playerShip', createPlayerShipMesh())
+    this.meshes.enemyShip = this.renderer.createMesh('enemyShip', createEnemyShipMesh())
+    this.meshes.tank = this.renderer.createMesh('tank', createTankMesh())
+    this.meshes.bossCore = this.renderer.createMesh('bossCore', createBossCoreMesh())
+    this.meshes.drone = this.renderer.createMesh('drone', createDroneMesh())
+    this.meshes.orb = this.renderer.createMesh('orb', createOrbMesh())
+    this.meshes.powerup = this.renderer.createMesh('powerup', createPowerupMesh())
+    this.meshes.mine = this.renderer.createMesh('mine', createMineMesh())
+
     // Initialize starfield
     for (let i = 0; i < 200; i++) {
       this.stars.push({
@@ -116,7 +157,7 @@ export class Game {
     // Auto-start single player for now
     this.startSinglePlayer()
 
-    console.log('Game initialized')
+    console.log('Game initialized with 3D meshes')
   }
 
   startSinglePlayer(): void {
@@ -332,22 +373,38 @@ export class Game {
     const isLocal = player.playerId === this.localPlayerId
     const lvl = player.shipLevel - 1
 
-    // Draw orbs
-    for (const orb of player.orbs) {
-      const ox = x + Math.cos(orb.angle) * orb.radius
-      const oy = y + Math.sin(orb.angle) * orb.radius
+    // Draw orbs using 3D mesh
+    if (this.meshes.orb) {
+      for (const orb of player.orbs) {
+        const ox = x + Math.cos(orb.angle) * orb.radius
+        const oy = y + Math.sin(orb.angle) * orb.radius
+        const orbRotation = Date.now() / 500 + orb.angle
 
-      // Orb glow
-      this.renderer.drawQuad(ox, oy, -1, 18, 18, [1, 0, 1, 0.2])
-      // Orb core
-      this.renderer.drawQuad(ox, oy, 0, 10, 10, [1, 0, 1, 1])
-      this.renderer.drawQuad(ox, oy, 1, 4, 4, [1, 1, 1, 1])
+        // Orb glow (quad)
+        this.renderer.drawQuad(ox, oy, -5, 22, 22, [1, 0, 1, 0.25])
+        // Orb mesh
+        this.renderer.drawMesh(
+          this.meshes.orb,
+          ox, oy, 0,
+          25, 25, 25,
+          [1, 0, 1, 1],
+          orbRotation, orbRotation * 0.7, 0
+        )
+      }
     }
 
-    // Draw drones
-    for (const drone of player.drones) {
-      this.renderer.drawQuad(drone.x, drone.y, 0, 14, 10, [0.5, 1, 0.5, 1])
-      this.renderer.drawQuad(drone.x + 4, drone.y, 1, 6, 4, [1, 1, 1, 1])
+    // Draw drones using 3D mesh
+    if (this.meshes.drone) {
+      for (const drone of player.drones) {
+        const droneRotation = Math.sin(Date.now() / 300 + drone.x) * 0.2
+        this.renderer.drawMesh(
+          this.meshes.drone,
+          drone.x, drone.y, 0,
+          20, 20, 20,
+          [0.5, 1, 0.5, 1],
+          0, droneRotation, 0
+        )
+      }
     }
 
     const color = isLocal ? COLORS.player1 : COLORS.player2
@@ -355,39 +412,36 @@ export class Game {
     const clampedRotation = Math.max(-0.4, Math.min(0.4, rotation))
 
     // Ship size scales with level
-    const bodyWidth = 44 + lvl * 10
-    const bodyHeight = 20 + lvl * 4
+    const baseScale = 50 + lvl * 12
 
-    // Engine exhaust (animated)
+    // Engine exhaust (animated quads - keep as 2D effects)
     const exhaustLength = 30 + Math.sin(player.chargeTime * 20) * 5
-    this.renderer.drawQuad(x - bodyWidth/2 - exhaustLength/2, y, -1, exhaustLength, 10, [0.2, 0.5, 1.0, 0.5], clampedRotation)
-    this.renderer.drawQuad(x - bodyWidth/2 - exhaustLength/3, y, -0.5, exhaustLength/2, 6, [0.5, 0.8, 1.0, 0.8], clampedRotation)
+    this.renderer.drawQuad(x - baseScale/2 - exhaustLength/2, y, -5, exhaustLength, 10, [0.2, 0.5, 1.0, 0.5], clampedRotation)
+    this.renderer.drawQuad(x - baseScale/2 - exhaustLength/3, y, -3, exhaustLength/2, 6, [0.5, 0.8, 1.0, 0.8], clampedRotation)
 
-    // Main body
-    this.renderer.drawQuad(x, y, 0, bodyWidth, bodyHeight, [0.6, 0.65, 0.75, 1.0], clampedRotation)
+    // Draw 3D player ship mesh
+    if (this.meshes.playerShip) {
+      this.renderer.drawMesh(
+        this.meshes.playerShip,
+        x, y, 0,
+        baseScale, baseScale, baseScale * 0.6,
+        [0.6, 0.7, 0.8, 1.0],
+        0, clampedRotation, 0  // Bank the ship based on vertical velocity
+      )
 
-    // Cockpit
-    this.renderer.drawQuad(x + bodyWidth/4, y, 1, bodyWidth/4, bodyHeight * 0.5, color, clampedRotation)
-
-    // Wings
-    const wingWidth = 35 + lvl * 5
-    const wingHeight = 8 + lvl * 2
-    this.renderer.drawQuad(x - 5, y + bodyHeight/2 + wingHeight/2, 0, wingWidth, wingHeight, [0.5, 0.55, 0.65, 1.0], clampedRotation * 1.2)
-    this.renderer.drawQuad(x - 5, y - bodyHeight/2 - wingHeight/2, 0, wingWidth, wingHeight, [0.5, 0.55, 0.65, 1.0], clampedRotation * 1.2)
-
-    // Wing tips (red)
-    this.renderer.drawQuad(x - bodyWidth/3, y + bodyHeight/2 + wingHeight, 0.5, 12, 4, [1.0, 0.3, 0.2, 1.0], clampedRotation)
-    this.renderer.drawQuad(x - bodyWidth/3, y - bodyHeight/2 - wingHeight, 0.5, 12, 4, [1.0, 0.3, 0.2, 1.0], clampedRotation)
+      // Cockpit glow overlay (quad)
+      this.renderer.drawQuad(x + baseScale/4, y, 10, baseScale/5, baseScale/6, color, clampedRotation)
+    }
 
     // Charge indicator
     if (player.charging) {
       const chargeSize = Math.min(player.chargeTime * 30, 24)
-      this.renderer.drawQuad(x + bodyWidth/2 + 10, y, 2, chargeSize, chargeSize, [...color.slice(0, 3), 0.5 + Math.sin(Date.now() / 50) * 0.3] as [number, number, number, number])
+      this.renderer.drawQuad(x + baseScale/2 + 10, y, 15, chargeSize, chargeSize, [...color.slice(0, 3), 0.5 + Math.sin(Date.now() / 50) * 0.3] as [number, number, number, number])
     }
 
-    // Invincibility shield
+    // Invincibility shield (quad effect)
     if (player.invincible > 0 && player.invincible < 30) {
-      this.renderer.drawQuad(x, y, -2, bodyWidth + 20, bodyHeight + 20, [...color.slice(0, 3), player.invincible / 60] as [number, number, number, number])
+      this.renderer.drawQuad(x, y, -10, baseScale + 20, baseScale * 0.6 + 20, [...color.slice(0, 3), player.invincible / 60] as [number, number, number, number])
     }
   }
 
@@ -397,72 +451,103 @@ export class Game {
     const color = COLORS[enemy.type as keyof typeof COLORS] as [number, number, number, number] || COLORS.grunt
 
     // Size varies by enemy type
-    let width = 40
-    let height = 25
+    let scale = 40
+    let depth = 0.6
 
     switch (enemy.type) {
       case 'grunt':
-        width = 30; height = 20
+        scale = 35
         break
       case 'shooter':
-        width = 35; height = 25
+        scale = 40
         break
       case 'swerver':
-        width = 28; height = 18
+        scale = 32
         break
       case 'tank':
-        width = 60; height = 40
+        scale = 65
+        depth = 0.8
         break
       case 'speeder':
-        width = 35; height = 15
+        scale = 38
+        depth = 0.4
         break
       case 'bomber':
-        width = 45; height = 35
+        scale = 50
+        depth = 0.7
         break
       case 'sniper':
-        width = 40; height = 20
+        scale = 45
         break
       case 'carrier':
-        width = 70; height = 50
+        scale = 80
+        depth = 0.8
         break
       case 'mine':
-        width = 25; height = 25
+        scale = 30
+        depth = 1.0
         break
       case 'spiral':
-        width = 45; height = 30
+        scale = 50
         break
       case 'shield':
-        width = 50; height = 35
+        scale = 55
         break
       case 'splitter':
-        width = 40; height = 30
+        scale = 45
         break
     }
 
     // Shield effect
     if (enemy.hasShield) {
-      this.renderer.drawQuad(x, y, -1, width + 15, height + 15, [0, 0.8, 0.2, 0.3])
+      this.renderer.drawQuad(x, y, -10, scale + 20, scale * depth + 20, [0, 0.8, 0.2, 0.3])
     }
 
-    // Enemy glow
-    this.renderer.drawQuad(x, y, -1, width + 10, height + 10, [color[0], color[1], color[2], 0.2])
+    // Enemy glow (quad)
+    this.renderer.drawQuad(x, y, -5, scale + 15, scale * depth + 15, [color[0], color[1], color[2], 0.2])
 
-    // Main body
-    this.renderer.drawQuad(x, y, 0, width, height, color)
+    // Select mesh based on enemy type
+    const wobble = Math.sin(Date.now() / 400 + enemy.x * 0.01) * 0.15
+    let mesh = this.meshes.enemyShip
 
-    // Core (lighter)
-    this.renderer.drawQuad(x - width/6, y, 0.5, width/2, height * 0.6, [color[0] + 0.2, color[1] + 0.2, color[2] + 0.2, 1])
+    if (enemy.type === 'tank') {
+      mesh = this.meshes.tank
+    } else if (enemy.type === 'mine') {
+      mesh = this.meshes.mine
+      // Mines spin
+      const spin = Date.now() / 500
+      if (mesh) {
+        this.renderer.drawMesh(
+          mesh,
+          x, y, 0,
+          scale, scale, scale,
+          color,
+          spin, spin * 0.7, spin * 0.3
+        )
+      }
+    }
 
-    // Health bar
+    // Draw enemy mesh (unless it's a mine which was handled above)
+    if (mesh && enemy.type !== 'mine') {
+      this.renderer.drawMesh(
+        mesh,
+        x, y, 0,
+        scale, scale * 0.8, scale * depth,
+        color,
+        0, wobble, 0
+      )
+    }
+
+    // Health bar (quad)
     const healthRatio = enemy.health / enemy.maxHealth
-    const barWidth = width
-    this.renderer.drawQuad(x, y - height/2 - 8, 2, barWidth + 2, 6, [0.2, 0.2, 0.2, 0.8])
+    const barWidth = scale * 0.8
+    this.renderer.drawQuad(x, y - scale * depth / 2 - 12, 20, barWidth + 2, 6, [0.2, 0.2, 0.2, 0.8])
     const healthColor: [number, number, number, number] = healthRatio > 0.5
       ? [0, 0.8, 0.5, 1]
       : healthRatio > 0.25
         ? [1, 1, 0, 1]
         : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(x - (1 - healthRatio) * barWidth / 2, y - height/2 - 8, 3, barWidth * healthRatio, 4, healthColor)
+    this.renderer.drawQuad(x - (1 - healthRatio) * barWidth / 2, y - scale * depth / 2 - 12, 21, barWidth * healthRatio, 4, healthColor)
   }
 
   private renderBoss(boss: ReturnType<Simulation['getState']>['boss']): void {
@@ -474,22 +559,30 @@ export class Game {
 
     // Boss sizes vary by type
     const sizes = [
-      { w: 80, h: 70 },   // CLASSIC
-      { w: 70, h: 50 },   // TWIN
-      { w: 100, h: 80 },  // CARRIER
-      { w: 80, h: 60 },   // LASER
-      { w: 60, h: 160 },  // WALL
-      { w: 110, h: 100 }, // FINAL
+      { w: 100, h: 90, d: 70 },   // CLASSIC
+      { w: 80, h: 60, d: 50 },    // TWIN
+      { w: 120, h: 100, d: 80 },  // CARRIER
+      { w: 100, h: 70, d: 60 },   // LASER
+      { w: 70, h: 180, d: 50 },   // WALL
+      { w: 130, h: 120, d: 100 }, // FINAL
     ]
     const size = sizes[boss.type] ?? sizes[0]!
 
     // Boss glow
-    const pulse = Math.sin(Date.now() / 200) * 5
-    this.renderer.drawQuad(x, y, -2, size.w + 30 + pulse, size.h + 30 + pulse, [color[0], color[1], color[2], 0.15])
+    const pulse = Math.sin(Date.now() / 200) * 8
+    const pulseSlow = Math.sin(Date.now() / 600) * 0.1
+    this.renderer.drawQuad(x, y, -15, size.w + 40 + pulse, size.h + 40 + pulse, [color[0], color[1], color[2], 0.15])
 
-    // Main body
-    this.renderer.drawQuad(x, y, 0, size.w, size.h, color)
-    this.renderer.drawQuad(x, y, 0.5, size.w * 0.8, size.h * 0.8, [color[0] + 0.1, color[1] + 0.1, color[2] + 0.1, 1])
+    // Draw main boss body as 3D mesh
+    if (this.meshes.bossCore) {
+      this.renderer.drawMesh(
+        this.meshes.bossCore,
+        x, y, 0,
+        size.w, size.h, size.d,
+        color,
+        pulseSlow, pulseSlow * 0.5, 0
+      )
+    }
 
     // Type-specific rendering
     switch (boss.type) {
@@ -500,41 +593,86 @@ export class Game {
             : boss.health / boss.maxHealth > 0.25
               ? [1, 0.5, 0, 1]
               : [1, 0, 0, 1]
-          this.renderer.drawQuad(x, y, 1, 30 + pulse, 30 + pulse, coreColor)
+          // Pulsing core
+          if (this.meshes.bossCore) {
+            this.renderer.drawMesh(
+              this.meshes.bossCore,
+              x, y, 20,
+              35 + pulse, 35 + pulse, 35 + pulse,
+              coreColor,
+              Date.now() / 1000, Date.now() / 800, 0
+            )
+          }
         }
         break
 
       case 1: // TWIN
         // Second body
-        if (boss.twin) {
-          this.renderer.drawQuad(x, boss.twin.y + this.shakeOffset.y, 0, 50, 40, color)
-          this.renderer.drawQuad(x, boss.twin.y + this.shakeOffset.y, 1, 20, 20, [0, 1, 0, 1])
+        if (boss.twin && this.meshes.bossCore) {
+          this.renderer.drawMesh(
+            this.meshes.bossCore,
+            x, boss.twin.y + this.shakeOffset.y, 0,
+            60, 50, 40,
+            color,
+            pulseSlow, -pulseSlow * 0.5, 0
+          )
+          this.renderer.drawMesh(
+            this.meshes.bossCore,
+            x, boss.twin.y + this.shakeOffset.y, 15,
+            25, 25, 25,
+            [0, 1, 0, 1],
+            Date.now() / 700, 0, 0
+          )
         }
-        this.renderer.drawQuad(x, y, 1, 20, 20, [0, 1, 0, 1])
+        // Main core
+        if (this.meshes.bossCore) {
+          this.renderer.drawMesh(
+            this.meshes.bossCore,
+            x, y, 15,
+            25, 25, 25,
+            [0, 1, 0, 1],
+            Date.now() / 700, 0, 0
+          )
+        }
         break
 
       case 2: // CARRIER
-        // Hangar bay
-        this.renderer.drawQuad(x + 20, y, 1, 20, size!.h * 0.6, [1, 1, 0, 0.8])
+        // Hangar bay (quad for glowing effect)
+        this.renderer.drawQuad(x + 25, y, 15, 25, size.h * 0.5, [1, 1, 0, 0.8])
         break
 
       case 3: // LASER
         // Laser barrel
-        this.renderer.drawQuad(x - size!.w/2 - 30, y, 0.5, 50, 16, [0.5, 0.5, 0.5, 1])
+        this.renderer.drawQuad(x - size.w/2 - 40, y, 10, 60, 20, [0.5, 0.5, 0.5, 1])
         if (boss.charging) {
           const chargeSize = (boss.chargeTime || 0) * 15
-          this.renderer.drawQuad(x - size!.w/2 - 50, y, 1, chargeSize, chargeSize, [1, 0, 0, 0.5 + Math.sin(Date.now() / 50) * 0.3])
+          // Charging orb
+          if (this.meshes.orb) {
+            this.renderer.drawMesh(
+              this.meshes.orb,
+              x - size.w/2 - 60, y, 15,
+              chargeSize, chargeSize, chargeSize,
+              [1, 0, 0, 0.7 + Math.sin(Date.now() / 50) * 0.3],
+              Date.now() / 200, Date.now() / 150, 0
+            )
+          }
         }
         break
 
       case 4: // WALL
         // Segments
-        if (boss.segments) {
+        if (boss.segments && this.meshes.tank) {
           for (const seg of boss.segments) {
             const segColor: [number, number, number, number] = seg.hp > 0 ? [0.5, 0.5, 0.6, 1] : [0.2, 0.2, 0.2, 1]
-            this.renderer.drawQuad(x - 20, y + seg.y, 0.5, 40, 28, segColor)
+            this.renderer.drawMesh(
+              this.meshes.tank,
+              x - 20, y + seg.y, 0,
+              45, 35, 30,
+              segColor,
+              0, 0, 0
+            )
             if (seg.hp > 0) {
-              this.renderer.drawQuad(x - 30, y + seg.y, 1, 10, 8, [1, 0.3, 0.3, 1])
+              this.renderer.drawQuad(x - 35, y + seg.y, 15, 12, 10, [1, 0.3, 0.3, 1])
             }
           }
         }
@@ -547,24 +685,39 @@ export class Game {
           : boss.health / boss.maxHealth > 0.25
             ? [1, 0, 0.5, 1]
             : [1, 0, 0, 1]
-        this.renderer.drawQuad(x, y, 1, 40 + pulse, 40 + pulse, finalCoreColor)
-        this.renderer.drawQuad(x, y, 2, 16, 16, [1, 1, 1, 1])
+        if (this.meshes.bossCore) {
+          this.renderer.drawMesh(
+            this.meshes.bossCore,
+            x, y, 20,
+            50 + pulse, 50 + pulse, 50 + pulse,
+            finalCoreColor,
+            Date.now() / 400, Date.now() / 350, Date.now() / 500
+          )
+          // Inner core
+          this.renderer.drawMesh(
+            this.meshes.bossCore,
+            x, y, 30,
+            20, 20, 20,
+            [1, 1, 1, 1],
+            -Date.now() / 300, 0, 0
+          )
+        }
         // Cannons
-        this.renderer.drawQuad(x - size!.w/2 - 10, y - 15, 0.5, 25, 10, [1, 0.3, 0.3, 1])
-        this.renderer.drawQuad(x - size!.w/2 - 10, y + 15, 0.5, 25, 10, [1, 0.3, 0.3, 1])
+        this.renderer.drawQuad(x - size.w/2 - 15, y - 20, 10, 30, 14, [1, 0.3, 0.3, 1])
+        this.renderer.drawQuad(x - size.w/2 - 15, y + 20, 10, 30, 14, [1, 0.3, 0.3, 1])
         break
     }
 
-    // Health bar
+    // Health bar (quad)
     const healthRatio = boss.health / boss.maxHealth
-    const barWidth = 100
-    this.renderer.drawQuad(x, y - size!.h/2 - 15, 2, barWidth + 4, 12, [0.2, 0.2, 0.2, 0.8])
+    const barWidth = 120
+    this.renderer.drawQuad(x, y - size.h/2 - 20, 30, barWidth + 4, 14, [0.2, 0.2, 0.2, 0.8])
     const healthColor: [number, number, number, number] = healthRatio > 0.5
       ? [0, 0.8, 0.5, 1]
       : healthRatio > 0.25
         ? [1, 1, 0, 1]
         : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(x - (1 - healthRatio) * barWidth / 2, y - size!.h/2 - 15, 3, barWidth * healthRatio, 8, healthColor)
+    this.renderer.drawQuad(x - (1 - healthRatio) * barWidth / 2, y - size.h/2 - 20, 31, barWidth * healthRatio, 10, healthColor)
   }
 
   private renderBullet(bullet: ReturnType<Simulation['getState']>['bullets'][0]): void {
@@ -640,21 +793,29 @@ export class Game {
   private renderPowerup(powerup: ReturnType<Simulation['getState']>['powerups'][0]): void {
     const x = powerup.x + this.shakeOffset.x
     const y = powerup.y + this.shakeOffset.y
-    const bob = Math.sin(powerup.frame * 0.1) * 3
+    const bob = Math.sin(powerup.frame * 0.1) * 5
     const color = COLORS[powerup.type as keyof typeof COLORS] as [number, number, number, number] || COLORS.SHIELD
+    const spin = powerup.frame * 0.08
 
     // Special glow for life powerup
     if (powerup.type === 'LIFE') {
-      const pulse = Math.sin(powerup.frame * 0.15) * 4
-      this.renderer.drawQuad(x, y + bob, -1, 35 + pulse, 35 + pulse, [1, 0.3, 0.3, 0.3])
+      const pulse = Math.sin(powerup.frame * 0.15) * 6
+      this.renderer.drawQuad(x, y + bob, -10, 40 + pulse, 40 + pulse, [1, 0.3, 0.3, 0.3])
     }
 
-    // Powerup glow
-    this.renderer.drawQuad(x, y + bob, -0.5, 28, 28, [color[0], color[1], color[2], 0.3])
-    // Powerup body
-    this.renderer.drawQuad(x, y + bob, 0, 20, 16, color)
-    // Powerup highlight
-    this.renderer.drawQuad(x, y + bob, 1, 14, 10, [1, 1, 1, 0.8])
+    // Powerup glow (quad)
+    this.renderer.drawQuad(x, y + bob, -5, 35, 35, [color[0], color[1], color[2], 0.3])
+
+    // Draw 3D powerup mesh (spinning diamond)
+    if (this.meshes.powerup) {
+      this.renderer.drawMesh(
+        this.meshes.powerup,
+        x, y + bob, 0,
+        30, 30, 30,
+        color,
+        spin, spin * 1.3, 0
+      )
+    }
   }
 
   private renderParticle(particle: ReturnType<Simulation['getState']>['particles'][0]): void {
