@@ -1,28 +1,35 @@
 /**
- * Deterministic Game Simulation
+ * Deterministic Game Simulation - Astranyx
  *
- * CRITICAL: This simulation must be 100% deterministic.
- * Given the same inputs, it must produce the same output on all clients.
+ * Ported from delta-v.html with full game mechanics:
+ * - Player ship with 5 upgrade levels
+ * - 11 powerup types (spread, laser, missile, orbit, drone, speed, rapid, pierce, shield, upgrade, life)
+ * - 12+ enemy types with unique behaviors
+ * - 6 boss types with attack patterns
+ * - Wave spawning system
+ * - Score multiplier
  *
- * Rules for determinism:
+ * CRITICAL: Must be 100% deterministic for P2P lockstep.
  * - No Math.random() - use seeded PRNG
  * - No Date.now() - use frame counter
- * - Fixed-point or careful float handling
- * - Same iteration order (use arrays, not objects/maps for entities)
- * - No async operations
+ * - Fixed-point math for positions
+ * - Arrays only (no object iteration order issues)
  */
 
 import type { PlayerInput } from '../network/LockstepNetcode.ts'
 
-// Fixed-point math helpers (16.16 format)
+// ============================================================================
+// Fixed-Point Math (16.16 format)
+// ============================================================================
+
 const FP_SHIFT = 16
 const FP_ONE = 1 << FP_SHIFT
 
-function toFixed(n: number): number {
+export function toFixed(n: number): number {
   return Math.round(n * FP_ONE)
 }
 
-function fromFixed(n: number): number {
+export function fromFixed(n: number): number {
   return n / FP_ONE
 }
 
@@ -30,7 +37,10 @@ function mulFixed(a: number, b: number): number {
   return Math.round((a * b) / FP_ONE)
 }
 
-// Seeded PRNG (xorshift32)
+// ============================================================================
+// Seeded PRNG (xorshift32) - Deterministic random
+// ============================================================================
+
 export class SeededRandom {
   private state: number
 
@@ -54,317 +64,2309 @@ export class SeededRandom {
   nextRange(min: number, max: number): number {
     return min + this.next() * (max - min)
   }
+
+  getSeed(): number {
+    return this.state
+  }
 }
 
-// Entity types
-export interface Entity {
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+export type EnemyType =
+  | 'grunt'
+  | 'shooter'
+  | 'swerver'
+  | 'tank'
+  | 'speeder'
+  | 'bomber'
+  | 'sniper'
+  | 'carrier'
+  | 'mine'
+  | 'spiral'
+  | 'shield'
+  | 'splitter'
+
+export type BulletType =
+  | 'shot'
+  | 'spread'
+  | 'laser'
+  | 'mega'
+  | 'missile'
+  | 'drone'
+  | 'enemy'
+  | 'aimed'
+  | 'big'
+  | 'ring'
+
+export type PowerupType =
+  | 'SHIELD'
+  | 'UPGRADE'
+  | 'SPREAD'
+  | 'LASER'
+  | 'MISSILE'
+  | 'ORBIT'
+  | 'DRONE'
+  | 'SPEED'
+  | 'RAPID'
+  | 'PIERCE'
+  | 'LIFE'
+
+export type BossType = 0 | 1 | 2 | 3 | 4 | 5 // CLASSIC, TWIN, CARRIER, LASER, WALL, FINAL
+
+export interface Orb {
+  angle: number
+  radius: number
+}
+
+export interface Drone {
+  offsetX: number
+  offsetY: number
+  x: number
+  y: number
+  shootTimer: number
+}
+
+export interface Player {
   id: number
-  type: 'player' | 'enemy' | 'bullet' | 'powerup'
-  x: number  // Fixed-point
-  y: number  // Fixed-point
-  vx: number // Fixed-point
-  vy: number // Fixed-point
-  rotation: number
+  playerId: string
+  x: number // Fixed-point
+  y: number
+  vx: number
+  vy: number
+  shields: number
+  maxShields: number
+  shipLevel: number // 1-5
+  lives: number
+  dead: boolean
+  invincible: number // frames
+  respawnTimer: number
+  shootCooldown: number
+  chargeTime: number
+  charging: boolean
+  frame: number
+  powerups: {
+    spread: number
+    laser: number
+    missile: number
+    orbit: number
+    drone: number
+    speed: number
+    rapid: number
+    pierce: number
+  }
+  orbs: Orb[]
+  drones: Drone[]
+}
+
+export interface Bullet {
+  id: number
+  x: number // Fixed-point
+  y: number
+  vx: number
+  vy: number
+  type: BulletType
+  pierce: number
+  damage: number
+  isEnemy: boolean
+  ownerId: string
+  lifetime: number
+  hitEntities: Set<number> // IDs of entities already hit (for pierce)
+}
+
+export interface Beam {
+  id: number
+  x: number
+  y: number
+  width: number
+  power: number
+  ownerId: string
+  lifetime: number
+  hitEntities: Set<number>
+}
+
+export interface Missile {
+  id: number
+  x: number
+  y: number
+  vx: number
+  vy: number
+  targetId: number | null
+  ownerId: string
+  lifetime: number
+  damage: number
+}
+
+export interface Enemy {
+  id: number
+  type: EnemyType
+  x: number // Fixed-point
+  y: number
+  vx: number
+  vy: number
   health: number
-  playerId?: string
-  subtype?: string
-  lifetime?: number
+  maxHealth: number
+  points: number
+  frame: number
+  behavior: number
+  shootTimer: number
+  hasShield?: boolean
+  shieldHealth?: number
+  splitCount?: number
+}
+
+export interface Boss {
+  id: number
+  type: BossType
+  x: number
+  y: number
+  health: number
+  maxHealth: number
+  points: number
+  frame: number
+  phase: number
+  shootTimer: number
+  charging?: boolean
+  chargeTime?: number
+  segments?: Array<{ y: number; hp: number }>
+  twin?: { y: number; vy: number }
+}
+
+export interface Powerup {
+  id: number
+  x: number
+  y: number
+  type: PowerupType
+  frame: number
+}
+
+export interface Particle {
+  id: number
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  colorIndex: number
+  size: number
 }
 
 export interface SimulationState {
   frame: number
-  entities: Entity[]
-  nextEntityId: number
+  players: Player[]
+  bullets: Bullet[]
+  beams: Beam[]
+  missiles: Missile[]
+  enemies: Enemy[]
+  boss: Boss | null
+  powerups: Powerup[]
+  particles: Particle[]
+  nextId: number
   rng: SeededRandom
-  score: number[]  // Per-player scores
+  score: number
+  multiplier: number // 1.0 - 8.0
+  wave: number
+  waveTimer: number
+  bossActive: boolean
+  screenShake: number
+  gameOver: boolean
 }
 
-// Game constants (all in fixed-point)
-const PLAYER_ACCEL = toFixed(2000)
-const PLAYER_MAX_SPEED = toFixed(400)
-const PLAYER_FRICTION = toFixed(0.92)
-const PLAYER_FIRE_RATE = 6  // frames between shots
-const BULLET_SPEED = toFixed(600)
+// ============================================================================
+// Game Constants
+// ============================================================================
 
-const PLAY_AREA_WIDTH = toFixed(1000)
-const PLAY_AREA_HEIGHT = toFixed(600)
+const PLAY_WIDTH = toFixed(1000)
+const PLAY_HEIGHT = toFixed(600)
+const HALF_WIDTH = PLAY_WIDTH / 2
+const HALF_HEIGHT = PLAY_HEIGHT / 2
 
-// Player spawn positions
-const SPAWN_POSITIONS = [
-  { x: toFixed(-200), y: toFixed(50) },
-  { x: toFixed(-200), y: toFixed(-50) },
-  { x: toFixed(-250), y: toFixed(100) },
-  { x: toFixed(-250), y: toFixed(-100) },
+// Player constants
+const PLAYER_BASE_ACCEL = toFixed(400)
+const PLAYER_BASE_MAX_SPEED = toFixed(200)
+const PLAYER_FRICTION = toFixed(0.91 * FP_ONE) // Pre-scaled
+
+// Enemy stats by type
+const ENEMY_STATS: Record<
+  EnemyType,
+  { health: number; speed: number; points: number }
+> = {
+  grunt: { health: 20, speed: 80, points: 50 },
+  shooter: { health: 40, speed: 50, points: 100 },
+  swerver: { health: 25, speed: 100, points: 75 },
+  tank: { health: 150, speed: 30, points: 300 },
+  speeder: { health: 15, speed: 200, points: 60 },
+  bomber: { health: 60, speed: 40, points: 150 },
+  sniper: { health: 50, speed: 20, points: 200 },
+  carrier: { health: 120, speed: 25, points: 400 },
+  mine: { health: 30, speed: 0, points: 40 },
+  spiral: { health: 70, speed: 35, points: 180 },
+  shield: { health: 100, speed: 45, points: 250 },
+  splitter: { health: 80, speed: 60, points: 200 },
+}
+
+// Boss stats by type
+const BOSS_STATS: Array<{ health: number; points: number }> = [
+  { health: 800, points: 5000 }, // CLASSIC
+  { health: 1000, points: 7500 }, // TWIN
+  { health: 1200, points: 10000 }, // CARRIER
+  { health: 1500, points: 12500 }, // LASER
+  { health: 2000, points: 15000 }, // WALL
+  { health: 3000, points: 25000 }, // FINAL
 ]
+
+const POWERUP_TYPES: PowerupType[] = [
+  'SHIELD',
+  'SHIELD',
+  'UPGRADE',
+  'SPREAD',
+  'LASER',
+  'MISSILE',
+  'ORBIT',
+  'DRONE',
+  'SPEED',
+  'RAPID',
+  'PIERCE',
+]
+
+// ============================================================================
+// Main Simulation Class
+// ============================================================================
 
 export class Simulation {
   private state: SimulationState
-  private playerIds: string[]
-  private playerFireTimers: Map<string, number> = new Map()
+  private playerIdMap: Map<string, number> = new Map()
 
   constructor(playerIds: string[], seed: number = 12345) {
-    this.playerIds = playerIds
-
     this.state = {
       frame: 0,
-      entities: [],
-      nextEntityId: 1,
+      players: [],
+      bullets: [],
+      beams: [],
+      missiles: [],
+      enemies: [],
+      boss: null,
+      powerups: [],
+      particles: [],
+      nextId: 1,
       rng: new SeededRandom(seed),
-      score: playerIds.map(() => 0),
+      score: 0,
+      multiplier: 1,
+      wave: 1,
+      waveTimer: 0,
+      bossActive: false,
+      screenShake: 0,
+      gameOver: false,
     }
 
     // Spawn players
+    const spawnY = [-100, 100, -200, 200]
     playerIds.forEach((playerId, index) => {
-      const spawn = SPAWN_POSITIONS[index % SPAWN_POSITIONS.length]!
-      this.state.entities.push({
-        id: this.state.nextEntityId++,
-        type: 'player',
-        x: spawn.x,
-        y: spawn.y,
+      const player: Player = {
+        id: this.state.nextId++,
+        playerId,
+        x: toFixed(-350),
+        y: toFixed(spawnY[index % 4]!),
         vx: 0,
         vy: 0,
-        rotation: 0,
-        health: 100,
-        playerId,
-      })
-      this.playerFireTimers.set(playerId, 0)
+        shields: 100,
+        maxShields: 100,
+        shipLevel: 1,
+        lives: 3,
+        dead: false,
+        invincible: 180, // 3 seconds at 60fps
+        respawnTimer: 0,
+        shootCooldown: 0,
+        chargeTime: 0,
+        charging: false,
+        frame: 0,
+        powerups: {
+          spread: 0,
+          laser: 0,
+          missile: 0,
+          orbit: 0,
+          drone: 0,
+          speed: 0,
+          rapid: 0,
+          pierce: 0,
+        },
+        orbs: [],
+        drones: [],
+      }
+      this.state.players.push(player)
+      this.playerIdMap.set(playerId, player.id)
     })
   }
 
-  /**
-   * Advance simulation by one frame with given inputs
-   * This is the core deterministic update
-   */
+  // ==========================================================================
+  // Main Tick
+  // ==========================================================================
+
   tick(inputs: Map<string, PlayerInput>): void {
+    if (this.state.gameOver) return
+
     this.state.frame++
+    const dt = 1 / 60 // Fixed timestep
+
+    // Update screen shake
+    if (this.state.screenShake > 0) {
+      this.state.screenShake -= dt
+    }
+
+    // Update multiplier decay
+    this.state.multiplier = Math.max(1, this.state.multiplier - 0.07 * dt)
 
     // Update players
-    for (const entity of this.state.entities) {
-      if (entity.type === 'player' && entity.playerId) {
-        const input = inputs.get(entity.playerId)
-        if (input) {
-          this.updatePlayer(entity, input)
-        }
+    for (const player of this.state.players) {
+      const input = inputs.get(player.playerId) ?? {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        special: false,
       }
+      this.updatePlayer(player, input, dt)
     }
 
-    // Update all other entities
-    for (const entity of this.state.entities) {
-      if (entity.type !== 'player') {
-        this.updateEntity(entity)
-      }
+    // Update bullets
+    this.updateBullets(dt)
+
+    // Update beams
+    this.updateBeams(dt)
+
+    // Update missiles
+    this.updateMissiles(dt)
+
+    // Update enemies
+    this.updateEnemies(dt)
+
+    // Update boss
+    if (this.state.boss) {
+      this.updateBoss(dt)
     }
+
+    // Update powerups
+    this.updatePowerups(dt)
+
+    // Update particles
+    this.updateParticles(dt)
 
     // Check collisions
     this.checkCollisions()
 
-    // Remove dead entities
-    this.state.entities = this.state.entities.filter(
-      (e) => e.health > 0 && (e.lifetime === undefined || e.lifetime > 0)
-    )
+    // Wave spawning
+    this.updateWaveSpawning(dt)
 
-    // Spawn enemies (deterministic based on frame)
-    this.maybeSpawnEnemies()
+    // Check game over
+    this.checkGameOver()
   }
 
-  private updatePlayer(entity: Entity, input: PlayerInput): void {
+  // ==========================================================================
+  // Player Update
+  // ==========================================================================
+
+  private updatePlayer(player: Player, input: PlayerInput, dt: number): void {
+    // Handle respawn
+    if (player.dead && player.lives > 0) {
+      player.respawnTimer -= dt * 60 // Convert to frames
+      if (player.respawnTimer <= 0) {
+        this.respawnPlayer(player)
+      }
+      return
+    }
+
+    if (player.dead) return
+
+    player.frame++
+
+    // Invincibility decay
+    if (player.invincible > 0) {
+      player.invincible--
+    }
+
+    // Shoot cooldown
+    if (player.shootCooldown > 0) {
+      player.shootCooldown -= dt * 60
+    }
+
     // Movement
-    let ax = 0
-    let ay = 0
+    const speedBonus = player.powerups.speed * 50
+    const accel = fromFixed(PLAYER_BASE_ACCEL) + player.powerups.speed * 120
+    const maxSpeed = fromFixed(PLAYER_BASE_MAX_SPEED) + speedBonus
+    const friction = 0.91
 
-    if (input.left && !input.right) ax = -PLAYER_ACCEL
-    if (input.right && !input.left) ax = PLAYER_ACCEL
-    if (input.up && !input.down) ay = PLAYER_ACCEL
-    if (input.down && !input.up) ay = -PLAYER_ACCEL
+    let dvx = 0
+    let dvy = 0
 
-    // Update velocity (fixed-point)
-    entity.vx = mulFixed(entity.vx + ax, PLAYER_FRICTION)
-    entity.vy = mulFixed(entity.vy + ay, PLAYER_FRICTION)
+    if (input.up) dvy -= accel * dt
+    if (input.down) dvy += accel * dt
+    if (input.left) dvx -= accel * dt
+    if (input.right) dvx += accel * dt
+
+    // Slight gravity
+    dvy += 50 * dt
+
+    // Apply velocity changes
+    let vx = fromFixed(player.vx) + dvx
+    let vy = fromFixed(player.vy) + dvy
+
+    // Apply friction
+    vx *= friction
+    vy *= friction
 
     // Clamp speed
-    const speed = Math.sqrt(
-      fromFixed(entity.vx) ** 2 + fromFixed(entity.vy) ** 2
-    )
-    const maxSpeed = fromFixed(PLAYER_MAX_SPEED)
-
+    const speed = Math.hypot(vx, vy)
     if (speed > maxSpeed) {
-      const ratio = maxSpeed / speed
-      entity.vx = toFixed(fromFixed(entity.vx) * ratio)
-      entity.vy = toFixed(fromFixed(entity.vy) * ratio)
+      vx = (vx / speed) * maxSpeed
+      vy = (vy / speed) * maxSpeed
     }
 
     // Update position
-    entity.x += entity.vx
-    entity.y += entity.vy
+    let x = fromFixed(player.x) + vx * dt
+    let y = fromFixed(player.y) + vy * dt
 
     // Clamp to play area
-    const halfWidth = PLAY_AREA_WIDTH / 2
-    const halfHeight = PLAY_AREA_HEIGHT / 2
-    entity.x = Math.max(-halfWidth + toFixed(30), Math.min(halfWidth - toFixed(30), entity.x))
-    entity.y = Math.max(-halfHeight + toFixed(20), Math.min(halfHeight - toFixed(20), entity.y))
+    const halfW = fromFixed(HALF_WIDTH)
+    const halfH = fromFixed(HALF_HEIGHT)
+    x = Math.max(-halfW + 20, Math.min(halfW - 20, x))
+    y = Math.max(-halfH + 15, Math.min(halfH - 15, y))
 
-    // Visual rotation based on vertical velocity
-    entity.rotation = -fromFixed(entity.vy) * 0.002
-    entity.rotation = Math.max(-0.4, Math.min(0.4, entity.rotation))
+    player.x = toFixed(x)
+    player.y = toFixed(y)
+    player.vx = toFixed(vx)
+    player.vy = toFixed(vy)
 
-    // Firing
-    const fireTimer = this.playerFireTimers.get(entity.playerId!) ?? 0
-
-    if (fireTimer > 0) {
-      this.playerFireTimers.set(entity.playerId!, fireTimer - 1)
+    // Shooting
+    if (input.fire) {
+      player.chargeTime += dt
+      if (player.chargeTime < 0.3 && player.shootCooldown <= 0) {
+        this.playerShoot(player, false)
+      }
+      if (player.chargeTime >= 0.5) {
+        player.charging = true
+      }
+    } else {
+      if (player.charging && player.chargeTime >= 0.5) {
+        this.playerShoot(player, true)
+      }
+      player.chargeTime = 0
+      player.charging = false
     }
 
-    if (input.fire && fireTimer <= 0) {
-      this.spawnBullet(entity)
-      this.playerFireTimers.set(entity.playerId!, PLAYER_FIRE_RATE)
+    // Update orbs
+    for (const orb of player.orbs) {
+      orb.angle += (2.5 + player.powerups.orbit * 0.3) * dt
+    }
+
+    // Update drones
+    for (const drone of player.drones) {
+      const tx = x + drone.offsetX
+      const ty = y + drone.offsetY
+      drone.x += (tx - drone.x) * 6 * dt
+      drone.y += (ty - drone.y) * 6 * dt
+
+      drone.shootTimer -= dt
+      if (drone.shootTimer <= 0) {
+        drone.shootTimer = 0.25 - player.powerups.rapid * 0.03
+        this.spawnBullet(
+          toFixed(drone.x + 8),
+          toFixed(drone.y),
+          toFixed(380),
+          0,
+          'drone',
+          player.powerups.pierce,
+          10,
+          false,
+          player.playerId
+        )
+      }
     }
   }
 
-  private spawnBullet(player: Entity): void {
-    this.state.entities.push({
-      id: this.state.nextEntityId++,
-      type: 'bullet',
-      x: player.x + toFixed(30),
-      y: player.y,
-      vx: BULLET_SPEED,
-      vy: 0,
-      rotation: 0,
-      health: 1,
-      playerId: player.playerId,
-      lifetime: 120,  // 2 seconds at 60fps
+  private respawnPlayer(player: Player): void {
+    player.x = toFixed(-350)
+    player.y = toFixed(0)
+    player.vx = 0
+    player.vy = 0
+    player.shields = player.maxShields
+    player.dead = false
+    player.invincible = 180 // 3 seconds
+    player.respawnTimer = 0
+    player.chargeTime = 0
+    player.charging = false
+    // Keep ship level and weapon powerups, but reset orbs and drones
+    player.orbs = []
+    player.drones = []
+    player.powerups.orbit = 0
+    player.powerups.drone = 0
+  }
+
+  private playerShoot(player: Player, charged: boolean): void {
+    const x = player.x
+    const y = player.y
+    const recoil = charged ? 50 : 8
+    player.vx -= toFixed(recoil)
+    this.state.screenShake = charged ? 0.1 : 0.015
+
+    if (charged) {
+      // Charged shot: mega bullet + laser beam + missiles
+      if (player.powerups.laser > 0) {
+        this.spawnBeam(
+          x + toFixed(15),
+          y,
+          player.powerups.laser + player.shipLevel,
+          player.playerId
+        )
+      }
+
+      this.spawnBullet(
+        x + toFixed(15),
+        y,
+        toFixed(420),
+        0,
+        'mega',
+        player.powerups.pierce + 2,
+        40,
+        false,
+        player.playerId
+      )
+
+      if (player.powerups.missile > 0) {
+        const count = player.powerups.missile + player.shipLevel
+        for (let i = 0; i < count; i++) {
+          // Stagger missile spawns using frame offset
+          this.spawnMissile(
+            x,
+            y + toFixed((i - count / 2) * 10),
+            player.playerId
+          )
+        }
+      }
+
+      player.shootCooldown = 15 // 0.25 seconds
+    } else {
+      // Normal shot
+      const baseShots = player.shipLevel
+      const rapidMod = 1 - player.powerups.rapid * 0.15
+
+      for (let i = 0; i < baseShots; i++) {
+        const spread = (i - (baseShots - 1) / 2) * 6
+        this.spawnBullet(
+          x + toFixed(12),
+          y + toFixed(spread),
+          toFixed(360),
+          0,
+          'shot',
+          player.powerups.pierce,
+          15,
+          false,
+          player.playerId
+        )
+      }
+
+      // Spread shots
+      if (player.powerups.spread >= 1) {
+        this.spawnBullet(
+          x + toFixed(10),
+          y,
+          toFixed(330),
+          toFixed(-45),
+          'spread',
+          player.powerups.pierce,
+          12,
+          false,
+          player.playerId
+        )
+        this.spawnBullet(
+          x + toFixed(10),
+          y,
+          toFixed(330),
+          toFixed(45),
+          'spread',
+          player.powerups.pierce,
+          12,
+          false,
+          player.playerId
+        )
+      }
+      if (player.powerups.spread >= 2) {
+        this.spawnBullet(
+          x + toFixed(8),
+          y,
+          toFixed(300),
+          toFixed(-90),
+          'spread',
+          player.powerups.pierce,
+          10,
+          false,
+          player.playerId
+        )
+        this.spawnBullet(
+          x + toFixed(8),
+          y,
+          toFixed(300),
+          toFixed(90),
+          'spread',
+          player.powerups.pierce,
+          10,
+          false,
+          player.playerId
+        )
+      }
+      if (player.powerups.spread >= 3) {
+        this.spawnBullet(
+          x + toFixed(5),
+          y,
+          toFixed(280),
+          toFixed(-130),
+          'spread',
+          player.powerups.pierce,
+          8,
+          false,
+          player.playerId
+        )
+        this.spawnBullet(
+          x + toFixed(5),
+          y,
+          toFixed(280),
+          toFixed(130),
+          'spread',
+          player.powerups.pierce,
+          8,
+          false,
+          player.playerId
+        )
+      }
+
+      // Laser shots
+      if (player.powerups.laser > 0) {
+        this.spawnBullet(
+          x + toFixed(15),
+          y,
+          toFixed(500),
+          0,
+          'laser',
+          player.powerups.pierce + 1,
+          20,
+          false,
+          player.playerId
+        )
+      }
+
+      player.shootCooldown =
+        (7 - player.shipLevel * 0.5) * rapidMod // frames
+    }
+  }
+
+  private playerTakeDamage(player: Player, amount: number): boolean {
+    if (player.invincible > 0) return false
+
+    // Orbs absorb damage
+    if (player.orbs.length > 0) {
+      player.orbs.pop()
+      player.powerups.orbit--
+      this.state.screenShake = 0.1
+      return false
+    }
+
+    player.shields -= amount
+    player.invincible = 30 // 0.5 seconds
+    this.state.screenShake = 0.15
+
+    if (player.shields <= 0) {
+      this.playerDie(player)
+      return true
+    }
+
+    return false
+  }
+
+  private playerDie(player: Player): void {
+    player.dead = true
+    this.state.screenShake = 0.5
+    this.spawnExplosion(player.x, player.y, 50)
+    player.lives--
+
+    if (player.lives > 0) {
+      player.respawnTimer = 120 // 2 seconds
+    }
+  }
+
+  private upgradePlayerShip(player: Player): void {
+    if (player.shipLevel < 5) {
+      player.shipLevel++
+      player.maxShields += 25
+      player.shields = Math.min(player.shields + 50, player.maxShields)
+      this.state.screenShake = 0.3
+    }
+  }
+
+  private addPlayerPowerup(player: Player, type: PowerupType): void {
+    switch (type) {
+      case 'SHIELD':
+        player.shields = Math.min(player.shields + 35, player.maxShields)
+        break
+      case 'UPGRADE':
+        this.upgradePlayerShip(player)
+        break
+      case 'SPREAD':
+        player.powerups.spread = Math.min(player.powerups.spread + 1, 3)
+        break
+      case 'LASER':
+        player.powerups.laser = Math.min(player.powerups.laser + 1, 3)
+        break
+      case 'MISSILE':
+        player.powerups.missile = Math.min(player.powerups.missile + 1, 3)
+        break
+      case 'RAPID':
+        player.powerups.rapid = Math.min(player.powerups.rapid + 1, 3)
+        break
+      case 'PIERCE':
+        player.powerups.pierce = Math.min(player.powerups.pierce + 1, 2)
+        break
+      case 'ORBIT':
+        if (player.powerups.orbit < 6) {
+          player.powerups.orbit++
+          player.orbs.push({
+            angle: (player.powerups.orbit - 1) * (Math.PI / 3),
+            radius: 28 + player.shipLevel * 4,
+          })
+        }
+        break
+      case 'DRONE':
+        if (player.powerups.drone < 4) {
+          player.powerups.drone++
+          const positions = [
+            [-1, -1],
+            [1, -1],
+            [-1, 1],
+            [1, 1],
+          ]
+          const pos = positions[player.powerups.drone - 1]!
+          player.drones.push({
+            offsetX: -15 + pos[0]! * 5,
+            offsetY: pos[1]! * (15 + player.powerups.drone * 5),
+            x: fromFixed(player.x) - 15 + pos[0]! * 5,
+            y: fromFixed(player.y) + pos[1]! * (15 + player.powerups.drone * 5),
+            shootTimer: this.state.rng.next(),
+          })
+        }
+        break
+      case 'SPEED':
+        player.powerups.speed = Math.min(player.powerups.speed + 1, 3)
+        break
+      case 'LIFE':
+        player.lives++
+        this.state.screenShake = 0.2
+        break
+    }
+  }
+
+  // ==========================================================================
+  // Bullet System
+  // ==========================================================================
+
+  private spawnBullet(
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    type: BulletType,
+    pierce: number,
+    damage: number,
+    isEnemy: boolean,
+    ownerId: string
+  ): void {
+    this.state.bullets.push({
+      id: this.state.nextId++,
+      x,
+      y,
+      vx,
+      vy,
+      type,
+      pierce,
+      damage,
+      isEnemy,
+      ownerId,
+      lifetime: 300, // 5 seconds
+      hitEntities: new Set(),
     })
   }
 
-  private updateEntity(entity: Entity): void {
-    // Update position
-    entity.x += entity.vx
-    entity.y += entity.vy
+  private spawnBeam(
+    x: number,
+    y: number,
+    power: number,
+    ownerId: string
+  ): void {
+    this.state.beams.push({
+      id: this.state.nextId++,
+      x,
+      y,
+      width: toFixed(800),
+      power,
+      ownerId,
+      lifetime: 20, // ~0.33 seconds
+      hitEntities: new Set(),
+    })
+  }
 
-    // Decrement lifetime
-    if (entity.lifetime !== undefined) {
-      entity.lifetime--
+  private spawnMissile(x: number, y: number, ownerId: string): void {
+    // Find nearest enemy to target
+    let targetId: number | null = null
+    let minDist = Infinity
+
+    for (const enemy of this.state.enemies) {
+      const dist = Math.hypot(
+        fromFixed(enemy.x) - fromFixed(x),
+        fromFixed(enemy.y) - fromFixed(y)
+      )
+      if (dist < minDist) {
+        minDist = dist
+        targetId = enemy.id
+      }
     }
 
-    // Remove if out of bounds
-    const margin = toFixed(100)
-    if (
-      entity.x < -PLAY_AREA_WIDTH / 2 - margin ||
-      entity.x > PLAY_AREA_WIDTH / 2 + margin ||
-      entity.y < -PLAY_AREA_HEIGHT / 2 - margin ||
-      entity.y > PLAY_AREA_HEIGHT / 2 + margin
-    ) {
-      entity.health = 0
+    // Also check boss
+    if (this.state.boss) {
+      const dist = Math.hypot(
+        fromFixed(this.state.boss.x) - fromFixed(x),
+        fromFixed(this.state.boss.y) - fromFixed(y)
+      )
+      if (dist < minDist) {
+        targetId = this.state.boss.id
+      }
     }
 
-    // Enemy movement (simple sine wave)
-    if (entity.type === 'enemy') {
-      entity.vy = toFixed(Math.sin(this.state.frame * 0.05 + entity.id) * 100)
+    this.state.missiles.push({
+      id: this.state.nextId++,
+      x,
+      y,
+      vx: toFixed(100 + this.state.rng.next() * 50),
+      vy: toFixed((this.state.rng.next() - 0.5) * 100),
+      targetId,
+      ownerId,
+      lifetime: 300,
+      damage: 25,
+    })
+  }
+
+  private updateBullets(dt: number): void {
+    const toRemove: number[] = []
+
+    for (const bullet of this.state.bullets) {
+      // Update position
+      bullet.x += Math.round(bullet.vx * dt)
+      bullet.y += Math.round(bullet.vy * dt)
+      bullet.lifetime--
+
+      // Check bounds
+      const x = fromFixed(bullet.x)
+      const y = fromFixed(bullet.y)
+      const halfW = fromFixed(HALF_WIDTH)
+      const halfH = fromFixed(HALF_HEIGHT)
+
+      if (
+        x < -halfW - 50 ||
+        x > halfW + 50 ||
+        y < -halfH - 50 ||
+        y > halfH + 50 ||
+        bullet.lifetime <= 0
+      ) {
+        toRemove.push(bullet.id)
+      }
+    }
+
+    this.state.bullets = this.state.bullets.filter(
+      (b) => !toRemove.includes(b.id)
+    )
+  }
+
+  private updateBeams(_dt: number): void {
+    for (const beam of this.state.beams) {
+      beam.lifetime--
+    }
+    this.state.beams = this.state.beams.filter((b) => b.lifetime > 0)
+  }
+
+  private updateMissiles(dt: number): void {
+    const toRemove: number[] = []
+
+    for (const missile of this.state.missiles) {
+      // Find target position
+      let targetX = fromFixed(missile.x) + 200
+      let targetY = fromFixed(missile.y)
+
+      if (missile.targetId !== null) {
+        const enemy = this.state.enemies.find((e) => e.id === missile.targetId)
+        if (enemy) {
+          targetX = fromFixed(enemy.x)
+          targetY = fromFixed(enemy.y)
+        } else if (
+          this.state.boss &&
+          this.state.boss.id === missile.targetId
+        ) {
+          targetX = fromFixed(this.state.boss.x)
+          targetY = fromFixed(this.state.boss.y)
+        }
+      }
+
+      // Home towards target
+      const mx = fromFixed(missile.x)
+      const my = fromFixed(missile.y)
+      const angle = Math.atan2(targetY - my, targetX - mx)
+      const speed = 250
+
+      const vx = fromFixed(missile.vx)
+      const vy = fromFixed(missile.vy)
+      const newVx = vx + Math.cos(angle) * 500 * dt
+      const newVy = vy + Math.sin(angle) * 500 * dt
+
+      const currentSpeed = Math.hypot(newVx, newVy)
+      missile.vx = toFixed((newVx / currentSpeed) * speed)
+      missile.vy = toFixed((newVy / currentSpeed) * speed)
+
+      missile.x += Math.round(missile.vx * dt)
+      missile.y += Math.round(missile.vy * dt)
+      missile.lifetime--
+
+      // Check bounds
+      const halfW = fromFixed(HALF_WIDTH)
+      const halfH = fromFixed(HALF_HEIGHT)
+
+      if (
+        mx < -halfW - 50 ||
+        mx > halfW + 50 ||
+        my < -halfH - 50 ||
+        my > halfH + 50 ||
+        missile.lifetime <= 0
+      ) {
+        toRemove.push(missile.id)
+      }
+    }
+
+    this.state.missiles = this.state.missiles.filter(
+      (m) => !toRemove.includes(m.id)
+    )
+  }
+
+  // ==========================================================================
+  // Enemy System
+  // ==========================================================================
+
+  private spawnEnemy(type: EnemyType, x: number, y: number): void {
+    const stats = ENEMY_STATS[type]
+    this.state.enemies.push({
+      id: this.state.nextId++,
+      type,
+      x,
+      y,
+      vx: toFixed(-stats.speed),
+      vy: 0,
+      health: stats.health,
+      maxHealth: stats.health,
+      points: stats.points,
+      frame: 0,
+      behavior: this.state.rng.nextInt(4),
+      shootTimer: 60 + this.state.rng.nextInt(120),
+      hasShield: type === 'shield',
+      shieldHealth: type === 'shield' ? 50 : 0,
+      splitCount: type === 'splitter' ? 2 : 0,
+    })
+  }
+
+  private updateEnemies(dt: number): void {
+    const toRemove: number[] = []
+
+    for (const enemy of this.state.enemies) {
+      enemy.frame++
+
+      // Update position
+      enemy.x += Math.round(enemy.vx * dt)
+      enemy.y += Math.round(enemy.vy * dt)
+
+      // Type-specific behavior
+      this.updateEnemyBehavior(enemy, dt)
+
+      // Shooting
+      enemy.shootTimer -= dt * 60
+      if (enemy.shootTimer <= 0) {
+        this.enemyShoot(enemy)
+        enemy.shootTimer = 60 + this.state.rng.nextInt(180)
+      }
+
+      // Check bounds (remove if off-screen left)
+      const x = fromFixed(enemy.x)
+      if (x < -fromFixed(HALF_WIDTH) - 100) {
+        toRemove.push(enemy.id)
+      }
+    }
+
+    this.state.enemies = this.state.enemies.filter(
+      (e) => !toRemove.includes(e.id)
+    )
+  }
+
+  private updateEnemyBehavior(enemy: Enemy, dt: number): void {
+    const halfH = fromFixed(HALF_HEIGHT)
+
+    switch (enemy.type) {
+      case 'grunt':
+        // Simple sine wave
+        enemy.vy = toFixed(Math.sin(enemy.frame * 0.05) * 80)
+        break
+
+      case 'swerver':
+        // Fast sine wave
+        enemy.vy = toFixed(Math.sin(enemy.frame * 0.1) * 120)
+        break
+
+      case 'speeder':
+        // Straight line, occasional dodge
+        if (enemy.frame % 60 === 0 && this.state.rng.next() < 0.3) {
+          enemy.vy = toFixed((this.state.rng.next() - 0.5) * 200)
+        }
+        enemy.vy = toFixed(fromFixed(enemy.vy) * 0.95)
+        break
+
+      case 'bomber':
+        // Slow descent
+        enemy.vy = toFixed(30)
+        break
+
+      case 'sniper':
+        // Stays still and aims
+        enemy.vx = toFixed(-10)
+        break
+
+      case 'mine':
+        // Stationary
+        enemy.vx = 0
+        enemy.vy = 0
+        break
+
+      case 'spiral':
+        // Spiral pattern
+        enemy.vy = toFixed(Math.sin(enemy.frame * 0.08) * 100)
+        enemy.vx = toFixed(-35 + Math.cos(enemy.frame * 0.08) * 30)
+        break
+
+      case 'tank':
+      case 'carrier':
+      case 'shooter':
+        // Slow steady movement
+        enemy.vy = toFixed(Math.sin(enemy.frame * 0.03) * 40)
+        break
+
+      case 'shield':
+        // Protective movement
+        enemy.vy = toFixed(Math.sin(enemy.frame * 0.04) * 60)
+        break
+
+      case 'splitter':
+        // Erratic movement
+        enemy.vy = toFixed(Math.sin(enemy.frame * 0.07 + enemy.id) * 90)
+        break
+    }
+
+    // Clamp Y position
+    const y = fromFixed(enemy.y)
+    if (y < -halfH + 30) {
+      enemy.y = toFixed(-halfH + 30)
+      enemy.vy = Math.abs(enemy.vy)
+    }
+    if (y > halfH - 30) {
+      enemy.y = toFixed(halfH - 30)
+      enemy.vy = -Math.abs(enemy.vy)
     }
   }
 
-  private checkCollisions(): void {
-    const bullets = this.state.entities.filter((e) => e.type === 'bullet' && e.playerId)
-    const enemies = this.state.entities.filter((e) => e.type === 'enemy')
-    const players = this.state.entities.filter((e) => e.type === 'player')
+  private enemyShoot(enemy: Enemy): void {
+    const closestPlayer = this.getClosestPlayer(enemy.x, enemy.y)
+    if (!closestPlayer) return
 
-    // Bullet vs Enemy
-    for (const bullet of bullets) {
-      for (const enemy of enemies) {
-        if (this.entitiesCollide(bullet, enemy, toFixed(20))) {
-          bullet.health = 0
-          enemy.health -= 25
+    switch (enemy.type) {
+      case 'shooter':
+        // Aimed shot
+        {
+          const angle = Math.atan2(
+            fromFixed(closestPlayer.y - enemy.y),
+            fromFixed(closestPlayer.x - enemy.x)
+          )
+          this.spawnBullet(
+            enemy.x - toFixed(20),
+            enemy.y,
+            toFixed(Math.cos(angle) * 160),
+            toFixed(Math.sin(angle) * 160),
+            'aimed',
+            0,
+            18,
+            true,
+            ''
+          )
+        }
+        break
+
+      case 'sniper':
+        // Fast aimed shot
+        {
+          const angle = Math.atan2(
+            fromFixed(closestPlayer.y - enemy.y),
+            fromFixed(closestPlayer.x - enemy.x)
+          )
+          this.spawnBullet(
+            enemy.x - toFixed(20),
+            enemy.y,
+            toFixed(Math.cos(angle) * 300),
+            toFixed(Math.sin(angle) * 300),
+            'aimed',
+            0,
+            25,
+            true,
+            ''
+          )
+        }
+        break
+
+      case 'bomber':
+        // Drop bombs
+        this.spawnBullet(
+          enemy.x,
+          enemy.y + toFixed(15),
+          toFixed(-20),
+          toFixed(100),
+          'big',
+          0,
+          30,
+          true,
+          ''
+        )
+        break
+
+      case 'spiral':
+        // Spiral bullets
+        for (let i = 0; i < 8; i++) {
+          const angle = enemy.frame * 0.08 + (i / 8) * Math.PI * 2
+          this.spawnBullet(
+            enemy.x,
+            enemy.y,
+            toFixed(Math.cos(angle) * 70),
+            toFixed(Math.sin(angle) * 70),
+            'ring',
+            0,
+            15,
+            true,
+            ''
+          )
+        }
+        break
+
+      case 'carrier':
+        // Spawn mini-enemies
+        if (this.state.enemies.length < 20) {
+          const types: EnemyType[] = ['grunt', 'shooter', 'swerver']
+          const type = types[this.state.rng.nextInt(types.length)]!
+          this.spawnEnemy(type, enemy.x - toFixed(20), enemy.y)
+        }
+        break
+
+      default:
+        // Basic enemy shot
+        this.spawnBullet(
+          enemy.x - toFixed(20),
+          enemy.y,
+          toFixed(-100),
+          0,
+          'enemy',
+          0,
+          18,
+          true,
+          ''
+        )
+        break
+    }
+  }
+
+  private enemyDie(enemy: Enemy): void {
+    this.spawnExplosion(enemy.x, enemy.y, 12)
+    this.state.score += Math.floor(enemy.points * this.state.multiplier)
+    this.state.multiplier = Math.min(8, this.state.multiplier + 0.2)
+    this.state.screenShake = 0.08
+
+    // Chance to drop powerup
+    if (this.state.rng.next() < 0.3) {
+      this.spawnPowerup(enemy.x, enemy.y)
+    }
+
+    // Splitter spawns smaller enemies
+    if (enemy.type === 'splitter' && enemy.splitCount && enemy.splitCount > 0) {
+      this.spawnEnemy('grunt', enemy.x + toFixed(20), enemy.y - toFixed(20))
+      this.spawnEnemy('grunt', enemy.x + toFixed(20), enemy.y + toFixed(20))
+    }
+  }
+
+  // ==========================================================================
+  // Boss System
+  // ==========================================================================
+
+  private spawnBoss(type: BossType): void {
+    const stats = BOSS_STATS[type]!
+    const halfW = fromFixed(HALF_WIDTH)
+
+    const boss: Boss = {
+      id: this.state.nextId++,
+      type,
+      x: toFixed(halfW + 100),
+      y: toFixed(0),
+      health: stats.health,
+      maxHealth: stats.health,
+      points: stats.points,
+      frame: 0,
+      phase: 0,
+      shootTimer: 120,
+    }
+
+    // Type-specific initialization
+    if (type === 3) {
+      // LASER boss
+      boss.charging = false
+      boss.chargeTime = 0
+    }
+
+    if (type === 4) {
+      // WALL boss
+      boss.segments = []
+      for (let i = -3; i <= 3; i++) {
+        boss.segments.push({ y: i * 35, hp: 100 })
+      }
+    }
+
+    if (type === 1) {
+      // TWIN boss
+      boss.twin = { y: 100, vy: 0 }
+    }
+
+    this.state.boss = boss
+    this.state.bossActive = true
+  }
+
+  private updateBoss(dt: number): void {
+    const boss = this.state.boss
+    if (!boss) return
+
+    boss.frame++
+
+    // Move to target position
+    const targetX = fromFixed(HALF_WIDTH) - 100
+    const currentX = fromFixed(boss.x)
+    if (currentX > targetX) {
+      boss.x -= toFixed(100 * dt)
+    }
+
+    // Vertical movement
+    boss.y = toFixed(Math.sin(boss.frame * 0.02) * 80)
+
+    // Type-specific behavior
+    this.updateBossBehavior(boss, dt)
+
+    // Shooting
+    boss.shootTimer -= dt * 60
+    if (boss.shootTimer <= 0) {
+      this.bossShoot(boss)
+      boss.shootTimer = 90 + this.state.rng.nextInt(60)
+    }
+  }
+
+  private updateBossBehavior(boss: Boss, dt: number): void {
+    switch (boss.type) {
+      case 1: // TWIN
+        if (boss.twin) {
+          boss.twin.vy += (this.state.rng.next() - 0.5) * 200 * dt
+          boss.twin.y += boss.twin.vy * dt
+          boss.twin.y = Math.max(-200, Math.min(200, boss.twin.y))
+          boss.twin.vy *= 0.95
+        }
+        break
+
+      case 3: // LASER
+        if (!boss.charging && boss.shootTimer < 60) {
+          boss.charging = true
+          boss.chargeTime = 0
+        }
+        if (boss.charging) {
+          boss.chargeTime = (boss.chargeTime || 0) + dt
+          if (boss.chargeTime >= 2) {
+            this.bossFireLaser(boss)
+            boss.charging = false
+            boss.chargeTime = 0
+          }
+        }
+        break
+    }
+  }
+
+  private bossShoot(boss: Boss): void {
+    const closestPlayer = this.getClosestPlayer(boss.x, boss.y)
+    if (!closestPlayer) return
+
+    const patternIndex = Math.floor(boss.frame / 100) % 4
+
+    switch (boss.type) {
+      case 0: // CLASSIC
+        if (patternIndex === 0) {
+          // Aimed shots
+          const angle = Math.atan2(
+            fromFixed(closestPlayer.y - boss.y),
+            fromFixed(closestPlayer.x - boss.x)
+          )
+          this.spawnBullet(
+            boss.x - toFixed(20),
+            boss.y,
+            toFixed(Math.cos(angle) * 160),
+            toFixed(Math.sin(angle) * 160),
+            'aimed',
+            0,
+            20,
+            true,
+            ''
+          )
+        } else if (patternIndex === 1) {
+          // Spread
+          for (let i = -4; i <= 4; i++) {
+            this.spawnBullet(
+              boss.x - toFixed(20),
+              boss.y,
+              toFixed(-100),
+              toFixed(i * 30),
+              'enemy',
+              0,
+              18,
+              true,
+              ''
+            )
+          }
+        } else if (patternIndex === 2) {
+          // Circle
+          for (let i = 0; i < 12; i++) {
+            const angle = (i / 12) * Math.PI * 2
+            this.spawnBullet(
+              boss.x,
+              boss.y,
+              toFixed(Math.cos(angle) * 90),
+              toFixed(Math.sin(angle) * 90),
+              'enemy',
+              0,
+              18,
+              true,
+              ''
+            )
+          }
+        } else {
+          // Single aimed
+          const angle = Math.atan2(
+            fromFixed(closestPlayer.y - boss.y),
+            fromFixed(closestPlayer.x - boss.x)
+          )
+          this.spawnBullet(
+            boss.x - toFixed(20),
+            boss.y,
+            toFixed(Math.cos(angle) * 160),
+            toFixed(Math.sin(angle) * 160),
+            'aimed',
+            0,
+            20,
+            true,
+            ''
+          )
+        }
+        break
+
+      case 1: // TWIN
+        // Both cores shoot
+        {
+          const angle1 = Math.atan2(
+            fromFixed(closestPlayer.y - boss.y),
+            fromFixed(closestPlayer.x - boss.x)
+          )
+          this.spawnBullet(
+            boss.x - toFixed(20),
+            boss.y,
+            toFixed(Math.cos(angle1) * 150),
+            toFixed(Math.sin(angle1) * 150),
+            'aimed',
+            0,
+            20,
+            true,
+            ''
+          )
+
+          if (boss.twin) {
+            const angle2 = Math.atan2(
+              fromFixed(closestPlayer.y) - boss.twin.y,
+              fromFixed(closestPlayer.x - boss.x)
+            )
+            this.spawnBullet(
+              boss.x - toFixed(20),
+              toFixed(boss.twin.y),
+              toFixed(Math.cos(angle2) * 150),
+              toFixed(Math.sin(angle2) * 150),
+              'aimed',
+              0,
+              20,
+              true,
+              ''
+            )
+          }
+        }
+        break
+
+      case 2: // CARRIER
+        // Spawn enemies
+        if (this.state.enemies.length < 15) {
+          const types: EnemyType[] = ['grunt', 'shooter', 'swerver']
+          for (let i = 0; i < 4; i++) {
+            const type = types[this.state.rng.nextInt(types.length)]!
+            this.spawnEnemy(
+              type,
+              boss.x - toFixed(20),
+              boss.y + toFixed((this.state.rng.next() - 0.5) * 60)
+            )
+          }
+        }
+        break
+
+      case 4: // WALL
+        // Each segment shoots
+        if (boss.segments) {
+          for (const seg of boss.segments) {
+            if (seg.hp > 0) {
+              this.spawnBullet(
+                boss.x - toFixed(40),
+                boss.y + toFixed(seg.y),
+                toFixed(-120),
+                0,
+                'enemy',
+                0,
+                18,
+                true,
+                ''
+              )
+            }
+          }
+        }
+        break
+
+      case 5: // FINAL
+        // Multiple attack patterns
+        {
+          const angle = Math.atan2(
+            fromFixed(closestPlayer.y - boss.y),
+            fromFixed(closestPlayer.x - boss.x)
+          )
+
+          // Aimed shots
+          for (let i = -2; i <= 2; i++) {
+            this.spawnBullet(
+              boss.x - toFixed(60),
+              boss.y + toFixed(i * 15),
+              toFixed(Math.cos(angle) * 180),
+              toFixed(Math.sin(angle) * 180 + i * 20),
+              'aimed',
+              0,
+              25,
+              true,
+              ''
+            )
+          }
+
+          // Spiral
+          for (let i = 0; i < 12; i++) {
+            const spiralAngle = boss.frame * 0.08 + (i / 12) * Math.PI * 2
+            this.spawnBullet(
+              boss.x,
+              boss.y,
+              toFixed(Math.cos(spiralAngle) * 70),
+              toFixed(Math.sin(spiralAngle) * 70),
+              'ring',
+              0,
+              20,
+              true,
+              ''
+            )
+          }
+        }
+        break
+    }
+  }
+
+  private bossFireLaser(boss: Boss): void {
+    this.state.screenShake = 0.4
+
+    // Create damaging beam effect
+    for (let i = 0; i < 50; i++) {
+      this.spawnParticle(
+        boss.x - toFixed(30 + i * 15),
+        boss.y + toFixed((this.state.rng.next() - 0.5) * 20),
+        toFixed(-200),
+        toFixed((this.state.rng.next() - 0.5) * 50),
+        30,
+        0, // Red color
+        8
+      )
+    }
+
+    // Damage players in laser path
+    for (const player of this.state.players) {
+      if (!player.dead && Math.abs(fromFixed(player.y - boss.y)) < 30) {
+        this.playerTakeDamage(player, 40)
+      }
+    }
+  }
+
+  private bossDie(boss: Boss): void {
+    this.spawnExplosion(boss.x, boss.y, 60)
+    this.state.score += Math.floor(boss.points * this.state.multiplier)
+    this.state.screenShake = 0.5
+
+    // Drop multiple powerups
+    for (let i = 0; i < 6; i++) {
+      this.spawnPowerup(
+        boss.x + toFixed((this.state.rng.next() - 0.5) * 60),
+        boss.y + toFixed((this.state.rng.next() - 0.5) * 60)
+      )
+    }
+
+    this.state.boss = null
+    this.state.bossActive = false
+  }
+
+  // ==========================================================================
+  // Powerup System
+  // ==========================================================================
+
+  private spawnPowerup(x: number, y: number): void {
+    // 5% chance for extra life
+    let type: PowerupType
+    if (this.state.rng.next() < 0.05) {
+      type = 'LIFE'
+    } else {
+      type = POWERUP_TYPES[this.state.rng.nextInt(POWERUP_TYPES.length)]!
+    }
+
+    this.state.powerups.push({
+      id: this.state.nextId++,
+      x,
+      y,
+      type,
+      frame: 0,
+    })
+  }
+
+  private updatePowerups(dt: number): void {
+    const toRemove: number[] = []
+
+    for (const powerup of this.state.powerups) {
+      powerup.x -= toFixed(22 * dt)
+      powerup.frame++
+
+      // Check if collected
+      for (const player of this.state.players) {
+        if (player.dead) continue
+
+        const dx = Math.abs(fromFixed(player.x - powerup.x))
+        const dy = Math.abs(fromFixed(player.y - powerup.y))
+
+        if (dx < 18 && dy < 18) {
+          this.addPlayerPowerup(player, powerup.type)
+          this.spawnExplosion(powerup.x, powerup.y, 6)
+          toRemove.push(powerup.id)
+          break
+        }
+      }
+
+      // Check bounds
+      if (fromFixed(powerup.x) < -fromFixed(HALF_WIDTH) - 20) {
+        toRemove.push(powerup.id)
+      }
+    }
+
+    this.state.powerups = this.state.powerups.filter(
+      (p) => !toRemove.includes(p.id)
+    )
+  }
+
+  // ==========================================================================
+  // Particle System
+  // ==========================================================================
+
+  private spawnParticle(
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    life: number,
+    colorIndex: number,
+    size: number
+  ): void {
+    this.state.particles.push({
+      id: this.state.nextId++,
+      x,
+      y,
+      vx,
+      vy,
+      life,
+      colorIndex,
+      size,
+    })
+  }
+
+  private spawnExplosion(x: number, y: number, count: number): void {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2
+      const speed = 40 + this.state.rng.next() * 140
+      this.spawnParticle(
+        x,
+        y,
+        toFixed(Math.cos(angle) * speed),
+        toFixed(Math.sin(angle) * speed),
+        21 + this.state.rng.nextInt(21), // 0.35-0.7 seconds
+        this.state.rng.nextInt(5), // Random explosion color
+        2 + this.state.rng.next() * 4
+      )
+    }
+  }
+
+  private updateParticles(dt: number): void {
+    for (const particle of this.state.particles) {
+      particle.x += Math.round(particle.vx * dt)
+      particle.y += Math.round(particle.vy * dt)
+      particle.life--
+      particle.size *= 0.94
+    }
+
+    this.state.particles = this.state.particles.filter((p) => p.life > 0)
+  }
+
+  // ==========================================================================
+  // Wave Spawning
+  // ==========================================================================
+
+  private updateWaveSpawning(dt: number): void {
+    this.state.waveTimer += dt
+
+    // Don't spawn during boss fight
+    if (this.state.bossActive) return
+
+    // Spawn wave when timer reaches threshold and few enemies remain
+    if (this.state.waveTimer > 6 && this.state.enemies.length < 3) {
+      this.state.waveTimer = 0
+      this.state.wave++
+      this.spawnWave()
+    }
+
+    // Initial wave spawn
+    if (
+      this.state.wave === 1 &&
+      this.state.enemies.length === 0 &&
+      this.state.waveTimer > 1.2
+    ) {
+      this.spawnWave()
+    }
+  }
+
+  private getAvailableEnemies(): EnemyType[] {
+    const all: EnemyType[] = ['grunt']
+    if (this.state.wave >= 2) all.push('swerver')
+    if (this.state.wave >= 3) all.push('shooter', 'speeder')
+    if (this.state.wave >= 4) all.push('mine')
+    if (this.state.wave >= 5) all.push('bomber', 'spiral')
+    if (this.state.wave >= 7) all.push('tank', 'sniper')
+    if (this.state.wave >= 9) all.push('carrier', 'shield')
+    if (this.state.wave >= 11) all.push('splitter')
+    return all
+  }
+
+  private spawnWave(): void {
+    const available = this.getAvailableEnemies()
+    const patterns = ['line', 'v', 'swarm', 'mixed', 'rush', 'surround']
+    const pattern = patterns[this.state.rng.nextInt(patterns.length)]
+    const count = 4 + Math.floor(this.state.wave * 0.8)
+    const halfW = fromFixed(HALF_WIDTH)
+    const halfH = fromFixed(HALF_HEIGHT)
+
+    switch (pattern) {
+      case 'line':
+        for (let i = 0; i < count; i++) {
+          const type =
+            available[
+              this.state.rng.nextInt(Math.min(available.length, 3))
+            ]!
+          this.spawnEnemy(
+            type,
+            toFixed(halfW + 20 + i * 30),
+            toFixed(-halfH * 0.5 + this.state.rng.next() * halfH)
+          )
+        }
+        break
+
+      case 'v':
+        for (let i = 0; i < 7; i++) {
+          const yOff = Math.abs(i - 3) * 18
+          this.spawnEnemy(
+            'grunt',
+            toFixed(halfW + 20 + i * 20),
+            toFixed(yOff * (i < 3 ? -1 : 1))
+          )
+        }
+        break
+
+      case 'swarm':
+        for (let i = 0; i < count; i++) {
+          const type = available[this.state.rng.nextInt(available.length)]!
+          this.spawnEnemy(
+            type,
+            toFixed(halfW + 20 + i * 25),
+            toFixed((this.state.rng.next() - 0.5) * halfH * 1.6)
+          )
+        }
+        break
+
+      case 'mixed':
+        this.spawnEnemy('shooter', toFixed(halfW + 20), toFixed(-halfH * 0.5))
+        this.spawnEnemy('shooter', toFixed(halfW + 20), toFixed(halfH * 0.5))
+        for (let i = 0; i < 4; i++) {
+          this.spawnEnemy(
+            'grunt',
+            toFixed(halfW + 50 + i * 35),
+            toFixed((this.state.rng.next() - 0.5) * 40)
+          )
+        }
+        break
+
+      case 'rush':
+        for (let i = 0; i < count + 3; i++) {
+          this.spawnEnemy(
+            'speeder',
+            toFixed(halfW + 20 + i * 40),
+            toFixed((this.state.rng.next() - 0.5) * halfH * 1.6)
+          )
+        }
+        break
+
+      case 'surround':
+        for (let i = 0; i < 6; i++) {
+          const type = available[this.state.rng.nextInt(available.length)]!
+          this.spawnEnemy(type, toFixed(halfW + 20), toFixed((i - 2.5) * 80))
+        }
+        break
+    }
+
+    // Special spawns every 3 waves after wave 6
+    if (this.state.wave % 3 === 0 && this.state.wave >= 6) {
+      const heavies: EnemyType[] = available.filter((t) =>
+        ['tank', 'carrier', 'shield'].includes(t)
+      )
+      if (heavies.length > 0) {
+        const type = heavies[this.state.rng.nextInt(heavies.length)]!
+        this.spawnEnemy(type, toFixed(halfW + 80), toFixed(0))
+      }
+    }
+
+    // Boss every 5 waves
+    if (this.state.wave % 5 === 0 && !this.state.bossActive) {
+      const bossType = Math.min(5, Math.floor(this.state.wave / 5) - 1) as BossType
+      this.spawnBoss(bossType)
+    }
+  }
+
+  // ==========================================================================
+  // Collision Detection
+  // ==========================================================================
+
+  private checkCollisions(): void {
+    // Player bullets vs enemies
+    for (const bullet of this.state.bullets) {
+      if (bullet.isEnemy) continue
+
+      // Check enemies
+      for (const enemy of this.state.enemies) {
+        if (bullet.hitEntities.has(enemy.id)) continue
+
+        if (this.bulletHitsEnemy(bullet, enemy)) {
+          bullet.hitEntities.add(enemy.id)
+
+          // Handle shield
+          if (enemy.hasShield && enemy.shieldHealth && enemy.shieldHealth > 0) {
+            enemy.shieldHealth -= bullet.damage
+            if (enemy.shieldHealth <= 0) {
+              enemy.hasShield = false
+            }
+          } else {
+            enemy.health -= bullet.damage
+          }
+
+          if (bullet.pierce <= 0) {
+            bullet.lifetime = 0
+          } else {
+            bullet.pierce--
+          }
 
           if (enemy.health <= 0) {
-            // Award score to the player who shot
-            const playerIndex = this.playerIds.indexOf(bullet.playerId!)
-            if (playerIndex >= 0) {
-              this.state.score[playerIndex] = (this.state.score[playerIndex] ?? 0) + 100
-            }
+            this.enemyDie(enemy)
+            enemy.health = 0 // Mark for removal
+          } else {
+            this.spawnExplosion(bullet.x, bullet.y, 2)
+          }
+
+          break
+        }
+      }
+
+      // Check boss
+      if (this.state.boss && !bullet.hitEntities.has(this.state.boss.id)) {
+        if (this.bulletHitsBoss(bullet, this.state.boss)) {
+          bullet.hitEntities.add(this.state.boss.id)
+          this.state.boss.health -= bullet.damage
+
+          if (bullet.pierce <= 0) {
+            bullet.lifetime = 0
+          } else {
+            bullet.pierce--
+          }
+
+          if (this.state.boss.health <= 0) {
+            this.bossDie(this.state.boss)
+          } else {
+            this.spawnExplosion(bullet.x, bullet.y, 2)
           }
         }
       }
     }
 
-    // Enemy vs Player
-    for (const enemy of enemies) {
-      for (const player of players) {
-        if (this.entitiesCollide(enemy, player, toFixed(25))) {
-          player.health -= 20
-          enemy.health = 0
+    // Beams vs enemies/boss
+    for (const beam of this.state.beams) {
+      for (const enemy of this.state.enemies) {
+        if (beam.hitEntities.has(enemy.id)) continue
+
+        const ex = fromFixed(enemy.x)
+        const ey = fromFixed(enemy.y)
+        const bx = fromFixed(beam.x)
+        const by = fromFixed(beam.y)
+
+        // Beam hits if enemy is to the right of beam origin and within height
+        if (ex > bx && Math.abs(ey - by) < 25) {
+          beam.hitEntities.add(enemy.id)
+          enemy.health -= beam.power * 5
+
+          if (enemy.health <= 0) {
+            this.enemyDie(enemy)
+            enemy.health = 0
+          }
+        }
+      }
+
+      if (this.state.boss && !beam.hitEntities.has(this.state.boss.id)) {
+        const bossX = fromFixed(this.state.boss.x)
+        const bossY = fromFixed(this.state.boss.y)
+        const bx = fromFixed(beam.x)
+        const by = fromFixed(beam.y)
+
+        if (bossX > bx && Math.abs(bossY - by) < 40) {
+          beam.hitEntities.add(this.state.boss.id)
+          this.state.boss.health -= beam.power * 10
+
+          if (this.state.boss.health <= 0) {
+            this.bossDie(this.state.boss)
+          }
         }
       }
     }
+
+    // Missiles vs enemies/boss
+    for (const missile of this.state.missiles) {
+      const mx = fromFixed(missile.x)
+      const my = fromFixed(missile.y)
+
+      for (const enemy of this.state.enemies) {
+        const ex = fromFixed(enemy.x)
+        const ey = fromFixed(enemy.y)
+
+        if (Math.hypot(ex - mx, ey - my) < 25) {
+          enemy.health -= missile.damage
+          this.spawnExplosion(missile.x, missile.y, 8)
+          missile.lifetime = 0
+
+          if (enemy.health <= 0) {
+            this.enemyDie(enemy)
+            enemy.health = 0
+          }
+          break
+        }
+      }
+
+      if (this.state.boss && missile.lifetime > 0) {
+        const bossX = fromFixed(this.state.boss.x)
+        const bossY = fromFixed(this.state.boss.y)
+
+        if (Math.hypot(bossX - mx, bossY - my) < 50) {
+          this.state.boss.health -= missile.damage
+          this.spawnExplosion(missile.x, missile.y, 8)
+          missile.lifetime = 0
+
+          if (this.state.boss.health <= 0) {
+            this.bossDie(this.state.boss)
+          }
+        }
+      }
+    }
+
+    // Player orbs vs enemies/bullets
+    for (const player of this.state.players) {
+      if (player.dead) continue
+
+      for (const orb of player.orbs) {
+        const ox = fromFixed(player.x) + Math.cos(orb.angle) * orb.radius
+        const oy = fromFixed(player.y) + Math.sin(orb.angle) * orb.radius
+
+        // Orbs vs enemies
+        for (const enemy of this.state.enemies) {
+          const ex = fromFixed(enemy.x)
+          const ey = fromFixed(enemy.y)
+
+          if (Math.hypot(ex - ox, ey - oy) < 25) {
+            enemy.health -= 2
+            this.spawnExplosion(toFixed(ox), toFixed(oy), 4)
+
+            if (enemy.health <= 0) {
+              this.enemyDie(enemy)
+              enemy.health = 0
+            }
+          }
+        }
+
+        // Orbs vs enemy bullets
+        for (const bullet of this.state.bullets) {
+          if (!bullet.isEnemy) continue
+
+          const bx = fromFixed(bullet.x)
+          const by = fromFixed(bullet.y)
+
+          if (Math.hypot(bx - ox, by - oy) < 8) {
+            this.spawnExplosion(bullet.x, bullet.y, 2)
+            bullet.lifetime = 0
+          }
+        }
+      }
+    }
+
+    // Enemy bullets vs players
+    for (const bullet of this.state.bullets) {
+      if (!bullet.isEnemy) continue
+
+      for (const player of this.state.players) {
+        if (player.dead || player.invincible > 0) continue
+
+        const px = fromFixed(player.x)
+        const py = fromFixed(player.y)
+        const bx = fromFixed(bullet.x)
+        const by = fromFixed(bullet.y)
+
+        if (Math.abs(bx - px) < 10 && Math.abs(by - py) < 8) {
+          this.playerTakeDamage(player, bullet.damage)
+          bullet.lifetime = 0
+          break
+        }
+      }
+    }
+
+    // Enemies vs players (collision)
+    for (const enemy of this.state.enemies) {
+      const ex = fromFixed(enemy.x)
+      const ey = fromFixed(enemy.y)
+
+      for (const player of this.state.players) {
+        if (player.dead || player.invincible > 0) continue
+
+        const px = fromFixed(player.x)
+        const py = fromFixed(player.y)
+
+        if (Math.abs(ex - px) < 25 && Math.abs(ey - py) < 20) {
+          this.playerTakeDamage(player, 25)
+          break
+        }
+      }
+    }
+
+    // Remove dead enemies
+    this.state.enemies = this.state.enemies.filter((e) => e.health > 0)
+
+    // Remove dead bullets
+    this.state.bullets = this.state.bullets.filter((b) => b.lifetime > 0)
+
+    // Remove dead missiles
+    this.state.missiles = this.state.missiles.filter((m) => m.lifetime > 0)
   }
 
-  private entitiesCollide(a: Entity, b: Entity, radius: number): boolean {
-    const dx = a.x - b.x
-    const dy = a.y - b.y
-    const distSq = mulFixed(dx, dx) + mulFixed(dy, dy)
-    const radiusSq = mulFixed(radius, radius)
-    return distSq < radiusSq
+  private bulletHitsEnemy(bullet: Bullet, enemy: Enemy): boolean {
+    const bx = fromFixed(bullet.x)
+    const by = fromFixed(bullet.y)
+    const ex = fromFixed(enemy.x)
+    const ey = fromFixed(enemy.y)
+
+    // Different hitbox sizes per enemy type
+    const size =
+      enemy.type === 'tank'
+        ? 30
+        : enemy.type === 'carrier'
+          ? 35
+          : enemy.type === 'mine'
+            ? 15
+            : 20
+
+    return Math.abs(bx - ex) < size && Math.abs(by - ey) < size
   }
 
-  private maybeSpawnEnemies(): void {
-    // Spawn enemies every 60 frames (1 second)
-    if (this.state.frame % 60 === 0 && this.state.frame > 0) {
-      const y = toFixed(this.state.rng.nextRange(-250, 250))
+  private bulletHitsBoss(bullet: Bullet, boss: Boss): boolean {
+    const bx = fromFixed(bullet.x)
+    const by = fromFixed(bullet.y)
+    const bossX = fromFixed(boss.x)
+    const bossY = fromFixed(boss.y)
 
-      this.state.entities.push({
-        id: this.state.nextEntityId++,
-        type: 'enemy',
-        x: PLAY_AREA_WIDTH / 2 + toFixed(50),
-        y,
-        vx: toFixed(-100 - this.state.rng.next() * 50),
-        vy: 0,
-        rotation: Math.PI,
-        health: 50,
-      })
+    // Boss hitbox size varies by type
+    const size = boss.type === 4 ? 55 : boss.type === 5 ? 50 : 40
+
+    return Math.abs(bx - bossX) < size && Math.abs(by - bossY) < size
+  }
+
+  // ==========================================================================
+  // Utility Functions
+  // ==========================================================================
+
+  private getClosestPlayer(x: number, y: number): Player | null {
+    let closest: Player | null = null
+    let minDist = Infinity
+
+    for (const player of this.state.players) {
+      if (player.dead) continue
+
+      const dist = Math.hypot(
+        fromFixed(player.x - x),
+        fromFixed(player.y - y)
+      )
+
+      if (dist < minDist) {
+        minDist = dist
+        closest = player
+      }
+    }
+
+    return closest
+  }
+
+  private checkGameOver(): void {
+    const allDead = this.state.players.every(
+      (p) => p.dead && p.lives <= 0
+    )
+
+    if (allDead) {
+      this.state.gameOver = true
     }
   }
 
-  // State access (convert from fixed-point for rendering)
+  // ==========================================================================
+  // State Access
+  // ==========================================================================
+
   getState(): {
     frame: number
-    entities: Array<{
+    players: Array<{
       id: number
-      type: string
+      playerId: string
       x: number
       y: number
       vx: number
       vy: number
-      rotation: number
-      health: number
-      playerId?: string
+      shields: number
+      maxShields: number
+      shipLevel: number
+      lives: number
+      dead: boolean
+      invincible: number
+      charging: boolean
+      chargeTime: number
+      powerups: Player['powerups']
+      orbs: Orb[]
+      drones: Array<{ x: number; y: number }>
     }>
-    score: number[]
+    bullets: Array<{
+      id: number
+      x: number
+      y: number
+      type: BulletType
+      isEnemy: boolean
+    }>
+    beams: Array<{
+      id: number
+      x: number
+      y: number
+      width: number
+      power: number
+    }>
+    missiles: Array<{
+      id: number
+      x: number
+      y: number
+      vx: number
+      vy: number
+    }>
+    enemies: Array<{
+      id: number
+      type: EnemyType
+      x: number
+      y: number
+      health: number
+      maxHealth: number
+      hasShield: boolean
+    }>
+    boss: {
+      id: number
+      type: BossType
+      x: number
+      y: number
+      health: number
+      maxHealth: number
+      charging: boolean
+      chargeTime: number
+      twin?: { y: number }
+      segments?: Array<{ y: number; hp: number }>
+    } | null
+    powerups: Array<{
+      id: number
+      x: number
+      y: number
+      type: PowerupType
+      frame: number
+    }>
+    particles: Array<{
+      id: number
+      x: number
+      y: number
+      colorIndex: number
+      size: number
+    }>
+    score: number
+    multiplier: number
+    wave: number
+    screenShake: number
+    bossActive: boolean
+    gameOver: boolean
   } {
     return {
       frame: this.state.frame,
-      entities: this.state.entities.map((e) => ({
+      players: this.state.players.map((p) => ({
+        id: p.id,
+        playerId: p.playerId,
+        x: fromFixed(p.x),
+        y: fromFixed(p.y),
+        vx: fromFixed(p.vx),
+        vy: fromFixed(p.vy),
+        shields: p.shields,
+        maxShields: p.maxShields,
+        shipLevel: p.shipLevel,
+        lives: p.lives,
+        dead: p.dead,
+        invincible: p.invincible,
+        charging: p.charging,
+        chargeTime: p.chargeTime,
+        powerups: { ...p.powerups },
+        orbs: p.orbs.map((o) => ({ ...o })),
+        drones: p.drones.map((d) => ({ x: d.x, y: d.y })),
+      })),
+      bullets: this.state.bullets.map((b) => ({
+        id: b.id,
+        x: fromFixed(b.x),
+        y: fromFixed(b.y),
+        type: b.type,
+        isEnemy: b.isEnemy,
+      })),
+      beams: this.state.beams.map((b) => ({
+        id: b.id,
+        x: fromFixed(b.x),
+        y: fromFixed(b.y),
+        width: fromFixed(b.width),
+        power: b.power,
+      })),
+      missiles: this.state.missiles.map((m) => ({
+        id: m.id,
+        x: fromFixed(m.x),
+        y: fromFixed(m.y),
+        vx: fromFixed(m.vx),
+        vy: fromFixed(m.vy),
+      })),
+      enemies: this.state.enemies.map((e) => ({
         id: e.id,
         type: e.type,
         x: fromFixed(e.x),
         y: fromFixed(e.y),
-        vx: fromFixed(e.vx),
-        vy: fromFixed(e.vy),
-        rotation: e.rotation,
         health: e.health,
-        playerId: e.playerId,
+        maxHealth: e.maxHealth,
+        hasShield: e.hasShield ?? false,
       })),
-      score: [...this.state.score],
+      boss: this.state.boss
+        ? {
+            id: this.state.boss.id,
+            type: this.state.boss.type,
+            x: fromFixed(this.state.boss.x),
+            y: fromFixed(this.state.boss.y),
+            health: this.state.boss.health,
+            maxHealth: this.state.boss.maxHealth,
+            charging: this.state.boss.charging ?? false,
+            chargeTime: this.state.boss.chargeTime ?? 0,
+            twin: this.state.boss.twin
+              ? { y: this.state.boss.twin.y }
+              : undefined,
+            segments: this.state.boss.segments,
+          }
+        : null,
+      powerups: this.state.powerups.map((p) => ({
+        id: p.id,
+        x: fromFixed(p.x),
+        y: fromFixed(p.y),
+        type: p.type,
+        frame: p.frame,
+      })),
+      particles: this.state.particles.map((p) => ({
+        id: p.id,
+        x: fromFixed(p.x),
+        y: fromFixed(p.y),
+        colorIndex: p.colorIndex,
+        size: p.size,
+      })),
+      score: this.state.score,
+      multiplier: this.state.multiplier,
+      wave: this.state.wave,
+      screenShake: this.state.screenShake,
+      bossActive: this.state.bossActive,
+      gameOver: this.state.gameOver,
     }
   }
 
-  /**
-   * Generate checksum for desync detection
-   */
   getChecksum(): number {
     let hash = this.state.frame
-    for (const entity of this.state.entities) {
-      hash ^= entity.id
-      hash ^= entity.x
-      hash ^= entity.y
-      hash ^= entity.health
+    for (const player of this.state.players) {
+      hash ^= player.id
+      hash ^= player.x
+      hash ^= player.y
+      hash ^= player.shields
+      hash = (hash * 31) >>> 0
+    }
+    for (const enemy of this.state.enemies) {
+      hash ^= enemy.id
+      hash ^= enemy.x
+      hash ^= enemy.y
+      hash ^= enemy.health
       hash = (hash * 31) >>> 0
     }
     return hash
@@ -375,6 +2377,6 @@ export class Simulation {
   }
 
   getPlayerIds(): string[] {
-    return this.playerIds
+    return this.state.players.map((p) => p.playerId)
   }
 }
