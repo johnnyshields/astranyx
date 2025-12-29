@@ -586,8 +586,18 @@ export class Simulation {
     if (input.left) dvx -= accel * dt
     if (input.right) dvx += accel * dt
 
-    // Slight gravity
-    dvy += 50 * dt
+    // Slight gravity (set to 0 for now)
+    const gravity = 0
+    dvy += gravity * dt
+
+    // Fugoid oscillation when idle (subtle up/down drift, max +/-20 units)
+    const isMoving = input.up || input.down || input.left || input.right
+    if (!isMoving) {
+      // Oscillation period ~3 seconds (180 frames at 60fps)
+      const oscillationPhase = (player.frame % 180) / 180 * Math.PI * 2
+      // Apply gentle sinusoidal force - tuned so amplitude stays within +/-20 units
+      dvy += Math.sin(oscillationPhase) * 25 * dt
+    }
 
     // Apply velocity changes
     let vx = fromFixed(player.vx) + dvx
