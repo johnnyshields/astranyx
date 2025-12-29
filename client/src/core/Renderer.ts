@@ -57,6 +57,12 @@ export class Renderer {
   private height = 0
   private time = 0
 
+  // Viewport for 5:3 letterbox/pillarbox (screen-space, not tilted)
+  private viewportX = 0
+  private viewportY = 0
+  private viewportWidth = 0
+  private viewportHeight = 0
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
   }
@@ -151,15 +157,32 @@ export class Renderer {
   resize(width: number, height: number): void {
     this.width = width
     this.height = height
-    this.gl.viewport(0, 0, width, height)
 
-    // Perspective projection for 2.5D look
-    const aspectRatio = width / height
+    // Fixed 5:3 aspect ratio viewport (letterbox/pillarbox)
+    // This is screen-space, not affected by game camera tilt
+    const targetAspect = 5 / 3
+    const screenAspect = width / height
+
+    if (screenAspect > targetAspect) {
+      // Screen is wider than target - pillarbox (black bars on sides)
+      this.viewportHeight = height
+      this.viewportWidth = Math.floor(height * targetAspect)
+      this.viewportX = Math.floor((width - this.viewportWidth) / 2)
+      this.viewportY = 0
+    } else {
+      // Screen is taller than target - letterbox (black bars on top/bottom)
+      this.viewportWidth = width
+      this.viewportHeight = Math.floor(width / targetAspect)
+      this.viewportX = 0
+      this.viewportY = Math.floor((height - this.viewportHeight) / 2)
+    }
+
+    // Perspective projection for 2.5D look (always 5:3)
     const fov = 45 * (Math.PI / 180) // 45 degree field of view
     const near = 10
     const far = 2000
 
-    this.setPerspective(fov, aspectRatio, near, far)
+    this.setPerspective(fov, targetAspect, near, far)
 
     // Set up camera view matrix with tilt
     this.setupCamera()
@@ -284,7 +307,16 @@ export class Renderer {
     this.time += deltaTime
     const gl = this.gl
 
-    // Clear with dark blue-black background
+    // First: clear entire screen to black (letterbox/pillarbox bars)
+    gl.disable(gl.SCISSOR_TEST)
+    gl.viewport(0, 0, this.width, this.height)
+    gl.clearColor(0, 0, 0, 1.0)
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+    // Then: set viewport to 5:3 game area and clear with game background
+    gl.viewport(this.viewportX, this.viewportY, this.viewportWidth, this.viewportHeight)
+    gl.enable(gl.SCISSOR_TEST)
+    gl.scissor(this.viewportX, this.viewportY, this.viewportWidth, this.viewportHeight)
     gl.clearColor(0.02, 0.02, 0.06, 1.0)
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
@@ -498,5 +530,168 @@ export class Renderer {
 
   getTime(): number {
     return this.time
+  }
+
+  getCameraTiltAngle(): number {
+    return this.cameraTiltAngle
+  }
+
+  setCameraTiltAngle(angle: number): void {
+    this.cameraTiltAngle = angle
+    this.setupCamera()
+  }
+
+  /**
+   * Calculate the world-space play bounds that map to the viewport edges.
+   * This accounts for perspective and camera tilt so the game can constrain
+   * entities to the visible area regardless of camera angle.
+   *
+   * Returns { leftX, rightX, topY, bottomY } at the z=0 plane
+   * Also returns per-edge Y bounds since they vary with X due to perspective
+   */
+  getPlayBounds(): {
+    leftX: number
+    rightX: number
+    getTopY: (x: number) => number
+    getBottomY: (x: number) => number
+  } {
+    // Unproject viewport corners to z=0 plane
+    // NDC corners: (-1,-1), (1,-1), (1,1), (-1,1) -> bottom-left, bottom-right, top-right, top-left
+
+    // Build inverse view-projection matrix
+    const vp = this.multiplyMatrices(this.projectionMatrix, this.viewMatrix)
+    const invVP = this.invertMatrix(vp)
+
+    // Unproject all four corners to z=0 plane
+    const corners = [
+      this.unprojectToZ0(invVP, -1, -1),  // bottom-left
+      this.unprojectToZ0(invVP, 1, -1),   // bottom-right
+      this.unprojectToZ0(invVP, 1, 1),    // top-right
+      this.unprojectToZ0(invVP, -1, 1),   // top-left
+    ]
+
+    // Due to perspective, left edge has different Y range than right edge
+    // Left edge: corners[0] (bottom-left) to corners[3] (top-left)
+    // Right edge: corners[1] (bottom-right) to corners[2] (top-right)
+
+    const leftX = (corners[0]!.x + corners[3]!.x) / 2
+    const rightX = (corners[1]!.x + corners[2]!.x) / 2 - 100  // Buffer on right side
+
+    const leftBottomY = corners[0]!.y
+    const leftTopY = corners[3]!.y
+    const rightBottomY = corners[1]!.y
+    const rightTopY = corners[2]!.y
+
+    // Interpolate Y bounds based on X position
+    const getTopY = (x: number): number => {
+      const t = (x - leftX) / (rightX - leftX)
+      return leftTopY + t * (rightTopY - leftTopY)
+    }
+
+    const getBottomY = (x: number): number => {
+      const t = (x - leftX) / (rightX - leftX)
+      return leftBottomY + t * (rightBottomY - leftBottomY)
+    }
+
+    return { leftX, rightX, getTopY, getBottomY }
+  }
+
+  /**
+   * Unproject a normalized device coordinate point to the z=0 plane in world space.
+   */
+  private unprojectToZ0(invVP: Float32Array, ndcX: number, ndcY: number): { x: number, y: number } {
+    // Create two points along the ray: near plane (z=-1) and far plane (z=1)
+    const nearPoint = this.transformPoint(invVP, ndcX, ndcY, -1)
+    const farPoint = this.transformPoint(invVP, ndcX, ndcY, 1)
+
+    // Find where ray intersects z=0 plane
+    // Ray: P = nearPoint + t * (farPoint - nearPoint)
+    // At z=0: nearPoint.z + t * (farPoint.z - nearPoint.z) = 0
+    const dz = farPoint.z - nearPoint.z
+    if (Math.abs(dz) < 0.0001) {
+      // Ray is parallel to z=0 plane, use near point
+      return { x: nearPoint.x, y: nearPoint.y }
+    }
+
+    const t = -nearPoint.z / dz
+    return {
+      x: nearPoint.x + t * (farPoint.x - nearPoint.x),
+      y: nearPoint.y + t * (farPoint.y - nearPoint.y),
+    }
+  }
+
+  private transformPoint(m: Float32Array, x: number, y: number, z: number): { x: number, y: number, z: number } {
+    const w = m[3]! * x + m[7]! * y + m[11]! * z + m[15]!
+    return {
+      x: (m[0]! * x + m[4]! * y + m[8]! * z + m[12]!) / w,
+      y: (m[1]! * x + m[5]! * y + m[9]! * z + m[13]!) / w,
+      z: (m[2]! * x + m[6]! * y + m[10]! * z + m[14]!) / w,
+    }
+  }
+
+  private multiplyMatrices(a: Float32Array, b: Float32Array): Float32Array {
+    const result = new Float32Array(16)
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        result[i * 4 + j] =
+          a[j]! * b[i * 4]! +
+          a[j + 4]! * b[i * 4 + 1]! +
+          a[j + 8]! * b[i * 4 + 2]! +
+          a[j + 12]! * b[i * 4 + 3]!
+      }
+    }
+    return result
+  }
+
+  private invertMatrix(m: Float32Array): Float32Array {
+    const inv = new Float32Array(16)
+
+    inv[0] = m[5]! * m[10]! * m[15]! - m[5]! * m[11]! * m[14]! - m[9]! * m[6]! * m[15]! +
+             m[9]! * m[7]! * m[14]! + m[13]! * m[6]! * m[11]! - m[13]! * m[7]! * m[10]!
+    inv[4] = -m[4]! * m[10]! * m[15]! + m[4]! * m[11]! * m[14]! + m[8]! * m[6]! * m[15]! -
+             m[8]! * m[7]! * m[14]! - m[12]! * m[6]! * m[11]! + m[12]! * m[7]! * m[10]!
+    inv[8] = m[4]! * m[9]! * m[15]! - m[4]! * m[11]! * m[13]! - m[8]! * m[5]! * m[15]! +
+             m[8]! * m[7]! * m[13]! + m[12]! * m[5]! * m[11]! - m[12]! * m[7]! * m[9]!
+    inv[12] = -m[4]! * m[9]! * m[14]! + m[4]! * m[10]! * m[13]! + m[8]! * m[5]! * m[14]! -
+              m[8]! * m[6]! * m[13]! - m[12]! * m[5]! * m[10]! + m[12]! * m[6]! * m[9]!
+    inv[1] = -m[1]! * m[10]! * m[15]! + m[1]! * m[11]! * m[14]! + m[9]! * m[2]! * m[15]! -
+             m[9]! * m[3]! * m[14]! - m[13]! * m[2]! * m[11]! + m[13]! * m[3]! * m[10]!
+    inv[5] = m[0]! * m[10]! * m[15]! - m[0]! * m[11]! * m[14]! - m[8]! * m[2]! * m[15]! +
+             m[8]! * m[3]! * m[14]! + m[12]! * m[2]! * m[11]! - m[12]! * m[3]! * m[10]!
+    inv[9] = -m[0]! * m[9]! * m[15]! + m[0]! * m[11]! * m[13]! + m[8]! * m[1]! * m[15]! -
+             m[8]! * m[3]! * m[13]! - m[12]! * m[1]! * m[11]! + m[12]! * m[3]! * m[9]!
+    inv[13] = m[0]! * m[9]! * m[14]! - m[0]! * m[10]! * m[13]! - m[8]! * m[1]! * m[14]! +
+              m[8]! * m[2]! * m[13]! + m[12]! * m[1]! * m[10]! - m[12]! * m[2]! * m[9]!
+    inv[2] = m[1]! * m[6]! * m[15]! - m[1]! * m[7]! * m[14]! - m[5]! * m[2]! * m[15]! +
+             m[5]! * m[3]! * m[14]! + m[13]! * m[2]! * m[7]! - m[13]! * m[3]! * m[6]!
+    inv[6] = -m[0]! * m[6]! * m[15]! + m[0]! * m[7]! * m[14]! + m[4]! * m[2]! * m[15]! -
+             m[4]! * m[3]! * m[14]! - m[12]! * m[2]! * m[7]! + m[12]! * m[3]! * m[6]!
+    inv[10] = m[0]! * m[5]! * m[15]! - m[0]! * m[7]! * m[13]! - m[4]! * m[1]! * m[15]! +
+              m[4]! * m[3]! * m[13]! + m[12]! * m[1]! * m[7]! - m[12]! * m[3]! * m[5]!
+    inv[14] = -m[0]! * m[5]! * m[14]! + m[0]! * m[6]! * m[13]! + m[4]! * m[1]! * m[14]! -
+              m[4]! * m[2]! * m[13]! - m[12]! * m[1]! * m[6]! + m[12]! * m[2]! * m[5]!
+    inv[3] = -m[1]! * m[6]! * m[11]! + m[1]! * m[7]! * m[10]! + m[5]! * m[2]! * m[11]! -
+             m[5]! * m[3]! * m[10]! - m[9]! * m[2]! * m[7]! + m[9]! * m[3]! * m[6]!
+    inv[7] = m[0]! * m[6]! * m[11]! - m[0]! * m[7]! * m[10]! - m[4]! * m[2]! * m[11]! +
+             m[4]! * m[3]! * m[10]! + m[8]! * m[2]! * m[7]! - m[8]! * m[3]! * m[6]!
+    inv[11] = -m[0]! * m[5]! * m[11]! + m[0]! * m[7]! * m[9]! + m[4]! * m[1]! * m[11]! -
+              m[4]! * m[3]! * m[9]! - m[8]! * m[1]! * m[7]! + m[8]! * m[3]! * m[5]!
+    inv[15] = m[0]! * m[5]! * m[10]! - m[0]! * m[6]! * m[9]! - m[4]! * m[1]! * m[10]! +
+              m[4]! * m[2]! * m[9]! + m[8]! * m[1]! * m[6]! - m[8]! * m[2]! * m[5]!
+
+    const det = m[0]! * inv[0]! + m[1]! * inv[4]! + m[2]! * inv[8]! + m[3]! * inv[12]!
+
+    if (Math.abs(det) < 0.0001) {
+      // Matrix is not invertible, return identity
+      this.setIdentity(inv)
+      return inv
+    }
+
+    const invDet = 1.0 / det
+    for (let i = 0; i < 16; i++) {
+      inv[i]! *= invDet
+    }
+
+    return inv
   }
 }

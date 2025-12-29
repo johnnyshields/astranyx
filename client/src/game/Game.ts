@@ -229,6 +229,11 @@ export class Game {
       special: inputState.special,
     }
 
+    // Update play bounds from renderer (camera-compensated)
+    if (this.simulation) {
+      this.simulation.setPlayBounds(this.renderer.getPlayBounds())
+    }
+
     if (this.singlePlayerMode) {
       // Single player: immediate simulation
       const inputs = new Map<string, PlayerInput>()
@@ -408,16 +413,18 @@ export class Game {
     }
 
     const color = isLocal ? COLORS.player1 : COLORS.player2
-    const rotation = -player.vy * 0.002
-    const clampedRotation = Math.max(-0.4, Math.min(0.4, rotation))
+    const pitchRotation = -player.vy * 0.002  // Pitch up/down based on vertical movement
+    const clampedPitch = Math.max(-0.4, Math.min(0.4, pitchRotation))
+    const rollRotation = player.vx * 0.0008   // Subtle roll based on horizontal movement
+    const clampedRoll = Math.max(-0.15, Math.min(0.15, rollRotation))
 
     // Ship size scales with level
     const baseScale = 50 + lvl * 12
 
     // Engine exhaust (animated quads - keep as 2D effects)
     const exhaustLength = 30 + Math.sin(player.chargeTime * 20) * 5
-    this.renderer.drawQuad(x - baseScale/2 - exhaustLength/2, y, -5, exhaustLength, 10, [0.2, 0.5, 1.0, 0.5], clampedRotation)
-    this.renderer.drawQuad(x - baseScale/2 - exhaustLength/3, y, -3, exhaustLength/2, 6, [0.5, 0.8, 1.0, 0.8], clampedRotation)
+    this.renderer.drawQuad(x - baseScale/2 - exhaustLength/2, y, -5, exhaustLength, 10, [0.2, 0.5, 1.0, 0.5], clampedPitch)
+    this.renderer.drawQuad(x - baseScale/2 - exhaustLength/3, y, -3, exhaustLength/2, 6, [0.5, 0.8, 1.0, 0.8], clampedPitch)
 
     // Draw 3D player ship mesh
     if (this.meshes.playerShip) {
@@ -426,11 +433,11 @@ export class Game {
         x, y, 0,
         baseScale, baseScale, baseScale * 0.6,
         [0.6, 0.7, 0.8, 1.0],
-        0, clampedRotation, 0  // Bank the ship based on vertical velocity
+        clampedPitch, clampedRoll, 0  // Pitch on X (up/down), subtle roll on Y (left/right)
       )
 
       // Cockpit glow overlay (quad)
-      this.renderer.drawQuad(x + baseScale/4, y, 10, baseScale/5, baseScale/6, color, clampedRotation)
+      this.renderer.drawQuad(x + baseScale/4, y, 10, baseScale/5, baseScale/6, color, clampedPitch)
     }
 
     // Charge indicator

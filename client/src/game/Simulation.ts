@@ -274,36 +274,68 @@ export interface SimulationState {
 }
 
 // ============================================================================
+// Play Bounds Type (for camera-compensated bounds)
+// ============================================================================
+
+export interface PlayBounds {
+  leftX: number
+  rightX: number
+  getTopY: (x: number) => number
+  getBottomY: (x: number) => number
+}
+
+// ============================================================================
 // Game Constants
 // ============================================================================
 
-const PLAY_WIDTH = toFixed(1000)
-const PLAY_HEIGHT = toFixed(600)
-const HALF_WIDTH = PLAY_WIDTH / 2
-const HALF_HEIGHT = PLAY_HEIGHT / 2
+// Default play area (used when no camera-compensated bounds provided)
+const DEFAULT_LEFT_X = -750
+const DEFAULT_RIGHT_X = 750
+const DEFAULT_HALF_HEIGHT_LEFT = 300
+const DEFAULT_HALF_HEIGHT_RIGHT = 400
+
+// Helper to get interpolated half-height based on X position (for default bounds)
+function getDefaultHalfHeightAtX(x: number): number {
+  const t = (x - DEFAULT_LEFT_X) / (DEFAULT_RIGHT_X - DEFAULT_LEFT_X)  // 0 at left edge, 1 at right edge
+  return DEFAULT_HALF_HEIGHT_LEFT + t * (DEFAULT_HALF_HEIGHT_RIGHT - DEFAULT_HALF_HEIGHT_LEFT)
+}
+
+// Default bounds object
+const DEFAULT_BOUNDS: PlayBounds = {
+  leftX: DEFAULT_LEFT_X,
+  rightX: DEFAULT_RIGHT_X,
+  getTopY: (x: number) => getDefaultHalfHeightAtX(x),
+  getBottomY: (x: number) => -getDefaultHalfHeightAtX(x),
+}
+
+// World space bounds for off-screen entities (spawning, bullets, etc.)
+// These are larger than the visible area to allow smooth entry/exit
+const WORLD_HALF_WIDTH = 1000  // Spawn enemies this far right
+const WORLD_HALF_HEIGHT = 500  // Max vertical extent
 
 // Player constants
-const PLAYER_BASE_ACCEL = toFixed(800)      // 2x faster acceleration
-const PLAYER_BASE_MAX_SPEED = toFixed(400)  // 2x faster max speed
+const PLAYER_BASE_ACCEL = toFixed(1500)
+const PLAYER_BASE_MAX_SPEED = toFixed(800)
 const PLAYER_FRICTION = toFixed(0.91 * FP_ONE) // Pre-scaled
 
 // Enemy stats by type
+// shootThreshold: how far inside the screen edge before enemy can shoot (larger = waits longer)
 const ENEMY_STATS: Record<
   EnemyType,
-  { health: number; speed: number; points: number }
+  { health: number; speed: number; points: number; shootThreshold: number }
 > = {
-  grunt: { health: 20, speed: 80, points: 50 },
-  shooter: { health: 40, speed: 50, points: 100 },
-  swerver: { health: 25, speed: 100, points: 75 },
-  tank: { health: 150, speed: 30, points: 300 },
-  speeder: { health: 15, speed: 200, points: 60 },
-  bomber: { health: 60, speed: 40, points: 150 },
-  sniper: { health: 50, speed: 20, points: 200 },
-  carrier: { health: 120, speed: 25, points: 400 },
-  mine: { health: 30, speed: 0, points: 40 },
-  spiral: { health: 70, speed: 35, points: 180 },
-  shield: { health: 100, speed: 45, points: 250 },
-  splitter: { health: 80, speed: 60, points: 200 },
+  grunt: { health: 20, speed: 80, points: 50, shootThreshold: 20 },
+  shooter: { health: 40, speed: 50, points: 100, shootThreshold: 25 },
+  swerver: { health: 25, speed: 100, points: 75, shootThreshold: 18 },
+  tank: { health: 150, speed: 30, points: 300, shootThreshold: 50 },
+  speeder: { health: 15, speed: 200, points: 60, shootThreshold: 25 },
+  bomber: { health: 60, speed: 40, points: 150, shootThreshold: 35 },
+  sniper: { health: 50, speed: 20, points: 200, shootThreshold: 30 },
+  carrier: { health: 120, speed: 25, points: 400, shootThreshold: 60 },
+  mine: { health: 30, speed: 0, points: 40, shootThreshold: 20 },
+  spiral: { health: 70, speed: 35, points: 180, shootThreshold: 35 },
+  shield: { health: 100, speed: 45, points: 250, shootThreshold: 40 },
+  splitter: { health: 80, speed: 60, points: 200, shootThreshold: 30 },
 }
 
 // Boss stats by type
@@ -337,6 +369,7 @@ const POWERUP_TYPES: PowerupType[] = [
 export class Simulation {
   private state: SimulationState
   private playerIdMap: Map<string, number> = new Map()
+  private playBounds: PlayBounds = DEFAULT_BOUNDS
 
   constructor(playerIds: string[], seed: number = 12345) {
     this.state = {
@@ -397,6 +430,59 @@ export class Simulation {
       this.state.players.push(player)
       this.playerIdMap.set(playerId, player.id)
     })
+  }
+
+  // ==========================================================================
+  // Play Bounds (camera-compensated)
+  // ==========================================================================
+
+  /**
+   * Update play bounds based on camera projection.
+   * This allows the game to adjust to different camera angles.
+   * Also nudges players inside if they're currently outside bounds.
+   */
+  setPlayBounds(bounds: PlayBounds): void {
+    this.playBounds = bounds
+
+    // Nudge players inside if they're outside the new bounds
+    const nudgeSpeed = 5 // Units per frame to move toward valid position
+    for (const player of this.state.players) {
+      if (player.dead) continue
+
+      let x = fromFixed(player.x)
+      let y = fromFixed(player.y)
+      let nudged = false
+
+      // Check X bounds
+      const margin = 20
+      if (x < bounds.leftX + margin) {
+        x = Math.min(x + nudgeSpeed, bounds.leftX + margin)
+        nudged = true
+      } else if (x > bounds.rightX - margin) {
+        x = Math.max(x - nudgeSpeed, bounds.rightX - margin)
+        nudged = true
+      }
+
+      // Check Y bounds (using X-dependent height)
+      const topY = bounds.getTopY(x) - 15
+      const bottomY = bounds.getBottomY(x) + 15
+      if (y > topY) {
+        y = Math.max(y - nudgeSpeed, topY)
+        nudged = true
+      } else if (y < bottomY) {
+        y = Math.min(y + nudgeSpeed, bottomY)
+        nudged = true
+      }
+
+      if (nudged) {
+        player.x = toFixed(x)
+        player.y = toFixed(y)
+      }
+    }
+  }
+
+  getPlayBounds(): PlayBounds {
+    return this.playBounds
   }
 
   // ==========================================================================
@@ -527,11 +613,13 @@ export class Simulation {
     let x = fromFixed(player.x) + vx * dt
     let y = fromFixed(player.y) + vy * dt
 
-    // Clamp to play area
-    const halfW = fromFixed(HALF_WIDTH)
-    const halfH = fromFixed(HALF_HEIGHT)
-    x = Math.max(-halfW + 20, Math.min(halfW - 20, x))
-    y = Math.max(-halfH + 15, Math.min(halfH - 15, y))
+    // Clamp to play area (camera-compensated bounds)
+    const bounds = this.playBounds
+    const margin = 20
+    x = Math.max(bounds.leftX + margin, Math.min(bounds.rightX - margin, x))
+    const topY = bounds.getTopY(x) - 15
+    const bottomY = bounds.getBottomY(x) + 15
+    y = Math.max(bottomY, Math.min(topY, y))
 
     player.x = toFixed(x)
     player.y = toFixed(y)
@@ -962,17 +1050,16 @@ export class Simulation {
       bullet.y += Math.round(bullet.vy * dt)
       bullet.lifetime--
 
-      // Check bounds
+      // Check bounds - player bullets go further right to hit off-screen enemies
       const x = fromFixed(bullet.x)
       const y = fromFixed(bullet.y)
-      const halfW = fromFixed(HALF_WIDTH)
-      const halfH = fromFixed(HALF_HEIGHT)
+      const rightBound = bullet.isEnemy ? WORLD_HALF_WIDTH + 50 : WORLD_HALF_WIDTH + 500  // Player shots go further
 
       if (
-        x < -halfW - 50 ||
-        x > halfW + 50 ||
-        y < -halfH - 50 ||
-        y > halfH + 50 ||
+        x < -WORLD_HALF_WIDTH - 50 ||
+        x > rightBound ||
+        y < -WORLD_HALF_HEIGHT - 50 ||
+        y > WORLD_HALF_HEIGHT + 50 ||
         bullet.lifetime <= 0
       ) {
         toRemove.push(bullet.id)
@@ -1032,15 +1119,12 @@ export class Simulation {
       missile.y += Math.round(missile.vy * dt)
       missile.lifetime--
 
-      // Check bounds
-      const halfW = fromFixed(HALF_WIDTH)
-      const halfH = fromFixed(HALF_HEIGHT)
-
+      // Check bounds - missiles can go further right to hit off-screen enemies
       if (
-        mx < -halfW - 50 ||
-        mx > halfW + 50 ||
-        my < -halfH - 50 ||
-        my > halfH + 50 ||
+        mx < -WORLD_HALF_WIDTH - 50 ||
+        mx > WORLD_HALF_WIDTH + 500 ||
+        my < -WORLD_HALF_HEIGHT - 50 ||
+        my > WORLD_HALF_HEIGHT + 50 ||
         missile.lifetime <= 0
       ) {
         toRemove.push(missile.id)
@@ -1079,6 +1163,7 @@ export class Simulation {
 
   private updateEnemies(dt: number): void {
     const toRemove: number[] = []
+    const visibleRightX = this.playBounds.rightX  // Use camera-compensated bounds for visibility
 
     for (const enemy of this.state.enemies) {
       enemy.frame++
@@ -1087,19 +1172,23 @@ export class Simulation {
       enemy.x += Math.round(enemy.vx * dt)
       enemy.y += Math.round(enemy.vy * dt)
 
+      const x = fromFixed(enemy.x)
+
       // Type-specific behavior
       this.updateEnemyBehavior(enemy, dt)
 
-      // Shooting
-      enemy.shootTimer -= dt * 60
-      if (enemy.shootTimer <= 0) {
-        this.enemyShoot(enemy)
-        enemy.shootTimer = 60 + this.state.rng.nextInt(180)
+      // Shooting - only when on-screen (threshold varies by enemy size)
+      const shootThreshold = ENEMY_STATS[enemy.type].shootThreshold
+      if (x < visibleRightX - shootThreshold) {
+        enemy.shootTimer -= dt * 60
+        if (enemy.shootTimer <= 0) {
+          this.enemyShoot(enemy)
+          enemy.shootTimer = 60 + this.state.rng.nextInt(180)
+        }
       }
 
       // Check bounds (remove if off-screen left)
-      const x = fromFixed(enemy.x)
-      if (x < -fromFixed(HALF_WIDTH) - 100) {
+      if (x < -WORLD_HALF_WIDTH - 100) {
         toRemove.push(enemy.id)
       }
     }
@@ -1110,7 +1199,9 @@ export class Simulation {
   }
 
   private updateEnemyBehavior(enemy: Enemy, dt: number): void {
-    const halfH = fromFixed(HALF_HEIGHT)
+    const x = fromFixed(enemy.x)
+    const topY = this.playBounds.getTopY(x)
+    const bottomY = this.playBounds.getBottomY(x)
 
     switch (enemy.type) {
       case 'grunt':
@@ -1171,14 +1262,14 @@ export class Simulation {
         break
     }
 
-    // Clamp Y position
+    // Clamp Y position using camera-compensated bounds
     const y = fromFixed(enemy.y)
-    if (y < -halfH + 30) {
-      enemy.y = toFixed(-halfH + 30)
+    if (y < bottomY + 30) {
+      enemy.y = toFixed(bottomY + 30)
       enemy.vy = Math.abs(enemy.vy)
     }
-    if (y > halfH - 30) {
-      enemy.y = toFixed(halfH - 30)
+    if (y > topY - 30) {
+      enemy.y = toFixed(topY - 30)
       enemy.vy = -Math.abs(enemy.vy)
     }
   }
@@ -1313,12 +1404,11 @@ export class Simulation {
 
   private spawnBoss(type: BossType): void {
     const stats = BOSS_STATS[type]!
-    const halfW = fromFixed(HALF_WIDTH)
 
     const boss: Boss = {
       id: this.state.nextId++,
       type,
-      x: toFixed(halfW + 100),
+      x: toFixed(WORLD_HALF_WIDTH + 450),  // Spawn off-screen
       y: toFixed(0),
       health: stats.health,
       maxHealth: stats.health,
@@ -1358,8 +1448,8 @@ export class Simulation {
 
     boss.frame++
 
-    // Move to target position
-    const targetX = fromFixed(HALF_WIDTH) - 100
+    // Move to target position (use visible bounds, offset further left for boss visibility)
+    const targetX = this.playBounds.rightX - 1000
     const currentX = fromFixed(boss.x)
     if (currentX > targetX) {
       boss.x -= toFixed(100 * dt)
@@ -1687,7 +1777,7 @@ export class Simulation {
       }
 
       // Check bounds
-      if (fromFixed(powerup.x) < -fromFixed(HALF_WIDTH) - 20) {
+      if (fromFixed(powerup.x) < -WORLD_HALF_WIDTH - 20) {
         toRemove.push(powerup.id)
       }
     }
@@ -1793,8 +1883,13 @@ export class Simulation {
     const patterns = ['line', 'v', 'swarm', 'mixed', 'rush', 'surround']
     const pattern = patterns[this.state.rng.nextInt(patterns.length)]
     const count = 4 + Math.floor(this.state.wave * 0.8)
-    const halfW = fromFixed(HALF_WIDTH)
-    const halfH = fromFixed(HALF_HEIGHT)
+
+    // Use world space for spawning (larger than visible area)
+    const halfW = WORLD_HALF_WIDTH
+    const halfH = WORLD_HALF_HEIGHT
+
+    // Spawn offset - far enough off-screen to smoothly enter (accounting for 2.5D camera tilt)
+    const spawnOffset = 400
 
     switch (pattern) {
       case 'line':
@@ -1805,7 +1900,7 @@ export class Simulation {
             ]!
           this.spawnEnemy(
             type,
-            toFixed(halfW + 20 + i * 30),
+            toFixed(halfW + spawnOffset + i * 30),
             toFixed(-halfH * 0.5 + this.state.rng.next() * halfH)
           )
         }
@@ -1816,7 +1911,7 @@ export class Simulation {
           const yOff = Math.abs(i - 3) * 18
           this.spawnEnemy(
             'grunt',
-            toFixed(halfW + 20 + i * 20),
+            toFixed(halfW + spawnOffset + i * 20),
             toFixed(yOff * (i < 3 ? -1 : 1))
           )
         }
@@ -1827,19 +1922,19 @@ export class Simulation {
           const type = available[this.state.rng.nextInt(available.length)]!
           this.spawnEnemy(
             type,
-            toFixed(halfW + 20 + i * 25),
+            toFixed(halfW + spawnOffset + i * 25),
             toFixed((this.state.rng.next() - 0.5) * halfH * 1.6)
           )
         }
         break
 
       case 'mixed':
-        this.spawnEnemy('shooter', toFixed(halfW + 20), toFixed(-halfH * 0.5))
-        this.spawnEnemy('shooter', toFixed(halfW + 20), toFixed(halfH * 0.5))
+        this.spawnEnemy('shooter', toFixed(halfW + spawnOffset), toFixed(-halfH * 0.5))
+        this.spawnEnemy('shooter', toFixed(halfW + spawnOffset), toFixed(halfH * 0.5))
         for (let i = 0; i < 4; i++) {
           this.spawnEnemy(
             'grunt',
-            toFixed(halfW + 50 + i * 35),
+            toFixed(halfW + spawnOffset + 30 + i * 35),
             toFixed((this.state.rng.next() - 0.5) * 40)
           )
         }
@@ -1849,7 +1944,7 @@ export class Simulation {
         for (let i = 0; i < count + 3; i++) {
           this.spawnEnemy(
             'speeder',
-            toFixed(halfW + 20 + i * 40),
+            toFixed(halfW + spawnOffset + i * 40),
             toFixed((this.state.rng.next() - 0.5) * halfH * 1.6)
           )
         }
@@ -1858,7 +1953,7 @@ export class Simulation {
       case 'surround':
         for (let i = 0; i < 6; i++) {
           const type = available[this.state.rng.nextInt(available.length)]!
-          this.spawnEnemy(type, toFixed(halfW + 20), toFixed((i - 2.5) * 80))
+          this.spawnEnemy(type, toFixed(halfW + spawnOffset), toFixed((i - 2.5) * 80))
         }
         break
     }
@@ -1870,7 +1965,7 @@ export class Simulation {
       )
       if (heavies.length > 0) {
         const type = heavies[this.state.rng.nextInt(heavies.length)]!
-        this.spawnEnemy(type, toFixed(halfW + 80), toFixed(0))
+        this.spawnEnemy(type, toFixed(halfW + spawnOffset + 50), toFixed(0))
       }
     }
 
