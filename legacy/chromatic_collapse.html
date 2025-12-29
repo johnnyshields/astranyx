@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chromatic Collapse</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0f;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+        .game-container {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+        }
+        .side-panel {
+            width: 200px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .score-panel, .color-panel, .controls-panel {
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        .score-panel h2, .color-panel h2, .controls-panel h2 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .score {
+            font-size: 36px;
+            font-weight: bold;
+            background: linear-gradient(45deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .combo {
+            font-size: 18px;
+            color: #ffd93d;
+            margin-top: 5px;
+        }
+        .color-meter {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .meter-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .meter-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+        }
+        .meter-bar {
+            flex: 1;
+            height: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .meter-fill {
+            height: 100%;
+            transition: width 0.2s;
+        }
+        .controls-panel p {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 8px;
+        }
+        .key {
+            display: inline-block;
+            background: rgba(255,255,255,0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        #gameCanvas {
+            border-radius: 10px;
+            box-shadow: 0 0 50px rgba(100, 150, 255, 0.2);
+        }
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 40px 60px;
+            border-radius: 20px;
+            text-align: center;
+            display: none;
+        }
+        .game-over h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            background: linear-gradient(45deg, #ff6b6b, #ffd93d);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .game-over p {
+            font-size: 24px;
+            margin-bottom: 30px;
+        }
+        .restart-btn {
+            background: linear-gradient(45deg, #4d96ff, #6bcb77);
+            border: none;
+            padding: 15px 40px;
+            font-size: 18px;
+            color: white;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .restart-btn:hover {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="side-panel">
+            <div class="score-panel">
+                <h2>Score</h2>
+                <div class="score" id="score">0</div>
+                <div class="combo" id="combo"></div>
+            </div>
+            <div class="color-panel">
+                <h2>Color Energy</h2>
+                <div class="color-meter" id="colorMeter"></div>
+            </div>
+            <div class="controls-panel">
+                <h2>Controls</h2>
+                <p><span class="key">WASD</span> or <span class="key">Arrows</span> - Move</p>
+                <p><span class="key">1-4</span> - Release color energy</p>
+                <p><span class="key">Space</span> - Release all energy</p>
+            </div>
+        </div>
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+        <div class="game-over" id="gameOver">
+            <h1>Game Over</h1>
+            <p>Final Score: <span id="finalScore">0</span></p>
+            <button class="restart-btn" onclick="restartGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game constants
+        const GRID_SIZE = 12;
+        const CELL_SIZE = canvas.width / GRID_SIZE;
+        const COLORS = [
+            { name: 'red', hex: '#ff6b6b', glow: 'rgba(255, 107, 107, 0.5)' },
+            { name: 'yellow', hex: '#ffd93d', glow: 'rgba(255, 217, 61, 0.5)' },
+            { name: 'green', hex: '#6bcb77', glow: 'rgba(107, 203, 119, 0.5)' },
+            { name: 'blue', hex: '#4d96ff', glow: 'rgba(77, 150, 255, 0.5)' }
+        ];
+
+        // Game state
+        let grid = [];
+        let player = { x: 6, y: 6 };
+        let colorEnergy = [0, 0, 0, 0];
+        let score = 0;
+        let combo = 0;
+        let gameOver = false;
+        let particles = [];
+        let spawnTimer = 0;
+        let spawnInterval = 120; // frames between spawns
+        let expandTimer = 0;
+        let expandInterval = 300; // frames between expansions
+        let difficulty = 1;
+
+        // Initialize grid
+        function initGrid() {
+            grid = [];
+            for (let y = 0; y < GRID_SIZE; y++) {
+                grid[y] = [];
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    grid[y][x] = null;
+                }
+            }
+        }
+
+        // Spawn a new orb
+        function spawnOrb() {
+            let emptyTiles = [];
+            for (let y = 1; y < GRID_SIZE - 1; y++) {
+                for (let x = 1; x < GRID_SIZE - 1; x++) {
+                    if (!grid[y][x] && !(x === player.x && y === player.y)) {
+                        emptyTiles.push({ x, y });
+                    }
+                }
+            }
+
+            if (emptyTiles.length > 0) {
+                const tile = emptyTiles[Math.floor(Math.random() * emptyTiles.length)];
+                const colorIndex = Math.floor(Math.random() * COLORS.length);
+                grid[tile.y][tile.x] = {
+                    color: colorIndex,
+                    size: 1,
+                    pulse: 0
+                };
+            }
+        }
+
+        // Expand all orbs
+        function expandOrbs() {
+            let gameEnded = false;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (grid[y][x]) {
+                        grid[y][x].size++;
+                        if (grid[y][x].size >= 4) {
+                            // Check if orb reached critical size at edge
+                            if (x === 0 || x === GRID_SIZE - 1 || y === 0 || y === GRID_SIZE - 1) {
+                                gameEnded = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (gameEnded) endGame();
+        }
+
+        // Player movement
+        function movePlayer(dx, dy) {
+            if (gameOver) return;
+
+            const newX = player.x + dx;
+            const newY = player.y + dy;
+
+            if (newX >= 0 && newX < GRID_SIZE && newY >= 0 && newY < GRID_SIZE) {
+                // Absorb orb if present
+                if (grid[newY][newX]) {
+                    const orb = grid[newY][newX];
+                    colorEnergy[orb.color] = Math.min(colorEnergy[orb.color] + orb.size, 10);
+                    createAbsorbParticles(newX, newY, orb.color);
+                    grid[newY][newX] = null;
+                    score += orb.size * 10;
+                }
+                player.x = newX;
+                player.y = newY;
+            }
+            updateUI();
+        }
+
+        // Release color energy
+        function releaseEnergy(colorIndex) {
+            if (gameOver || colorEnergy[colorIndex] < 1) return;
+
+            colorEnergy[colorIndex] = 0;
+            const cleared = collapseColor(colorIndex);
+
+            if (cleared > 0) {
+                combo++;
+                const comboMultiplier = Math.pow(2, combo - 1);
+                score += cleared * 100 * comboMultiplier;
+
+                // Show combo
+                document.getElementById('combo').textContent =
+                    combo > 1 ? `${combo}x Combo!` : '';
+
+                // Chain reaction - check for more collapses
+                setTimeout(() => checkChainReactions(), 300);
+            }
+
+            updateUI();
+        }
+
+        // Release all energy
+        function releaseAllEnergy() {
+            if (gameOver) return;
+            combo = 0;
+            for (let i = 0; i < COLORS.length; i++) {
+                if (colorEnergy[i] > 0) {
+                    setTimeout(() => releaseEnergy(i), i * 200);
+                }
+            }
+        }
+
+        // Collapse all orbs of a color
+        function collapseColor(colorIndex) {
+            let cleared = 0;
+            const toRemove = [];
+
+            // Find all orbs of this color
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (grid[y][x] && grid[y][x].color === colorIndex) {
+                        toRemove.push({ x, y, size: grid[y][x].size });
+                    }
+                }
+            }
+
+            // Remove them with effects
+            for (const pos of toRemove) {
+                createCollapseParticles(pos.x, pos.y, colorIndex);
+                grid[pos.y][pos.x] = null;
+                cleared += pos.size;
+            }
+
+            return cleared;
+        }
+
+        // Check for chain reactions (adjacent same colors after collapse)
+        function checkChainReactions() {
+            // Reset combo after delay if no more actions
+            setTimeout(() => {
+                combo = 0;
+                document.getElementById('combo').textContent = '';
+            }, 1000);
+        }
+
+        // Particle effects
+        function createAbsorbParticles(x, y, colorIndex) {
+            for (let i = 0; i < 8; i++) {
+                particles.push({
+                    x: x * CELL_SIZE + CELL_SIZE / 2,
+                    y: y * CELL_SIZE + CELL_SIZE / 2,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    color: COLORS[colorIndex].hex,
+                    life: 30,
+                    size: 4
+                });
+            }
+        }
+
+        function createCollapseParticles(x, y, colorIndex) {
+            for (let i = 0; i < 15; i++) {
+                const angle = (Math.PI * 2 * i) / 15;
+                particles.push({
+                    x: x * CELL_SIZE + CELL_SIZE / 2,
+                    y: y * CELL_SIZE + CELL_SIZE / 2,
+                    vx: Math.cos(angle) * 5,
+                    vy: Math.sin(angle) * 5,
+                    color: COLORS[colorIndex].hex,
+                    life: 40,
+                    size: 6
+                });
+            }
+        }
+
+        function updateParticles() {
+            particles = particles.filter(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vx *= 0.95;
+                p.vy *= 0.95;
+                p.life--;
+                p.size *= 0.95;
+                return p.life > 0;
+            });
+        }
+
+        // Drawing functions
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid lines
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= GRID_SIZE; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * CELL_SIZE, 0);
+                ctx.lineTo(i * CELL_SIZE, canvas.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * CELL_SIZE);
+                ctx.lineTo(canvas.width, i * CELL_SIZE);
+                ctx.stroke();
+            }
+
+            // Draw danger zone (edges)
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, CELL_SIZE);
+            ctx.fillRect(0, canvas.height - CELL_SIZE, canvas.width, CELL_SIZE);
+            ctx.fillRect(0, 0, CELL_SIZE, canvas.height);
+            ctx.fillRect(canvas.width - CELL_SIZE, 0, CELL_SIZE, canvas.height);
+
+            // Draw orbs
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (grid[y][x]) {
+                        const orb = grid[y][x];
+                        const centerX = x * CELL_SIZE + CELL_SIZE / 2;
+                        const centerY = y * CELL_SIZE + CELL_SIZE / 2;
+                        const baseRadius = CELL_SIZE * 0.2;
+                        const sizeRadius = baseRadius + (orb.size * 4);
+                        const pulse = Math.sin(orb.pulse) * 2;
+
+                        // Glow
+                        const gradient = ctx.createRadialGradient(
+                            centerX, centerY, 0,
+                            centerX, centerY, sizeRadius + 10
+                        );
+                        gradient.addColorStop(0, COLORS[orb.color].glow);
+                        gradient.addColorStop(1, 'transparent');
+                        ctx.fillStyle = gradient;
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, sizeRadius + 10, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Orb
+                        ctx.fillStyle = COLORS[orb.color].hex;
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, sizeRadius + pulse, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Highlight
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                        ctx.beginPath();
+                        ctx.arc(centerX - sizeRadius * 0.3, centerY - sizeRadius * 0.3,
+                               sizeRadius * 0.3, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        orb.pulse += 0.1;
+                    }
+                }
+            }
+
+            // Draw particles
+            for (const p of particles) {
+                ctx.globalAlpha = p.life / 40;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // Draw player
+            const playerX = player.x * CELL_SIZE + CELL_SIZE / 2;
+            const playerY = player.y * CELL_SIZE + CELL_SIZE / 2;
+
+            // Player glow
+            const playerGradient = ctx.createRadialGradient(
+                playerX, playerY, 0,
+                playerX, playerY, CELL_SIZE * 0.6
+            );
+            playerGradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+            playerGradient.addColorStop(1, 'transparent');
+            ctx.fillStyle = playerGradient;
+            ctx.beginPath();
+            ctx.arc(playerX, playerY, CELL_SIZE * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Player body
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(playerX, playerY, CELL_SIZE * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Player inner (shows absorbed colors)
+            const totalEnergy = colorEnergy.reduce((a, b) => a + b, 0);
+            if (totalEnergy > 0) {
+                let startAngle = -Math.PI / 2;
+                for (let i = 0; i < COLORS.length; i++) {
+                    if (colorEnergy[i] > 0) {
+                        const sliceAngle = (colorEnergy[i] / totalEnergy) * Math.PI * 2;
+                        ctx.fillStyle = COLORS[i].hex;
+                        ctx.beginPath();
+                        ctx.moveTo(playerX, playerY);
+                        ctx.arc(playerX, playerY, CELL_SIZE * 0.2, startAngle, startAngle + sliceAngle);
+                        ctx.closePath();
+                        ctx.fill();
+                        startAngle += sliceAngle;
+                    }
+                }
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score').textContent = score;
+
+            // Update color meters
+            const meterContainer = document.getElementById('colorMeter');
+            meterContainer.innerHTML = '';
+            for (let i = 0; i < COLORS.length; i++) {
+                const row = document.createElement('div');
+                row.className = 'meter-row';
+                row.innerHTML = `
+                    <div class="meter-color" style="background: ${COLORS[i].hex}"></div>
+                    <div class="meter-bar">
+                        <div class="meter-fill" style="width: ${colorEnergy[i] * 10}%; background: ${COLORS[i].hex}"></div>
+                    </div>
+                    <span class="key">${i + 1}</span>
+                `;
+                meterContainer.appendChild(row);
+            }
+        }
+
+        function endGame() {
+            gameOver = true;
+            document.getElementById('gameOver').style.display = 'block';
+            document.getElementById('finalScore').textContent = score;
+        }
+
+        function restartGame() {
+            initGrid();
+            player = { x: 6, y: 6 };
+            colorEnergy = [0, 0, 0, 0];
+            score = 0;
+            combo = 0;
+            gameOver = false;
+            particles = [];
+            spawnTimer = 0;
+            expandTimer = 0;
+            difficulty = 1;
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('combo').textContent = '';
+            updateUI();
+        }
+
+        // Game loop
+        function gameLoop() {
+            if (!gameOver) {
+                spawnTimer++;
+                expandTimer++;
+
+                // Spawn new orbs
+                if (spawnTimer >= spawnInterval / difficulty) {
+                    spawnOrb();
+                    spawnTimer = 0;
+                }
+
+                // Expand orbs
+                if (expandTimer >= expandInterval / difficulty) {
+                    expandOrbs();
+                    expandTimer = 0;
+                }
+
+                // Increase difficulty over time
+                difficulty = 1 + score / 5000;
+            }
+
+            updateParticles();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Input handling
+        document.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    movePlayer(0, -1);
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    movePlayer(0, 1);
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    movePlayer(-1, 0);
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    movePlayer(1, 0);
+                    break;
+                case '1':
+                    releaseEnergy(0);
+                    break;
+                case '2':
+                    releaseEnergy(1);
+                    break;
+                case '3':
+                    releaseEnergy(2);
+                    break;
+                case '4':
+                    releaseEnergy(3);
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    releaseAllEnergy();
+                    break;
+            }
+        });
+
+        // Initialize and start
+        initGrid();
+        updateUI();
+        gameLoop();
+    </script>
+</body>
+</html>

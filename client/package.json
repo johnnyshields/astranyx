@@ -1,0 +1,19 @@
+{
+  "name": "astranyx-client",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.0.3",
+    "@types/phoenix": "^1.6.7",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
+  }
+}

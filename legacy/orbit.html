@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orbit</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            color: #fff;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            cursor: crosshair;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+        }
+        .level-info {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .level-num {
+            font-size: 48px;
+            font-weight: 200;
+            color: #fff;
+            margin: 5px 0;
+        }
+        .objective {
+            font-size: 16px;
+            color: #4a9eff;
+        }
+        .stats {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-value {
+            font-size: 24px;
+            color: #fff;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            color: #555;
+            font-size: 14px;
+        }
+        .message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .message.show {
+            opacity: 1;
+        }
+        .message h1 {
+            font-size: 64px;
+            font-weight: 200;
+            margin-bottom: 20px;
+        }
+        .message p {
+            font-size: 18px;
+            color: #888;
+        }
+        .message.success h1 {
+            color: #4ade80;
+        }
+        .message.fail h1 {
+            color: #f87171;
+        }
+        .retry-btn {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 16px;
+            background: transparent;
+            border: 1px solid #444;
+            color: #fff;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: all 0.2s;
+        }
+        .retry-btn:hover {
+            background: #fff;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="ui-overlay">
+        <div class="level-info">Level</div>
+        <div class="level-num" id="levelNum">1</div>
+        <div class="objective" id="objective">Achieve stable orbit</div>
+    </div>
+
+    <div class="stats">
+        <div class="stat-label">Launches</div>
+        <div class="stat-value" id="launches">0</div>
+        <div class="stat-label" style="margin-top: 15px;">Best Orbit</div>
+        <div class="stat-value" id="bestOrbit">0%</div>
+    </div>
+
+    <div class="instructions" id="instructions">
+        Click and drag to launch satellite
+    </div>
+
+    <div class="message" id="message">
+        <h1>Stable Orbit!</h1>
+        <p>You completed the level</p>
+        <button class="retry-btn" onclick="nextLevel()">Next Level</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Fullscreen canvas
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        // Game constants
+        const G = 800; // Gravitational constant
+        const ORBIT_THRESHOLD = 3; // Rotations needed for stable orbit
+        const TRAIL_LENGTH = 150;
+
+        // Game state
+        let level = 1;
+        let launches = 0;
+        let bestOrbitPercent = 0;
+        let gameState = 'aiming'; // aiming, flying, success, fail
+
+        // Dragging state
+        let isDragging = false;
+        let dragStart = { x: 0, y: 0 };
+        let dragEnd = { x: 0, y: 0 };
+
+        // Level definitions
+        const levels = [
+            { // Level 1 - Simple single planet
+                planets: [
+                    { x: 0.5, y: 0.5, radius: 40, mass: 5000, color: '#4a9eff' }
+                ],
+                start: { x: 0.15, y: 0.5 },
+                stars: [
+                    { x: 0.5, y: 0.25 }, { x: 0.75, y: 0.5 }, { x: 0.5, y: 0.75 }
+                ]
+            },
+            { // Level 2 - Larger planet
+                planets: [
+                    { x: 0.5, y: 0.5, radius: 60, mass: 8000, color: '#f97316' }
+                ],
+                start: { x: 0.1, y: 0.3 },
+                stars: [
+                    { x: 0.3, y: 0.2 }, { x: 0.7, y: 0.3 }, { x: 0.6, y: 0.7 }
+                ]
+            },
+            { // Level 3 - Two planets
+                planets: [
+                    { x: 0.35, y: 0.5, radius: 35, mass: 4000, color: '#4ade80' },
+                    { x: 0.7, y: 0.5, radius: 30, mass: 3000, color: '#a78bfa' }
+                ],
+                start: { x: 0.1, y: 0.25 },
+                stars: [
+                    { x: 0.5, y: 0.3 }, { x: 0.5, y: 0.7 }
+                ]
+            },
+            { // Level 4 - Offset planets
+                planets: [
+                    { x: 0.4, y: 0.35, radius: 30, mass: 3500, color: '#f472b6' },
+                    { x: 0.6, y: 0.65, radius: 35, mass: 4000, color: '#38bdf8' }
+                ],
+                start: { x: 0.1, y: 0.5 },
+                stars: [
+                    { x: 0.25, y: 0.3 }, { x: 0.75, y: 0.7 }, { x: 0.8, y: 0.35 }
+                ]
+            },
+            { // Level 5 - Three planets triangle
+                planets: [
+                    { x: 0.5, y: 0.3, radius: 28, mass: 3000, color: '#fbbf24' },
+                    { x: 0.35, y: 0.65, radius: 28, mass: 3000, color: '#4ade80' },
+                    { x: 0.65, y: 0.65, radius: 28, mass: 3000, color: '#f87171' }
+                ],
+                start: { x: 0.08, y: 0.5 },
+                stars: [
+                    { x: 0.5, y: 0.5 }
+                ]
+            },
+            { // Level 6 - Dense center
+                planets: [
+                    { x: 0.5, y: 0.5, radius: 50, mass: 10000, color: '#8b5cf6' }
+                ],
+                start: { x: 0.08, y: 0.7 },
+                stars: [
+                    { x: 0.2, y: 0.3 }, { x: 0.8, y: 0.3 }, { x: 0.8, y: 0.7 }, { x: 0.2, y: 0.7 }
+                ],
+                hazards: [
+                    { x: 0.5, y: 0.2, radius: 15 },
+                    { x: 0.5, y: 0.8, radius: 15 }
+                ]
+            },
+            { // Level 7 - Binary system
+                planets: [
+                    { x: 0.4, y: 0.5, radius: 35, mass: 4500, color: '#06b6d4' },
+                    { x: 0.6, y: 0.5, radius: 35, mass: 4500, color: '#f43f5e' }
+                ],
+                start: { x: 0.5, y: 0.08 },
+                stars: [
+                    { x: 0.5, y: 0.3 }, { x: 0.5, y: 0.7 }
+                ]
+            },
+            { // Level 8 - Scattered system
+                planets: [
+                    { x: 0.25, y: 0.3, radius: 25, mass: 2500, color: '#84cc16' },
+                    { x: 0.7, y: 0.25, radius: 30, mass: 3000, color: '#f97316' },
+                    { x: 0.6, y: 0.7, radius: 28, mass: 2800, color: '#ec4899' }
+                ],
+                start: { x: 0.08, y: 0.6 },
+                stars: [
+                    { x: 0.45, y: 0.45 }, { x: 0.4, y: 0.7 }
+                ]
+            }
+        ];
+
+        // Current level data (scaled to canvas)
+        let planets = [];
+        let stars = [];
+        let hazards = [];
+        let satellite = null;
+        let startPos = { x: 0, y: 0 };
+
+        function loadLevel(num) {
+            const levelData = levels[(num - 1) % levels.length];
+            const scale = Math.min(canvas.width, canvas.height);
+
+            planets = levelData.planets.map(p => ({
+                x: p.x * canvas.width,
+                y: p.y * canvas.height,
+                radius: p.radius * (scale / 800),
+                mass: p.mass,
+                color: p.color
+            }));
+
+            stars = levelData.stars.map(s => ({
+                x: s.x * canvas.width,
+                y: s.y * canvas.height,
+                collected: false
+            }));
+
+            hazards = (levelData.hazards || []).map(h => ({
+                x: h.x * canvas.width,
+                y: h.y * canvas.height,
+                radius: h.radius * (scale / 800)
+            }));
+
+            startPos = {
+                x: levelData.start.x * canvas.width,
+                y: levelData.start.y * canvas.height
+            };
+
+            satellite = null;
+            gameState = 'aiming';
+            bestOrbitPercent = 0;
+            updateUI();
+        }
+
+        function updateUI() {
+            document.getElementById('levelNum').textContent = level;
+            document.getElementById('launches').textContent = launches;
+            document.getElementById('bestOrbit').textContent = Math.floor(bestOrbitPercent) + '%';
+            document.getElementById('instructions').style.opacity = gameState === 'aiming' ? 1 : 0;
+        }
+
+        function showMessage(type, title, subtitle) {
+            const msg = document.getElementById('message');
+            msg.className = 'message show ' + type;
+            msg.querySelector('h1').textContent = title;
+            msg.querySelector('p').textContent = subtitle;
+            msg.querySelector('button').textContent = type === 'success' ? 'Next Level' : 'Retry';
+            msg.querySelector('button').onclick = type === 'success' ? nextLevel : retry;
+        }
+
+        function hideMessage() {
+            document.getElementById('message').className = 'message';
+        }
+
+        function nextLevel() {
+            level++;
+            loadLevel(level);
+            hideMessage();
+        }
+
+        function retry() {
+            loadLevel(level);
+            hideMessage();
+        }
+
+        // Satellite class
+        class Satellite {
+            constructor(x, y, vx, vy) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.trail = [];
+                this.rotations = 0;
+                this.lastAngle = null;
+                this.totalAngle = 0;
+                this.alive = true;
+                this.primaryPlanet = this.findPrimaryPlanet();
+            }
+
+            findPrimaryPlanet() {
+                let closest = null;
+                let minDist = Infinity;
+                for (const planet of planets) {
+                    const dist = Math.hypot(this.x - planet.x, this.y - planet.y);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closest = planet;
+                    }
+                }
+                return closest;
+            }
+
+            update(dt) {
+                if (!this.alive) return;
+
+                // Apply gravity from all planets
+                for (const planet of planets) {
+                    const dx = planet.x - this.x;
+                    const dy = planet.y - this.y;
+                    const dist = Math.hypot(dx, dy);
+
+                    // Check collision with planet
+                    if (dist < planet.radius + 5) {
+                        this.alive = false;
+                        gameState = 'fail';
+                        showMessage('fail', 'Crashed!', 'Hit a planet');
+                        return;
+                    }
+
+                    // Gravity force
+                    const force = G * planet.mass / (dist * dist);
+                    const ax = (dx / dist) * force;
+                    const ay = (dy / dist) * force;
+
+                    this.vx += ax * dt;
+                    this.vy += ay * dt;
+                }
+
+                // Update position
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+
+                // Track trail
+                this.trail.push({ x: this.x, y: this.y });
+                if (this.trail.length > TRAIL_LENGTH) {
+                    this.trail.shift();
+                }
+
+                // Check out of bounds
+                const margin = 100;
+                if (this.x < -margin || this.x > canvas.width + margin ||
+                    this.y < -margin || this.y > canvas.height + margin) {
+                    this.alive = false;
+                    gameState = 'fail';
+                    showMessage('fail', 'Lost in Space', 'Satellite escaped gravity');
+                    return;
+                }
+
+                // Check hazard collision
+                for (const hazard of hazards) {
+                    const dist = Math.hypot(this.x - hazard.x, this.y - hazard.y);
+                    if (dist < hazard.radius + 5) {
+                        this.alive = false;
+                        gameState = 'fail';
+                        showMessage('fail', 'Destroyed!', 'Hit an asteroid');
+                        return;
+                    }
+                }
+
+                // Collect stars
+                for (const star of stars) {
+                    if (!star.collected) {
+                        const dist = Math.hypot(this.x - star.x, this.y - star.y);
+                        if (dist < 20) {
+                            star.collected = true;
+                        }
+                    }
+                }
+
+                // Track orbit around primary planet
+                if (this.primaryPlanet) {
+                    const angle = Math.atan2(
+                        this.y - this.primaryPlanet.y,
+                        this.x - this.primaryPlanet.x
+                    );
+
+                    if (this.lastAngle !== null) {
+                        let delta = angle - this.lastAngle;
+                        // Handle angle wrap-around
+                        if (delta > Math.PI) delta -= Math.PI * 2;
+                        if (delta < -Math.PI) delta += Math.PI * 2;
+                        this.totalAngle += delta;
+                    }
+                    this.lastAngle = angle;
+
+                    this.rotations = Math.abs(this.totalAngle) / (Math.PI * 2);
+
+                    // Update best orbit percentage
+                    const percent = (this.rotations / ORBIT_THRESHOLD) * 100;
+                    if (percent > bestOrbitPercent) {
+                        bestOrbitPercent = percent;
+                        updateUI();
+                    }
+
+                    // Check win condition
+                    if (this.rotations >= ORBIT_THRESHOLD) {
+                        gameState = 'success';
+                        showMessage('success', 'Stable Orbit!', `Completed in ${launches} launches`);
+                    }
+                }
+            }
+
+            draw() {
+                // Draw trail
+                if (this.trail.length > 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                    for (let i = 1; i < this.trail.length; i++) {
+                        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                    }
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+
+                // Draw satellite
+                if (this.alive) {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Glow
+                    const glow = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, 20);
+                    glow.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+                    glow.addColorStop(1, 'transparent');
+                    ctx.fillStyle = glow;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 20, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        // Drawing
+        function drawBackground() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw subtle grid
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+            ctx.lineWidth = 1;
+            const gridSize = 50;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+
+        function drawPlanets() {
+            for (const planet of planets) {
+                // Gravity field visualization
+                const fieldGradient = ctx.createRadialGradient(
+                    planet.x, planet.y, planet.radius,
+                    planet.x, planet.y, planet.radius + 100
+                );
+                fieldGradient.addColorStop(0, planet.color + '20');
+                fieldGradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = fieldGradient;
+                ctx.beginPath();
+                ctx.arc(planet.x, planet.y, planet.radius + 100, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Planet body
+                const planetGradient = ctx.createRadialGradient(
+                    planet.x - planet.radius * 0.3, planet.y - planet.radius * 0.3, 0,
+                    planet.x, planet.y, planet.radius
+                );
+                planetGradient.addColorStop(0, '#fff');
+                planetGradient.addColorStop(0.2, planet.color);
+                planetGradient.addColorStop(1, '#000');
+                ctx.fillStyle = planetGradient;
+                ctx.beginPath();
+                ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function drawStars() {
+            for (const star of stars) {
+                if (!star.collected) {
+                    // Star glow
+                    const starGlow = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, 25);
+                    starGlow.addColorStop(0, 'rgba(255, 215, 0, 0.8)');
+                    starGlow.addColorStop(0.5, 'rgba(255, 215, 0, 0.3)');
+                    starGlow.addColorStop(1, 'transparent');
+                    ctx.fillStyle = starGlow;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, 25, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Star shape
+                    ctx.fillStyle = '#ffd700';
+                    drawStarShape(star.x, star.y, 5, 10, 5);
+                }
+            }
+        }
+
+        function drawStarShape(cx, cy, spikes, outerRadius, innerRadius) {
+            let rot = Math.PI / 2 * 3;
+            let x = cx;
+            let y = cy;
+            const step = Math.PI / spikes;
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - outerRadius);
+            for (let i = 0; i < spikes; i++) {
+                x = cx + Math.cos(rot) * outerRadius;
+                y = cy + Math.sin(rot) * outerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+
+                x = cx + Math.cos(rot) * innerRadius;
+                y = cy + Math.sin(rot) * innerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+            }
+            ctx.lineTo(cx, cy - outerRadius);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawHazards() {
+            for (const hazard of hazards) {
+                ctx.fillStyle = '#444';
+                ctx.beginPath();
+                // Draw irregular asteroid shape
+                const points = 8;
+                for (let i = 0; i < points; i++) {
+                    const angle = (i / points) * Math.PI * 2;
+                    const r = hazard.radius * (0.7 + Math.sin(i * 3) * 0.3);
+                    const x = hazard.x + Math.cos(angle) * r;
+                    const y = hazard.y + Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.strokeStyle = '#666';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+
+        function drawLaunchIndicator() {
+            if (gameState !== 'aiming') return;
+
+            // Draw start position
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw aim line when dragging
+            if (isDragging) {
+                const dx = dragStart.x - dragEnd.x;
+                const dy = dragStart.y - dragEnd.y;
+                const power = Math.min(Math.hypot(dx, dy), 200);
+
+                // Launch direction (opposite of drag)
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([10, 5]);
+                ctx.beginPath();
+                ctx.moveTo(startPos.x, startPos.y);
+                ctx.lineTo(startPos.x + dx, startPos.y + dy);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Power indicator
+                const powerPercent = power / 200;
+                ctx.fillStyle = `hsl(${120 - powerPercent * 120}, 80%, 50%)`;
+                ctx.beginPath();
+                ctx.arc(startPos.x + dx, startPos.y + dy, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Trajectory preview
+                drawTrajectoryPreview(dx * 2, dy * 2);
+            }
+        }
+
+        function drawTrajectoryPreview(vx, vy) {
+            let px = startPos.x;
+            let py = startPos.y;
+            let pvx = vx;
+            let pvy = vy;
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+
+            for (let i = 0; i < 100; i++) {
+                // Simple physics prediction
+                for (const planet of planets) {
+                    const dx = planet.x - px;
+                    const dy = planet.y - py;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist < planet.radius) break;
+                    const force = G * planet.mass / (dist * dist);
+                    pvx += (dx / dist) * force * 0.016;
+                    pvy += (dy / dist) * force * 0.016;
+                }
+                px += pvx * 0.016;
+                py += pvy * 0.016;
+                ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawOrbitProgress() {
+            if (!satellite || !satellite.alive) return;
+
+            // Orbit progress ring
+            const progress = Math.min(satellite.rotations / ORBIT_THRESHOLD, 1);
+            const cx = canvas.width - 80;
+            const cy = canvas.height - 80;
+            const radius = 40;
+
+            // Background ring
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Progress ring
+            ctx.strokeStyle = progress >= 1 ? '#4ade80' : '#4a9eff';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+            ctx.stroke();
+
+            // Text
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px system-ui';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(Math.floor(progress * 100) + '%', cx, cy);
+        }
+
+        // Input handling
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameState !== 'aiming') return;
+            isDragging = true;
+            dragStart = { x: e.clientX, y: e.clientY };
+            dragEnd = { x: e.clientX, y: e.clientY };
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            dragEnd = { x: e.clientX, y: e.clientY };
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (!isDragging || gameState !== 'aiming') {
+                isDragging = false;
+                return;
+            }
+            isDragging = false;
+
+            const dx = dragStart.x - dragEnd.x;
+            const dy = dragStart.y - dragEnd.y;
+            const power = Math.hypot(dx, dy);
+
+            if (power > 20) { // Minimum drag distance
+                launches++;
+                gameState = 'flying';
+                satellite = new Satellite(
+                    startPos.x, startPos.y,
+                    dx * 2, dy * 2
+                );
+                updateUI();
+            }
+        });
+
+        // Touch support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            canvas.dispatchEvent(new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            }));
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            canvas.dispatchEvent(new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            }));
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            canvas.dispatchEvent(new MouseEvent('mouseup', {}));
+        });
+
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(time) {
+            const dt = Math.min((time - lastTime) / 1000, 0.05);
+            lastTime = time;
+
+            // Update
+            if (satellite && satellite.alive && gameState === 'flying') {
+                satellite.update(dt);
+            }
+
+            // Draw
+            drawBackground();
+            drawHazards();
+            drawStars();
+            drawPlanets();
+            drawLaunchIndicator();
+            if (satellite) satellite.draw();
+            drawOrbitProgress();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start
+        loadLevel(1);
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

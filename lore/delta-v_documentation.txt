@@ -1,0 +1,241 @@
+================================================================================
+                            DELTA-V GAME DOCUMENTATION
+================================================================================
+
+Genre: Retro Space Shooter (J-Shooter style, inspired by R-Type)
+Engine: Single-file HTML5/Canvas/JavaScript
+
+================================================================================
+                                  OVERVIEW
+================================================================================
+
+DELTA-V is a 16-bit style horizontal scrolling space shooter with physics-based
+movement, wave-based enemies, boss battles, and extensive powerup systems.
+Supports 1-2 players simultaneously.
+
+================================================================================
+                                  CONTROLS
+================================================================================
+
+PLAYER 1 (Cyan ship):
+  - W/A/S/D: Move
+  - SPACE: Shoot
+  - Hold SPACE: Charge shot
+
+PLAYER 2 (Orange ship):
+  - Arrow Keys: Move
+  - Numpad 0 (or 0): Shoot
+  - Hold shoot: Charge shot
+
+GENERAL:
+  - ESC: Pause/Unpause game
+
+================================================================================
+                               GAME MECHANICS
+================================================================================
+
+LIVES SYSTEM:
+  - Each player starts with 3 lives
+  - On death, respawn after 2 seconds (if lives remain)
+  - Respawn grants 3 seconds invincibility
+  - Ship level and weapon powerups are retained on respawn
+  - Orbs and drones are lost on death
+  - Game over when all players reach 0 lives
+
+SHIELDS:
+  - Starting shields: 100
+  - Max shields increase with ship upgrades (+25 per level)
+  - Shield powerups restore 35 shields
+  - Orbs can absorb hits (destroyed instead of taking damage)
+
+PHYSICS:
+  - Ships have momentum and inertia
+  - Slight gravity pulls ships downward
+  - Shooting causes recoil (pushes ship backward)
+  - Players cannot overlap (collision pushes apart)
+
+SCORING:
+  - Points awarded for destroying enemies
+  - Multiplier increases with kills (max 8x)
+  - Multiplier slowly decays over time
+
+================================================================================
+                                  POWERUPS
+================================================================================
+
+Common Powerups:
+  S - SHIELD (Green)    : Restores 35 shields
+  U - UPGRADE (Yellow)  : Upgrades ship (MK-I to MK-V)
+  W - SPREAD (Orange)   : Adds diagonal shots (max 3 levels)
+  L - LASER (Cyan)      : Adds laser beam shots (max 3 levels)
+  M - MISSILE (Orange)  : Adds homing missiles (max 3 levels)
+  O - ORBIT (Magenta)   : Adds orbiting shield orb (max 6)
+  D - DRONE (Green)     : Adds companion drone (max 4)
+  V - SPEED (Blue)      : Increases movement speed (max 3 levels)
+  R - RAPID (Pink)      : Increases fire rate (max 3 levels)
+  P - PIERCE (Cyan)     : Shots pass through enemies (max 2 levels)
+
+Rare Powerup:
+  1UP - EXTRA LIFE (Red): Adds one life (5% drop chance)
+                          Has special pulsing glow effect
+
+SHIP LEVELS (MK-I through MK-V):
+  - Each level adds +1 base shot
+  - Increases max shields by 25
+  - Improves fire rate slightly
+  - Visual ship size increases
+
+================================================================================
+                                  ENEMIES
+================================================================================
+
+Wave-based spawning with progressive unlocks:
+
+Wave 1+:
+  - Grunt: Basic enemy, weaves up/down
+
+Wave 2+:
+  - Swerver: Fast sine-wave movement
+
+Wave 3+:
+  - Shooter: Stationary, fires aimed shots
+  - Speeder: Very fast, straight movement
+
+Wave 4+:
+  - Mine: Proximity explosive
+
+Wave 5+:
+  - Bomber: Drops bomb clusters
+  - Spiral: Fires spiral bullet patterns
+
+Wave 7+:
+  - Tank: Heavy, tracks player, spread shots
+  - Sniper: Long-range fast shots
+
+Wave 9+:
+  - Carrier: Spawns grunt drones
+  - Shield: Has rotating shield barrier
+
+Wave 11+:
+  - Splitter: Splits into two grunts on death
+
+================================================================================
+                                   BOSSES
+================================================================================
+
+Bosses appear every 5 waves with "WARNING" alert:
+
+Wave 5 - DESTROYER (Type 0):
+  - Classic boss with 3 attack phases
+  - Sine wave movement, tracking, combined patterns
+  - Spread shots, circle patterns, aimed bursts
+
+Wave 10 - GEMINI (Type 1):
+  - Twin boss (two connected targets)
+  - Both halves fire at players
+  - Mirror movement pattern
+
+Wave 15 - MOTHERSHIP (Type 2):
+  - Large carrier boss
+  - Spawns enemy drones periodically
+  - Wide spread shot attacks
+
+Wave 20 - ANNIHILATOR (Type 3):
+  - Laser boss with charge attack
+  - Tracks player vertically
+  - Devastating beam attack (damages all in line)
+
+Wave 25 - FORTRESS (Type 4):
+  - Wall boss with destructible segments
+  - Each segment fires independently
+  - Must destroy segments to damage core
+
+Wave 30+ - OMEGA (Type 5):
+  - Final boss type with 4 attack phases
+  - Combines all previous attack patterns
+  - Spread, aimed, spiral, and chaos modes
+  - Highest health and point value
+
+BOSS PROJECTILES:
+  - Have unlimited range (only despawn when leaving screen)
+  - Higher damage than regular enemy shots
+
+================================================================================
+                              TECHNICAL DETAILS
+================================================================================
+
+Display:
+  - Canvas with 2x pixel scaling for retro aesthetic
+  - Pixel-art style rendering with drawPixelRect helper
+  - Screen shake on impacts and explosions
+
+Collision:
+  - AABB hitbox detection for enemies and bosses
+  - Circular collision for players, bullets, orbs
+  - Pierce mechanic allows bullets to hit multiple targets
+
+Particles:
+  - Explosion particles with color gradients
+  - Missile trails
+  - Boss laser visual effects
+
+Enemy AI:
+  - Enemies target closest living player
+  - Various movement patterns (sine, tracking, stationary)
+  - Shoot timers scale with wave number
+
+================================================================================
+                            2-PLAYER FEATURES
+================================================================================
+
+- Separate ships with distinct color schemes
+- Independent HUD displays (shields, lives, powerups)
+- Powerups collected by closest player
+- Players push apart on contact (no overlap)
+- Game continues if one player alive
+- Both players must lose all lives for game over
+
+================================================================================
+                              FILE STRUCTURE
+================================================================================
+
+/mnt/c/workspace/new_game/
+  delta-v.html          - Main game file (single HTML with embedded JS/CSS)
+  lore/
+    game_design_analysis.txt  - Original game design research
+    game_ideas.txt            - 10 game concepts brainstormed
+    delta-v_documentation.txt - This file
+
+================================================================================
+                               VERSION HISTORY
+================================================================================
+
+v1.0 - Initial release
+  - Basic space shooter with fuel mechanic
+
+v2.0 - Major overhaul
+  - Replaced fuel with shields
+  - Added powerup system
+  - Added ship evolution (levels)
+  - Added drone and orbit weapons
+
+v3.0 - Content expansion
+  - 12 enemy types
+  - 6 boss types
+  - 10 powerup types
+  - Ship upgrades via powerups
+
+v4.0 - Multiplayer update
+  - 2-player support
+  - WASD + Arrows control schemes
+  - Title screen with mode selection
+  - Separate HUDs per player
+
+v5.0 - Lives system
+  - 3 lives per player
+  - Respawn mechanic
+  - Extra life powerup (rare)
+  - ESC pause functionality
+  - Boss projectiles with unlimited range
+
+================================================================================
