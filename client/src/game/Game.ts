@@ -80,6 +80,39 @@ const COLORS = {
   ],
 }
 
+// Enemy render config (scale and depth by type)
+const ENEMY_RENDER_CONFIG: Record<string, { scale: number; depth: number }> = {
+  grunt: { scale: 35, depth: 0.6 },
+  shooter: { scale: 40, depth: 0.6 },
+  swerver: { scale: 32, depth: 0.6 },
+  tank: { scale: 65, depth: 0.8 },
+  speeder: { scale: 38, depth: 0.4 },
+  bomber: { scale: 50, depth: 0.7 },
+  sniper: { scale: 45, depth: 0.6 },
+  carrier: { scale: 80, depth: 0.8 },
+  mine: { scale: 30, depth: 1.0 },
+  spiral: { scale: 50, depth: 0.6 },
+  shield: { scale: 55, depth: 0.6 },
+  splitter: { scale: 45, depth: 0.6 },
+}
+
+// Boss sizes by type (w=width, h=height, d=depth)
+const BOSS_SIZES = [
+  { w: 100, h: 90, d: 70 },   // CLASSIC
+  { w: 80, h: 60, d: 50 },    // TWIN
+  { w: 120, h: 100, d: 80 },  // CARRIER
+  { w: 100, h: 70, d: 60 },   // LASER
+  { w: 70, h: 180, d: 50 },   // WALL
+  { w: 130, h: 120, d: 100 }, // FINAL
+]
+
+// Get health bar color based on health ratio
+function getHealthBarColor(healthRatio: number): [number, number, number, number] {
+  if (healthRatio > 0.5) return [0, 0.8, 0.5, 1]
+  if (healthRatio > 0.25) return [1, 1, 0, 1]
+  return [1, 0.3, 0.2, 1]
+}
+
 export class Game {
   private renderer: Renderer
   private input: Input
@@ -328,12 +361,12 @@ export class Game {
 
       // Enemies (3D meshes only)
       for (const enemy of state.enemies) {
-        this.renderEnemy(enemy, false)
+        this.renderEnemy(enemy)
       }
 
       // Boss (3D mesh only)
       if (state.boss) {
-        this.renderBoss(state.boss, false)
+        this.renderBoss(state.boss)
       }
 
       // Players
@@ -467,58 +500,14 @@ export class Game {
     }
   }
 
-  private renderEnemy(enemy: ReturnType<Simulation['getState']>['enemies'][0], _renderHealthBar: boolean = true): void {
+  private renderEnemy(enemy: ReturnType<Simulation['getState']>['enemies'][0]): void {
     const x = enemy.x + this.shakeOffset.x
     const y = enemy.y + this.shakeOffset.y
     const color = COLORS[enemy.type as keyof typeof COLORS] as [number, number, number, number] || COLORS.grunt
 
-    // Size varies by enemy type
-    let scale = 40
-    let depth = 0.6
-
-    switch (enemy.type) {
-      case 'grunt':
-        scale = 35
-        break
-      case 'shooter':
-        scale = 40
-        break
-      case 'swerver':
-        scale = 32
-        break
-      case 'tank':
-        scale = 65
-        depth = 0.8
-        break
-      case 'speeder':
-        scale = 38
-        depth = 0.4
-        break
-      case 'bomber':
-        scale = 50
-        depth = 0.7
-        break
-      case 'sniper':
-        scale = 45
-        break
-      case 'carrier':
-        scale = 80
-        depth = 0.8
-        break
-      case 'mine':
-        scale = 30
-        depth = 1.0
-        break
-      case 'spiral':
-        scale = 50
-        break
-      case 'shield':
-        scale = 55
-        break
-      case 'splitter':
-        scale = 45
-        break
-    }
+    // Size from config
+    const config = ENEMY_RENDER_CONFIG[enemy.type] ?? { scale: 40, depth: 0.6 }
+    const { scale, depth } = config
 
     // Shield effect
     if (enemy.hasShield) {
@@ -562,24 +551,9 @@ export class Game {
   }
 
   private renderEnemyHealthBar(enemy: ReturnType<Simulation['getState']>['enemies'][0]): void {
-    // Get enemy scale for bar sizing
-    let scale = 40
-    let depth = 0.6
-
-    switch (enemy.type) {
-      case 'grunt': scale = 35; break
-      case 'shooter': scale = 40; break
-      case 'swerver': scale = 32; break
-      case 'tank': scale = 65; depth = 0.8; break
-      case 'speeder': scale = 38; depth = 0.4; break
-      case 'bomber': scale = 50; depth = 0.7; break
-      case 'sniper': scale = 45; break
-      case 'carrier': scale = 80; depth = 0.8; break
-      case 'mine': scale = 30; depth = 1.0; break
-      case 'spiral': scale = 50; break
-      case 'shield': scale = 55; break
-      case 'splitter': scale = 45; break
-    }
+    // Get enemy scale from config
+    const config = ENEMY_RENDER_CONFIG[enemy.type] ?? { scale: 40, depth: 0.6 }
+    const { scale, depth } = config
 
     // Project world position to screen
     const worldX = enemy.x + this.shakeOffset.x
@@ -592,31 +566,16 @@ export class Game {
     const barHeight = 4
 
     this.renderer.drawQuad(screen.x, screen.y, 0, barWidth + 2, barHeight + 2, [0.2, 0.2, 0.2, 0.8])
-    const healthColor: [number, number, number, number] = healthRatio > 0.5
-      ? [0, 0.8, 0.5, 1]
-      : healthRatio > 0.25
-        ? [1, 1, 0, 1]
-        : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, healthColor)
+    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, getHealthBarColor(healthRatio))
   }
 
-  private renderBoss(boss: ReturnType<Simulation['getState']>['boss'], _renderHealthBar: boolean = true): void {
+  private renderBoss(boss: ReturnType<Simulation['getState']>['boss']): void {
     if (!boss) return
 
     const x = boss.x + this.shakeOffset.x
     const y = boss.y + this.shakeOffset.y
     const color = COLORS.boss[boss.type] ?? COLORS.boss[0]!
-
-    // Boss sizes vary by type
-    const sizes = [
-      { w: 100, h: 90, d: 70 },   // CLASSIC
-      { w: 80, h: 60, d: 50 },    // TWIN
-      { w: 120, h: 100, d: 80 },  // CARRIER
-      { w: 100, h: 70, d: 60 },   // LASER
-      { w: 70, h: 180, d: 50 },   // WALL
-      { w: 130, h: 120, d: 100 }, // FINAL
-    ]
-    const size = sizes[boss.type] ?? sizes[0]!
+    const size = BOSS_SIZES[boss.type] ?? BOSS_SIZES[0]!
 
     // Boss glow
     const pulse = Math.sin(Date.now() / 200) * 8
@@ -762,16 +721,7 @@ export class Game {
   private renderBossHealthBar(boss: ReturnType<Simulation['getState']>['boss']): void {
     if (!boss) return
 
-    // Boss sizes for positioning
-    const sizes = [
-      { w: 100, h: 90, d: 70 },   // CLASSIC
-      { w: 80, h: 60, d: 50 },    // TWIN
-      { w: 120, h: 100, d: 80 },  // CARRIER
-      { w: 100, h: 70, d: 60 },   // LASER
-      { w: 70, h: 180, d: 50 },   // WALL
-      { w: 130, h: 120, d: 100 }, // FINAL
-    ]
-    const size = sizes[boss.type] ?? sizes[0]!
+    const size = BOSS_SIZES[boss.type] ?? BOSS_SIZES[0]!
 
     // Project world position to screen
     const worldX = boss.x + this.shakeOffset.x
@@ -784,12 +734,7 @@ export class Game {
     const barHeight = 10
 
     this.renderer.drawQuad(screen.x, screen.y, 0, barWidth + 4, barHeight + 4, [0.2, 0.2, 0.2, 0.8])
-    const healthColor: [number, number, number, number] = healthRatio > 0.5
-      ? [0, 0.8, 0.5, 1]
-      : healthRatio > 0.25
-        ? [1, 1, 0, 1]
-        : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, healthColor)
+    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, getHealthBarColor(healthRatio))
   }
 
   private renderBullet(bullet: ReturnType<Simulation['getState']>['bullets'][0]): void {

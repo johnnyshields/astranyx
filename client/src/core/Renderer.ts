@@ -2,17 +2,6 @@ import { createShader, createProgram } from '../graphics/shaderUtils.ts'
 import { VERTEX_SHADER, FRAGMENT_SHADER } from '../graphics/shaders/basic.ts'
 import type { MeshData } from '../graphics/MeshGenerator.ts'
 
-export interface RenderCommand {
-  type: 'quad' | 'mesh'
-  x: number
-  y: number
-  z: number
-  width: number
-  height: number
-  color: [number, number, number, number]
-  rotation?: number
-}
-
 export interface MeshHandle {
   vao: WebGLVertexArrayObject
   vbo: WebGLBuffer

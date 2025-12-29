@@ -33,10 +33,6 @@ export function fromFixed(n: number): number {
   return n / FP_ONE
 }
 
-function mulFixed(a: number, b: number): number {
-  return Math.round((a * b) / FP_ONE)
-}
-
 // ============================================================================
 // Seeded PRNG (xorshift32) - Deterministic random
 // ============================================================================
@@ -316,7 +312,6 @@ const WORLD_HALF_HEIGHT = 500  // Max vertical extent
 // Player constants
 const PLAYER_BASE_ACCEL = toFixed(1500)
 const PLAYER_BASE_MAX_SPEED = toFixed(800)
-const PLAYER_FRICTION = toFixed(0.91 * FP_ONE) // Pre-scaled
 
 // Enemy stats by type
 // shootThreshold: how far inside the screen edge before enemy can shoot (larger = waits longer)
@@ -1984,6 +1979,8 @@ export class Simulation {
   // ==========================================================================
 
   private checkCollisions(): void {
+    const visibleRightX = this.playBounds.rightX  // Enemies are invincible until on-screen
+
     // Player bullets vs enemies
     for (const bullet of this.state.bullets) {
       if (bullet.isEnemy) continue
@@ -1991,6 +1988,10 @@ export class Simulation {
       // Check enemies
       for (const enemy of this.state.enemies) {
         if (bullet.hitEntities.has(enemy.id)) continue
+
+        // Enemies are invincible when off-screen to the right
+        const enemyX = fromFixed(enemy.x)
+        if (enemyX > visibleRightX) continue
 
         if (this.bulletHitsEnemy(bullet, enemy)) {
           bullet.hitEntities.add(enemy.id)
@@ -2053,6 +2054,9 @@ export class Simulation {
         const bx = fromFixed(beam.x)
         const by = fromFixed(beam.y)
 
+        // Enemies are invincible when off-screen to the right
+        if (ex > visibleRightX) continue
+
         // Beam hits if enemy is to the right of beam origin and within height
         if (ex > bx && Math.abs(ey - by) < 25) {
           beam.hitEntities.add(enemy.id)
@@ -2090,6 +2094,9 @@ export class Simulation {
       for (const enemy of this.state.enemies) {
         const ex = fromFixed(enemy.x)
         const ey = fromFixed(enemy.y)
+
+        // Enemies are invincible when off-screen to the right
+        if (ex > visibleRightX) continue
 
         if (Math.hypot(ex - mx, ey - my) < 25) {
           enemy.health -= missile.damage
@@ -2132,6 +2139,9 @@ export class Simulation {
         for (const enemy of this.state.enemies) {
           const ex = fromFixed(enemy.x)
           const ey = fromFixed(enemy.y)
+
+          // Enemies are invincible when off-screen to the right
+          if (ex > visibleRightX) continue
 
           if (Math.hypot(ex - ox, ey - oy) < 25) {
             enemy.health -= 2
