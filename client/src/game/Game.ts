@@ -326,14 +326,14 @@ export class Game {
         this.renderMissile(missile)
       }
 
-      // Enemies
+      // Enemies (3D meshes only)
       for (const enemy of state.enemies) {
-        this.renderEnemy(enemy)
+        this.renderEnemy(enemy, false)
       }
 
-      // Boss
+      // Boss (3D mesh only)
       if (state.boss) {
-        this.renderBoss(state.boss)
+        this.renderBoss(state.boss, false)
       }
 
       // Players
@@ -341,8 +341,23 @@ export class Game {
         this.renderPlayer(player)
       }
 
-      // Draw HUD
+      // Switch to HUD mode for flat UI elements
+      this.renderer.beginHUD()
+
+      // Enemy health bars (flat, screen-aligned)
+      for (const enemy of state.enemies) {
+        this.renderEnemyHealthBar(enemy)
+      }
+
+      // Boss health bar (flat, screen-aligned)
+      if (state.boss) {
+        this.renderBossHealthBar(state.boss)
+      }
+
+      // Draw main HUD
       this.renderHUD(state)
+
+      this.renderer.endHUD()
     }
 
     // Draw pause overlay
@@ -452,7 +467,7 @@ export class Game {
     }
   }
 
-  private renderEnemy(enemy: ReturnType<Simulation['getState']>['enemies'][0]): void {
+  private renderEnemy(enemy: ReturnType<Simulation['getState']>['enemies'][0], _renderHealthBar: boolean = true): void {
     const x = enemy.x + this.shakeOffset.x
     const y = enemy.y + this.shakeOffset.y
     const color = COLORS[enemy.type as keyof typeof COLORS] as [number, number, number, number] || COLORS.grunt
@@ -544,20 +559,48 @@ export class Game {
         0, wobble, 0
       )
     }
+  }
 
-    // Health bar (quad)
+  private renderEnemyHealthBar(enemy: ReturnType<Simulation['getState']>['enemies'][0]): void {
+    // Get enemy scale for bar sizing
+    let scale = 40
+    let depth = 0.6
+
+    switch (enemy.type) {
+      case 'grunt': scale = 35; break
+      case 'shooter': scale = 40; break
+      case 'swerver': scale = 32; break
+      case 'tank': scale = 65; depth = 0.8; break
+      case 'speeder': scale = 38; depth = 0.4; break
+      case 'bomber': scale = 50; depth = 0.7; break
+      case 'sniper': scale = 45; break
+      case 'carrier': scale = 80; depth = 0.8; break
+      case 'mine': scale = 30; depth = 1.0; break
+      case 'spiral': scale = 50; break
+      case 'shield': scale = 55; break
+      case 'splitter': scale = 45; break
+    }
+
+    // Project world position to screen
+    const worldX = enemy.x + this.shakeOffset.x
+    const worldY = enemy.y + this.shakeOffset.y - scale * depth / 2 - 12
+    const screen = this.renderer.worldToScreen(worldX, worldY, 0)
+
+    // Health bar (flat, fixed size regardless of perspective)
     const healthRatio = enemy.health / enemy.maxHealth
-    const barWidth = scale * 0.8
-    this.renderer.drawQuad(x, y - scale * depth / 2 - 12, 20, barWidth + 2, 6, [0.2, 0.2, 0.2, 0.8])
+    const barWidth = 40
+    const barHeight = 4
+
+    this.renderer.drawQuad(screen.x, screen.y, 0, barWidth + 2, barHeight + 2, [0.2, 0.2, 0.2, 0.8])
     const healthColor: [number, number, number, number] = healthRatio > 0.5
       ? [0, 0.8, 0.5, 1]
       : healthRatio > 0.25
         ? [1, 1, 0, 1]
         : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(x - (1 - healthRatio) * barWidth / 2, y - scale * depth / 2 - 12, 21, barWidth * healthRatio, 4, healthColor)
+    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, healthColor)
   }
 
-  private renderBoss(boss: ReturnType<Simulation['getState']>['boss']): void {
+  private renderBoss(boss: ReturnType<Simulation['getState']>['boss'], _renderHealthBar: boolean = true): void {
     if (!boss) return
 
     const x = boss.x + this.shakeOffset.x
@@ -714,17 +757,39 @@ export class Game {
         this.renderer.drawQuad(x - size.w/2 - 15, y + 20, 10, 30, 14, [1, 0.3, 0.3, 1])
         break
     }
+  }
 
-    // Health bar (quad)
+  private renderBossHealthBar(boss: ReturnType<Simulation['getState']>['boss']): void {
+    if (!boss) return
+
+    // Boss sizes for positioning
+    const sizes = [
+      { w: 100, h: 90, d: 70 },   // CLASSIC
+      { w: 80, h: 60, d: 50 },    // TWIN
+      { w: 120, h: 100, d: 80 },  // CARRIER
+      { w: 100, h: 70, d: 60 },   // LASER
+      { w: 70, h: 180, d: 50 },   // WALL
+      { w: 130, h: 120, d: 100 }, // FINAL
+    ]
+    const size = sizes[boss.type] ?? sizes[0]!
+
+    // Project world position to screen
+    const worldX = boss.x + this.shakeOffset.x
+    const worldY = boss.y + this.shakeOffset.y - size.h / 2 - 20
+    const screen = this.renderer.worldToScreen(worldX, worldY, 0)
+
+    // Health bar (flat, fixed size)
     const healthRatio = boss.health / boss.maxHealth
-    const barWidth = 120
-    this.renderer.drawQuad(x, y - size.h/2 - 20, 30, barWidth + 4, 14, [0.2, 0.2, 0.2, 0.8])
+    const barWidth = 100
+    const barHeight = 10
+
+    this.renderer.drawQuad(screen.x, screen.y, 0, barWidth + 4, barHeight + 4, [0.2, 0.2, 0.2, 0.8])
     const healthColor: [number, number, number, number] = healthRatio > 0.5
       ? [0, 0.8, 0.5, 1]
       : healthRatio > 0.25
         ? [1, 1, 0, 1]
         : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(x - (1 - healthRatio) * barWidth / 2, y - size.h/2 - 20, 31, barWidth * healthRatio, 10, healthColor)
+    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, healthColor)
   }
 
   private renderBullet(bullet: ReturnType<Simulation['getState']>['bullets'][0]): void {

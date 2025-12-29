@@ -524,6 +524,87 @@ export class Renderer {
     this.gl.bindVertexArray(null)
   }
 
+  /**
+   * Switch to HUD rendering mode - orthographic projection aligned with viewport.
+   * HUD coordinates: X from -viewportWidth/2 to +viewportWidth/2, Y from -viewportHeight/2 to +viewportHeight/2
+   * Normalized to roughly match game coordinate scale (scaled to fit 5:3 aspect)
+   */
+  beginHUD(): void {
+    const gl = this.gl
+
+    // Disable depth testing for HUD (always on top)
+    gl.disable(gl.DEPTH_TEST)
+
+    // Set up orthographic projection matching viewport
+    // Use a coordinate system where the viewport maps to roughly -500 to +500 horizontally
+    const scale = 500 / (this.viewportWidth / 2)
+    const halfW = this.viewportWidth / 2 * scale
+    const halfH = this.viewportHeight / 2 * scale
+
+    this.setOrthographic(-halfW, halfW, -halfH, halfH, -100, 100)
+
+    // Identity view matrix for HUD (no camera transform)
+    this.setIdentity(this.viewMatrix)
+
+    // Update uniforms
+    gl.uniformMatrix4fv(this.uProjection, false, this.projectionMatrix)
+    gl.uniformMatrix4fv(this.uView, false, this.viewMatrix)
+  }
+
+  /**
+   * End HUD mode and restore perspective projection
+   */
+  endHUD(): void {
+    const gl = this.gl
+
+    // Re-enable depth testing
+    gl.enable(gl.DEPTH_TEST)
+
+    // Restore perspective projection
+    const fov = 45 * (Math.PI / 180)
+    const near = 10
+    const far = 2000
+    this.setPerspective(fov, 5 / 3, near, far)
+
+    // Restore camera view matrix
+    this.setupCamera()
+
+    // Update uniforms
+    gl.uniformMatrix4fv(this.uProjection, false, this.projectionMatrix)
+    gl.uniformMatrix4fv(this.uView, false, this.viewMatrix)
+  }
+
+  /**
+   * Project a world coordinate (x, y, z=0) to HUD screen coordinates.
+   * Returns coordinates in HUD space (roughly -500 to +500 range)
+   */
+  worldToScreen(worldX: number, worldY: number, worldZ: number = 0): { x: number, y: number } {
+    // Build view-projection matrix
+    const vp = this.multiplyMatrices(this.projectionMatrix, this.viewMatrix)
+
+    // Need to temporarily restore perspective matrices for projection
+    const fov = 45 * (Math.PI / 180)
+    this.setPerspective(fov, 5 / 3, 10, 2000)
+    this.setupCamera()
+
+    const perspVP = this.multiplyMatrices(this.projectionMatrix, this.viewMatrix)
+
+    // Transform world point to clip space
+    const w = perspVP[3]! * worldX + perspVP[7]! * worldY + perspVP[11]! * worldZ + perspVP[15]!
+    const clipX = (perspVP[0]! * worldX + perspVP[4]! * worldY + perspVP[8]! * worldZ + perspVP[12]!) / w
+    const clipY = (perspVP[1]! * worldX + perspVP[5]! * worldY + perspVP[9]! * worldZ + perspVP[13]!) / w
+
+    // Convert from NDC (-1 to 1) to HUD coordinates (roughly -500 to +500)
+    const scale = 500 / (this.viewportWidth / 2)
+    const halfW = this.viewportWidth / 2 * scale
+    const halfH = this.viewportHeight / 2 * scale
+
+    return {
+      x: clipX * halfW,
+      y: clipY * halfH
+    }
+  }
+
   getGL(): WebGL2RenderingContext {
     return this.gl
   }
