@@ -94,3 +94,45 @@ Basilisk - Petrify/slow beam
 Leviathan - Massive slow-firing cannon
 Jackal - Fast weak shots
 Lotus - Deployable turret which sprays in a spin patter
+
+Sentinel - drone
+Gremlin - drone
+Widow - drone
+
+Maelstrom
+Cyclone
+
+Adamantium - Armor
+Cocoon
+Paladin
+Lance
+
+Huntress
+Artemis
+Foxtail
+
+Mammoth
+Tusk
+Hussar
+Icarus
+Fugu - shoots spikes in all directions
+
+Nagareboshi
+Starshower
+Starfall
+Kurage -- tentacles
+
+Pixie
+Judas
+Troubadour
+Golem
+Jester
+Moray - eel like enemy with electricity
+Imp
+Enforcer - six shooter
+Cardinal
+Pontiff
+Bishop
+Knight
+Lancer
+Leper
