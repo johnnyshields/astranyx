@@ -283,8 +283,8 @@ const HALF_WIDTH = PLAY_WIDTH / 2
 const HALF_HEIGHT = PLAY_HEIGHT / 2
 
 // Player constants
-const PLAYER_BASE_ACCEL = toFixed(400)
-const PLAYER_BASE_MAX_SPEED = toFixed(200)
+const PLAYER_BASE_ACCEL = toFixed(800)      // 2x faster acceleration
+const PLAYER_BASE_MAX_SPEED = toFixed(400)  // 2x faster max speed
 const PLAYER_FRICTION = toFixed(0.91 * FP_ONE) // Pre-scaled
 
 // Enemy stats by type

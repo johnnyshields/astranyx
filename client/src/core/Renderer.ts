@@ -44,10 +44,13 @@ export class Renderer {
   private viewMatrix = new Float32Array(16)
   private projectionMatrix = new Float32Array(16)
   private normalMatrix = new Float32Array(9)
-  private cameraPosition = new Float32Array([0, 200, 600])
+  private cameraPosition = new Float32Array(3)
 
-  // Camera settings for 2.5D view
-  private cameraTilt = 0.3  // Radians - tilt angle down
+  // Camera settings for Einhänder-style 2.5D view
+  // Play area is X (horizontal, -500 to +500) x Y (vertical, -300 to +300)
+  // Z is depth (into screen). Camera looks from +Z toward origin with slight downward tilt
+  private cameraDistance = 900
+  private cameraTiltAngle = 20 * (Math.PI / 180)  // 20 degrees tilt - right side away
 
   // State
   private width = 0
@@ -163,11 +166,20 @@ export class Renderer {
   }
 
   private setupCamera(): void {
-    // Camera positioned above and back, looking down at a slight angle
-    // This gives the Einhänder-style 2.5D view
-    const camX = this.cameraPosition[0]!
-    const camY = this.cameraPosition[1]!
-    const camZ = this.cameraPosition[2]!
+    // Einhänder-style 2.5D camera:
+    // Game coordinates: X = left/right, Y = up/down (screen), Z = depth
+    // Camera is in front (positive Z), looking back at origin
+    // TILTED so right side (positive X) is farther away - like viewing from left side of a table
+
+    // Camera positioned in front and to the LEFT of play area
+    // This makes right side of screen tilt away
+    const camX = -this.cameraDistance * Math.sin(this.cameraTiltAngle)  // Left of center
+    const camY = 0
+    const camZ = this.cameraDistance * Math.cos(this.cameraTiltAngle)   // In front
+
+    this.cameraPosition[0] = camX
+    this.cameraPosition[1] = camY
+    this.cameraPosition[2] = camZ
 
     // Look at center of play area
     const targetX = 0
@@ -177,7 +189,7 @@ export class Renderer {
     this.setLookAt(
       camX, camY, camZ,
       targetX, targetY, targetZ,
-      0, 0, 1  // Z is up in our world
+      0, 1, 0  // Y is up in screen space
     )
   }
 
