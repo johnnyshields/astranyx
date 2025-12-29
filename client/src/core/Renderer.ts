@@ -349,6 +349,86 @@ export class Renderer {
     return handle
   }
 
+  // Load a mesh from a GLB file
+  async loadGLB(name: string, url: string): Promise<MeshHandle> {
+    // Check cache first
+    const cached = this.meshCache.get(name)
+    if (cached) return cached
+
+    const response = await fetch(url)
+    const buffer = await response.arrayBuffer()
+
+    // Parse GLB header
+    const view = new DataView(buffer)
+    const magic = view.getUint32(0, true)
+    if (magic !== 0x46546C67) { // 'glTF'
+      throw new Error(`Invalid GLB magic: ${magic.toString(16)}`)
+    }
+
+    const version = view.getUint32(4, true)
+    if (version !== 2) {
+      throw new Error(`Unsupported GLB version: ${version}`)
+    }
+
+    // Parse chunks
+    let offset = 12
+    let jsonChunk: string | null = null
+    let binChunk: ArrayBuffer | null = null
+
+    while (offset < buffer.byteLength) {
+      const chunkLength = view.getUint32(offset, true)
+      const chunkType = view.getUint32(offset + 4, true)
+      offset += 8
+
+      if (chunkType === 0x4E4F534A) { // 'JSON'
+        const decoder = new TextDecoder()
+        jsonChunk = decoder.decode(new Uint8Array(buffer, offset, chunkLength))
+      } else if (chunkType === 0x004E4942) { // 'BIN\0'
+        binChunk = buffer.slice(offset, offset + chunkLength)
+      }
+
+      offset += chunkLength
+    }
+
+    if (!jsonChunk || !binChunk) {
+      throw new Error('GLB missing JSON or BIN chunk')
+    }
+
+    // Parse glTF JSON
+    const gltf = JSON.parse(jsonChunk)
+
+    // Get the first mesh's first primitive
+    const mesh = gltf.meshes[0]
+    const primitive = mesh.primitives[0]
+
+    // Get position and normal accessors
+    const posAccessor = gltf.accessors[primitive.attributes.POSITION]
+    const normalAccessor = gltf.accessors[primitive.attributes.NORMAL]
+
+    // Get buffer views
+    const posView = gltf.bufferViews[posAccessor.bufferView]
+    const normalView = gltf.bufferViews[normalAccessor.bufferView]
+
+    // Extract data from binary chunk
+    const positions = new Float32Array(binChunk, posView.byteOffset, posAccessor.count * 3)
+    const normals = new Float32Array(binChunk, normalView.byteOffset, normalAccessor.count * 3)
+
+    // Interleave position and normal data (6 floats per vertex)
+    const vertexCount = posAccessor.count
+    const interleavedData = new Float32Array(vertexCount * 6)
+    for (let i = 0; i < vertexCount; i++) {
+      interleavedData[i * 6 + 0] = positions[i * 3 + 0]!
+      interleavedData[i * 6 + 1] = positions[i * 3 + 1]!
+      interleavedData[i * 6 + 2] = positions[i * 3 + 2]!
+      interleavedData[i * 6 + 3] = normals[i * 3 + 0]!
+      interleavedData[i * 6 + 4] = normals[i * 3 + 1]!
+      interleavedData[i * 6 + 5] = normals[i * 3 + 2]!
+    }
+
+    // Create mesh from interleaved data
+    return this.createMesh(name, { vertices: interleavedData, vertexCount })
+  }
+
   // Draw a 3D mesh with full transformation
   drawMesh(
     mesh: MeshHandle,

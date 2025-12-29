@@ -70,13 +70,9 @@ export function createBoxMesh(
   return { vertices, vertexCount: 36 }
 }
 
-// Generates a wedge-shaped player ship mesh (pointed nose, flat back)
+// Generates a fighter jet style player ship mesh
+// Oriented for side-scrolling: X = forward, Y = up/down (screen vertical), Z = depth (into screen)
 export function createPlayerShipMesh(): MeshData {
-  // Ship dimensions
-  const length = 1.0   // X length (nose to tail)
-  const width = 0.6    // Y width (wingspan)
-  const height = 0.25  // Z height (body depth)
-
   const vertices: number[] = []
 
   function addTri(
@@ -84,7 +80,6 @@ export function createPlayerShipMesh(): MeshData {
     x2: number, y2: number, z2: number,
     x3: number, y3: number, z3: number
   ) {
-    // Calculate normal
     const ux = x2 - x1, uy = y2 - y1, uz = z2 - z1
     const vx = x3 - x1, vy = y3 - y1, vz = z3 - z1
     let nx = uy * vz - uz * vy
@@ -98,52 +93,112 @@ export function createPlayerShipMesh(): MeshData {
     vertices.push(x3, y3, z3, nx, ny, nz)
   }
 
-  // Nose point
+  // Fighter jet proportions
   const nose = [0.5, 0, 0]
 
-  // Body vertices (back of ship)
-  const backTop = [-0.5, 0, height / 2]
-  const backBot = [-0.5, 0, -height / 2]
-  const wingTopL = [-0.3, width / 2, height / 4]
-  const wingTopR = [-0.3, -width / 2, height / 4]
-  const wingBotL = [-0.3, width / 2, -height / 4]
-  const wingBotR = [-0.3, -width / 2, -height / 4]
+  // Cockpit area (raised canopy)
+  const canopyFront = [0.15, 0.12, 0]
+  const canopyPeak = [-0.05, 0.18, 0]
+  const canopyBack = [-0.2, 0.1, 0]
+  const canopyL = [-0.05, 0.1, 0.08]
+  const canopyR = [-0.05, 0.1, -0.08]
 
-  // Top surface (2 triangles from nose to wings)
-  addTri(nose[0]!, nose[1]!, nose[2]!, wingTopL[0]!, wingTopL[1]!, wingTopL[2]!, backTop[0]!, backTop[1]!, backTop[2]!)
-  addTri(nose[0]!, nose[1]!, nose[2]!, backTop[0]!, backTop[1]!, backTop[2]!, wingTopR[0]!, wingTopR[1]!, wingTopR[2]!)
+  // Main fuselage (sleek body)
+  const bodyFrontL = [0.1, 0, 0.1]
+  const bodyFrontR = [0.1, 0, -0.1]
+  const bodyMidL = [-0.15, 0, 0.12]
+  const bodyMidR = [-0.15, 0, -0.12]
+  const bodyBackL = [-0.4, 0, 0.08]
+  const bodyBackR = [-0.4, 0, -0.08]
 
-  // Bottom surface
-  addTri(nose[0]!, nose[1]!, nose[2]!, backBot[0]!, backBot[1]!, backBot[2]!, wingBotL[0]!, wingBotL[1]!, wingBotL[2]!)
-  addTri(nose[0]!, nose[1]!, nose[2]!, wingBotR[0]!, wingBotR[1]!, wingBotR[2]!, backBot[0]!, backBot[1]!, backBot[2]!)
+  // Underside
+  const bellyFront = [0.1, -0.06, 0]
+  const bellyMid = [-0.15, -0.08, 0]
+  const bellyBack = [-0.4, -0.05, 0]
 
-  // Left side
-  addTri(nose[0]!, nose[1]!, nose[2]!, wingBotL[0]!, wingBotL[1]!, wingBotL[2]!, wingTopL[0]!, wingTopL[1]!, wingTopL[2]!)
+  // Tail
+  const tailTop = [-0.5, 0.15, 0]
+  const tailBot = [-0.5, -0.03, 0]
+  const tailL = [-0.5, 0, 0.05]
+  const tailR = [-0.5, 0, -0.05]
 
-  // Right side
-  addTri(nose[0]!, nose[1]!, nose[2]!, wingTopR[0]!, wingTopR[1]!, wingTopR[2]!, wingBotR[0]!, wingBotR[1]!, wingBotR[2]!)
+  // === NOSE CONE ===
+  // Top nose surfaces
+  addTri(nose[0]!, nose[1]!, nose[2]!, canopyFront[0]!, canopyFront[1]!, canopyFront[2]!, bodyFrontL[0]!, bodyFrontL[1]!, bodyFrontL[2]!)
+  addTri(nose[0]!, nose[1]!, nose[2]!, bodyFrontR[0]!, bodyFrontR[1]!, bodyFrontR[2]!, canopyFront[0]!, canopyFront[1]!, canopyFront[2]!)
+  // Bottom nose surfaces
+  addTri(nose[0]!, nose[1]!, nose[2]!, bodyFrontL[0]!, bodyFrontL[1]!, bodyFrontL[2]!, bellyFront[0]!, bellyFront[1]!, bellyFront[2]!)
+  addTri(nose[0]!, nose[1]!, nose[2]!, bellyFront[0]!, bellyFront[1]!, bellyFront[2]!, bodyFrontR[0]!, bodyFrontR[1]!, bodyFrontR[2]!)
 
-  // Back face
-  addTri(backTop[0]!, backTop[1]!, backTop[2]!, wingTopL[0]!, wingTopL[1]!, wingTopL[2]!, wingBotL[0]!, wingBotL[1]!, wingBotL[2]!)
-  addTri(backTop[0]!, backTop[1]!, backTop[2]!, wingBotL[0]!, wingBotL[1]!, wingBotL[2]!, backBot[0]!, backBot[1]!, backBot[2]!)
-  addTri(backTop[0]!, backTop[1]!, backTop[2]!, backBot[0]!, backBot[1]!, backBot[2]!, wingBotR[0]!, wingBotR[1]!, wingBotR[2]!)
-  addTri(backTop[0]!, backTop[1]!, backTop[2]!, wingBotR[0]!, wingBotR[1]!, wingBotR[2]!, wingTopR[0]!, wingTopR[1]!, wingTopR[2]!)
+  // === CANOPY (raised cockpit) ===
+  addTri(canopyFront[0]!, canopyFront[1]!, canopyFront[2]!, canopyPeak[0]!, canopyPeak[1]!, canopyPeak[2]!, canopyL[0]!, canopyL[1]!, canopyL[2]!)
+  addTri(canopyFront[0]!, canopyFront[1]!, canopyFront[2]!, canopyR[0]!, canopyR[1]!, canopyR[2]!, canopyPeak[0]!, canopyPeak[1]!, canopyPeak[2]!)
+  addTri(canopyPeak[0]!, canopyPeak[1]!, canopyPeak[2]!, canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, canopyL[0]!, canopyL[1]!, canopyL[2]!)
+  addTri(canopyPeak[0]!, canopyPeak[1]!, canopyPeak[2]!, canopyR[0]!, canopyR[1]!, canopyR[2]!, canopyBack[0]!, canopyBack[1]!, canopyBack[2]!)
 
-  // Wing extensions (flat panels)
-  const wingTipL = [-0.2, width * 0.8, 0]
-  const wingTipR = [-0.2, -width * 0.8, 0]
-  const wingBackL = [-0.5, width * 0.5, 0]
-  const wingBackR = [-0.5, -width * 0.5, 0]
+  // === MAIN BODY TOP ===
+  // Front to mid
+  addTri(canopyFront[0]!, canopyFront[1]!, canopyFront[2]!, canopyL[0]!, canopyL[1]!, canopyL[2]!, bodyFrontL[0]!, bodyFrontL[1]!, bodyFrontL[2]!)
+  addTri(canopyFront[0]!, canopyFront[1]!, canopyFront[2]!, bodyFrontR[0]!, bodyFrontR[1]!, bodyFrontR[2]!, canopyR[0]!, canopyR[1]!, canopyR[2]!)
+  addTri(canopyL[0]!, canopyL[1]!, canopyL[2]!, bodyMidL[0]!, bodyMidL[1]!, bodyMidL[2]!, bodyFrontL[0]!, bodyFrontL[1]!, bodyFrontL[2]!)
+  addTri(canopyR[0]!, canopyR[1]!, canopyR[2]!, bodyFrontR[0]!, bodyFrontR[1]!, bodyFrontR[2]!, bodyMidR[0]!, bodyMidR[1]!, bodyMidR[2]!)
+  // Mid to back
+  addTri(canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, bodyBackL[0]!, bodyBackL[1]!, bodyBackL[2]!, bodyMidL[0]!, bodyMidL[1]!, bodyMidL[2]!)
+  addTri(canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, bodyMidL[0]!, bodyMidL[1]!, bodyMidL[2]!, canopyL[0]!, canopyL[1]!, canopyL[2]!)
+  addTri(canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, bodyMidR[0]!, bodyMidR[1]!, bodyMidR[2]!, bodyBackR[0]!, bodyBackR[1]!, bodyBackR[2]!)
+  addTri(canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, canopyR[0]!, canopyR[1]!, canopyR[2]!, bodyMidR[0]!, bodyMidR[1]!, bodyMidR[2]!)
 
+  // === UNDERSIDE ===
+  addTri(bodyFrontL[0]!, bodyFrontL[1]!, bodyFrontL[2]!, bellyMid[0]!, bellyMid[1]!, bellyMid[2]!, bellyFront[0]!, bellyFront[1]!, bellyFront[2]!)
+  addTri(bodyFrontL[0]!, bodyFrontL[1]!, bodyFrontL[2]!, bodyMidL[0]!, bodyMidL[1]!, bodyMidL[2]!, bellyMid[0]!, bellyMid[1]!, bellyMid[2]!)
+  addTri(bodyFrontR[0]!, bodyFrontR[1]!, bodyFrontR[2]!, bellyFront[0]!, bellyFront[1]!, bellyFront[2]!, bellyMid[0]!, bellyMid[1]!, bellyMid[2]!)
+  addTri(bodyFrontR[0]!, bodyFrontR[1]!, bodyFrontR[2]!, bellyMid[0]!, bellyMid[1]!, bellyMid[2]!, bodyMidR[0]!, bodyMidR[1]!, bodyMidR[2]!)
+  addTri(bodyMidL[0]!, bodyMidL[1]!, bodyMidL[2]!, bellyBack[0]!, bellyBack[1]!, bellyBack[2]!, bellyMid[0]!, bellyMid[1]!, bellyMid[2]!)
+  addTri(bodyMidL[0]!, bodyMidL[1]!, bodyMidL[2]!, bodyBackL[0]!, bodyBackL[1]!, bodyBackL[2]!, bellyBack[0]!, bellyBack[1]!, bellyBack[2]!)
+  addTri(bodyMidR[0]!, bodyMidR[1]!, bodyMidR[2]!, bellyMid[0]!, bellyMid[1]!, bellyMid[2]!, bellyBack[0]!, bellyBack[1]!, bellyBack[2]!)
+  addTri(bodyMidR[0]!, bodyMidR[1]!, bodyMidR[2]!, bellyBack[0]!, bellyBack[1]!, bellyBack[2]!, bodyBackR[0]!, bodyBackR[1]!, bodyBackR[2]!)
+
+  // === TAIL SECTION ===
+  // Top to tail
+  addTri(canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, tailTop[0]!, tailTop[1]!, tailTop[2]!, bodyBackL[0]!, bodyBackL[1]!, bodyBackL[2]!)
+  addTri(canopyBack[0]!, canopyBack[1]!, canopyBack[2]!, bodyBackR[0]!, bodyBackR[1]!, bodyBackR[2]!, tailTop[0]!, tailTop[1]!, tailTop[2]!)
+  // Sides to tail
+  addTri(bodyBackL[0]!, bodyBackL[1]!, bodyBackL[2]!, tailTop[0]!, tailTop[1]!, tailTop[2]!, tailL[0]!, tailL[1]!, tailL[2]!)
+  addTri(bodyBackR[0]!, bodyBackR[1]!, bodyBackR[2]!, tailR[0]!, tailR[1]!, tailR[2]!, tailTop[0]!, tailTop[1]!, tailTop[2]!)
+  // Bottom to tail
+  addTri(bodyBackL[0]!, bodyBackL[1]!, bodyBackL[2]!, tailL[0]!, tailL[1]!, tailL[2]!, bellyBack[0]!, bellyBack[1]!, bellyBack[2]!)
+  addTri(bodyBackR[0]!, bodyBackR[1]!, bodyBackR[2]!, bellyBack[0]!, bellyBack[1]!, bellyBack[2]!, tailR[0]!, tailR[1]!, tailR[2]!)
+  addTri(bellyBack[0]!, bellyBack[1]!, bellyBack[2]!, tailL[0]!, tailL[1]!, tailL[2]!, tailBot[0]!, tailBot[1]!, tailBot[2]!)
+  addTri(bellyBack[0]!, bellyBack[1]!, bellyBack[2]!, tailBot[0]!, tailBot[1]!, tailBot[2]!, tailR[0]!, tailR[1]!, tailR[2]!)
+  // Tail back face
+  addTri(tailTop[0]!, tailTop[1]!, tailTop[2]!, tailR[0]!, tailR[1]!, tailR[2]!, tailL[0]!, tailL[1]!, tailL[2]!)
+  addTri(tailBot[0]!, tailBot[1]!, tailBot[2]!, tailL[0]!, tailL[1]!, tailL[2]!, tailR[0]!, tailR[1]!, tailR[2]!)
+
+  // === SWEPT WINGS ===
+  const wingRoot = [-0.1, -0.02, 0.12]
+  const wingTip = [-0.3, -0.02, 0.4]
+  const wingBack = [-0.35, -0.02, 0.1]
   // Left wing top
-  addTri(wingTopL[0]!, wingTopL[1]!, wingTopL[2]!, wingTipL[0]!, wingTipL[1]!, wingTipL[2]!, wingBackL[0]!, wingBackL[1]!, wingBackL[2]!)
+  addTri(wingRoot[0]!, wingRoot[1]! + 0.02, wingRoot[2]!, wingTip[0]!, wingTip[1]! + 0.01, wingTip[2]!, wingBack[0]!, wingBack[1]! + 0.02, wingBack[2]!)
   // Left wing bottom
-  addTri(wingBotL[0]!, wingBotL[1]!, wingBotL[2]!, wingBackL[0]!, wingBackL[1]!, wingBackL[2]!, wingTipL[0]!, wingTipL[1]!, wingTipL[2]!)
+  addTri(wingRoot[0]!, wingRoot[1]!, wingRoot[2]!, wingBack[0]!, wingBack[1]!, wingBack[2]!, wingTip[0]!, wingTip[1]!, wingTip[2]!)
 
+  // Right wing (mirror)
+  const wingRootR = [-0.1, -0.02, -0.12]
+  const wingTipR = [-0.3, -0.02, -0.4]
+  const wingBackR = [-0.35, -0.02, -0.1]
   // Right wing top
-  addTri(wingTopR[0]!, wingTopR[1]!, wingTopR[2]!, wingBackR[0]!, wingBackR[1]!, wingBackR[2]!, wingTipR[0]!, wingTipR[1]!, wingTipR[2]!)
+  addTri(wingRootR[0]!, wingRootR[1]! + 0.02, wingRootR[2]!, wingBackR[0]!, wingBackR[1]! + 0.02, wingBackR[2]!, wingTipR[0]!, wingTipR[1]! + 0.01, wingTipR[2]!)
   // Right wing bottom
-  addTri(wingBotR[0]!, wingBotR[1]!, wingBotR[2]!, wingTipR[0]!, wingTipR[1]!, wingTipR[2]!, wingBackR[0]!, wingBackR[1]!, wingBackR[2]!)
+  addTri(wingRootR[0]!, wingRootR[1]!, wingRootR[2]!, wingTipR[0]!, wingTipR[1]!, wingTipR[2]!, wingBackR[0]!, wingBackR[1]!, wingBackR[2]!)
+
+  // === VERTICAL TAIL FIN ===
+  const finBase1 = [-0.35, 0.05, 0]
+  const finBase2 = [-0.5, 0.05, 0]
+  const finTip = [-0.48, 0.28, 0]
+  // Both sides of fin
+  addTri(finBase1[0]!, finBase1[1]!, finBase1[2]!, finTip[0]!, finTip[1]!, finTip[2]!, finBase2[0]!, finBase2[1]!, finBase2[2]!)
+  addTri(finBase1[0]!, finBase1[1]!, finBase1[2]!, finBase2[0]!, finBase2[1]!, finBase2[2]!, finTip[0]!, finTip[1]!, finTip[2]!)
 
   return {
     vertices: new Float32Array(vertices),

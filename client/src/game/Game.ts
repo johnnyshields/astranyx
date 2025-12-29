@@ -2,16 +2,18 @@ import type { Renderer, MeshHandle } from '../core/Renderer.ts'
 import type { Input } from '../core/Input.ts'
 import { Simulation, type EnemyType, type BulletType, type PowerupType, type BossType } from './Simulation.ts'
 import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
-import {
-  createPlayerShipMesh,
-  createEnemyShipMesh,
-  createTankMesh,
-  createBossCoreMesh,
-  createDroneMesh,
-  createOrbMesh,
-  createPowerupMesh,
-  createMineMesh,
-} from '../graphics/MeshGenerator.ts'
+
+// Mesh file paths
+const MESH_PATHS = {
+  playerShip: '/assets/meshes/player-ship.glb',
+  enemyShip: '/assets/meshes/enemy-ship.glb',
+  tank: '/assets/meshes/tank.glb',
+  bossCore: '/assets/meshes/boss-core.glb',
+  drone: '/assets/meshes/drone.glb',
+  orb: '/assets/meshes/orb.glb',
+  powerup: '/assets/meshes/powerup.glb',
+  mine: '/assets/meshes/mine.glb',
+}
 
 export type GameState = 'title' | 'lobby' | 'connecting' | 'playing' | 'paused' | 'gameover'
 
@@ -167,15 +169,26 @@ export class Game {
   }
 
   async init(): Promise<void> {
-    // Initialize 3D meshes
-    this.meshes.playerShip = this.renderer.createMesh('playerShip', createPlayerShipMesh())
-    this.meshes.enemyShip = this.renderer.createMesh('enemyShip', createEnemyShipMesh())
-    this.meshes.tank = this.renderer.createMesh('tank', createTankMesh())
-    this.meshes.bossCore = this.renderer.createMesh('bossCore', createBossCoreMesh())
-    this.meshes.drone = this.renderer.createMesh('drone', createDroneMesh())
-    this.meshes.orb = this.renderer.createMesh('orb', createOrbMesh())
-    this.meshes.powerup = this.renderer.createMesh('powerup', createPowerupMesh())
-    this.meshes.mine = this.renderer.createMesh('mine', createMineMesh())
+    // Load 3D meshes from GLB files
+    const [playerShip, enemyShip, tank, bossCore, drone, orb, powerup, mine] = await Promise.all([
+      this.renderer.loadGLB('playerShip', MESH_PATHS.playerShip),
+      this.renderer.loadGLB('enemyShip', MESH_PATHS.enemyShip),
+      this.renderer.loadGLB('tank', MESH_PATHS.tank),
+      this.renderer.loadGLB('bossCore', MESH_PATHS.bossCore),
+      this.renderer.loadGLB('drone', MESH_PATHS.drone),
+      this.renderer.loadGLB('orb', MESH_PATHS.orb),
+      this.renderer.loadGLB('powerup', MESH_PATHS.powerup),
+      this.renderer.loadGLB('mine', MESH_PATHS.mine),
+    ])
+
+    this.meshes.playerShip = playerShip
+    this.meshes.enemyShip = enemyShip
+    this.meshes.tank = tank
+    this.meshes.bossCore = bossCore
+    this.meshes.drone = drone
+    this.meshes.orb = orb
+    this.meshes.powerup = powerup
+    this.meshes.mine = mine
 
     // Initialize starfield
     for (let i = 0; i < 200; i++) {
