@@ -11,6 +11,7 @@
       height: 100%;
       overflow: hidden;
       background: #000;
+      font-family: monospace;
     }
     #game-container {
       width: 100%;
@@ -34,6 +35,152 @@
       font-size: 24px;
       text-shadow: 0 0 20px #0ff;
     }
+
+    /* Title Screen */
+    #titleScreen {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 20, 0.98);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 100;
+    }
+    #titleScreen.hidden { display: none; }
+    #titleScreen h1 {
+      font-size: 72px;
+      color: #0ff;
+      text-shadow: 0 0 40px #0ff, 0 0 80px #08f;
+      margin-bottom: 10px;
+      letter-spacing: 12px;
+    }
+    #titleScreen .subtitle {
+      color: #f0f;
+      font-size: 14px;
+      margin-bottom: 60px;
+      text-shadow: 0 0 20px #f0f;
+      letter-spacing: 4px;
+    }
+    #titleScreen .mode-select {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 50px;
+    }
+    #titleScreen .mode-btn {
+      background: transparent;
+      border: 3px solid #0f0;
+      color: #0f0;
+      padding: 20px 50px;
+      font-family: monospace;
+      font-size: 24px;
+      cursor: pointer;
+      text-shadow: 0 0 15px #0f0;
+      box-shadow: 0 0 25px rgba(0, 255, 0, 0.3);
+      transition: all 0.2s;
+    }
+    #titleScreen .mode-btn:hover {
+      background: #0f0;
+      color: #000;
+      box-shadow: 0 0 40px rgba(0, 255, 0, 0.6);
+    }
+    #titleScreen .controls-info {
+      color: #088;
+      font-size: 13px;
+      text-align: center;
+      line-height: 2.2;
+    }
+    #titleScreen .controls-info span {
+      color: #0ff;
+      border: 1px solid #088;
+      padding: 3px 8px;
+      margin: 0 3px;
+    }
+    #titleScreen .p1-controls, #titleScreen .p2-controls {
+      margin: 8px 0;
+    }
+    #titleScreen .p1-label { color: #0ff; font-weight: bold; }
+    #titleScreen .p2-label { color: #f80; font-weight: bold; }
+
+    /* Pause Overlay */
+    #pauseOverlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 20, 0.85);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 90;
+    }
+    #pauseOverlay.visible { display: flex; }
+    #pauseOverlay h1 {
+      font-size: 48px;
+      color: #0ff;
+      text-shadow: 0 0 30px #0ff;
+      margin-bottom: 20px;
+    }
+    #pauseOverlay .hint {
+      color: #088;
+      font-size: 14px;
+      margin-top: 15px;
+    }
+    #pauseOverlay .hint span {
+      color: #0ff;
+      border: 1px solid #088;
+      padding: 2px 6px;
+    }
+
+    /* Game Over Overlay */
+    #gameOverOverlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(20, 0, 0, 0.95);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 90;
+    }
+    #gameOverOverlay.visible { display: flex; }
+    #gameOverOverlay h1 {
+      font-size: 48px;
+      color: #f00;
+      text-shadow: 0 0 30px #f00;
+      margin-bottom: 20px;
+      animation: glitch 0.3s infinite;
+    }
+    @keyframes glitch {
+      0% { transform: translate(0); }
+      25% { transform: translate(-2px, 1px); }
+      50% { transform: translate(2px, -1px); }
+      75% { transform: translate(-1px, 2px); }
+      100% { transform: translate(0); }
+    }
+    #gameOverOverlay .final {
+      color: #0ff;
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
+    #gameOverOverlay .final span {
+      color: #ff0;
+      font-size: 32px;
+    }
+    #gameOverOverlay .btn {
+      background: transparent;
+      border: 2px solid #0f0;
+      color: #0f0;
+      padding: 15px 40px;
+      font-family: monospace;
+      font-size: 16px;
+      cursor: pointer;
+      text-shadow: 0 0 10px #0f0;
+      box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    }
+    #gameOverOverlay .btn:hover {
+      background: #0f0;
+      color: #000;
+    }
   </style>
 </head>
 <body>
@@ -41,6 +188,32 @@
     <canvas id="game"></canvas>
   </div>
   <div id="loading">INITIALIZING...</div>
+
+  <div id="titleScreen">
+    <h1>ASTRANYX</h1>
+    <div class="subtitle">SPACE COMBAT SIMULATOR</div>
+    <div class="mode-select">
+      <button class="mode-btn" id="btn1P">1 PLAYER</button>
+      <button class="mode-btn" id="btn2P">2 PLAYERS</button>
+    </div>
+    <div class="controls-info">
+      <div class="p1-controls"><span class="p1-label">P1:</span> <span>W</span><span>A</span><span>S</span><span>D</span> MOVE &nbsp; <span>SPACE</span> FIRE</div>
+      <div class="p2-controls"><span class="p2-label">P2:</span> <span>ARROWS</span> MOVE &nbsp; <span>0</span> FIRE</div>
+      <div style="margin-top: 15px;"><span>ESC</span> PAUSE &nbsp; <span>HOLD FIRE</span> CHARGE SHOT</div>
+    </div>
+  </div>
+
+  <div id="pauseOverlay">
+    <h1>PAUSED</h1>
+    <div class="hint">Press <span>ESC</span> to resume</div>
+  </div>
+
+  <div id="gameOverOverlay">
+    <h1>GAME OVER</h1>
+    <div class="final">FINAL SCORE: <span id="finalScore">0</span></div>
+    <button class="btn" id="btnRestart">CONTINUE?</button>
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

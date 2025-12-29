@@ -126,8 +126,9 @@ export class Game {
   private localPlayerId: string = ''
   private playerIds: string[] = []
 
-  // Single player fallback
-  private singlePlayerMode = true
+  // Local mode
+  private numPlayers = 1
+  private localMode = true
 
   private screenWidth = 0
   private screenHeight = 0
@@ -141,6 +142,11 @@ export class Game {
 
   // Screen shake tracking
   private shakeOffset = { x: 0, y: 0 }
+
+  // UI Elements
+  private titleScreen: HTMLElement | null = null
+  private pauseOverlay: HTMLElement | null = null
+  private gameOverOverlay: HTMLElement | null = null
 
   // 3D Meshes
   private meshes: {
@@ -200,21 +206,53 @@ export class Game {
       })
     }
 
-    // Auto-start single player for now
-    this.startSinglePlayer()
+    // Get UI elements
+    this.titleScreen = document.getElementById('titleScreen')
+    this.pauseOverlay = document.getElementById('pauseOverlay')
+    this.gameOverOverlay = document.getElementById('gameOverOverlay')
+
+    // Set up button handlers
+    document.getElementById('btn1P')?.addEventListener('click', () => this.startLocalGame(1))
+    document.getElementById('btn2P')?.addEventListener('click', () => this.startLocalGame(2))
+    document.getElementById('btnRestart')?.addEventListener('click', () => this.restartGame())
+
+    // Show title screen
+    this.state = 'title'
 
     console.log('Game initialized with 3D meshes')
   }
 
-  startSinglePlayer(): void {
-    this.singlePlayerMode = true
-    this.localPlayerId = 'player_local'
-    this.playerIds = [this.localPlayerId]
+  startLocalGame(numPlayers: number): void {
+    this.numPlayers = numPlayers
+    this.localMode = true
+
+    // Hide title screen
+    this.titleScreen?.classList.add('hidden')
+
+    // Create player IDs
+    this.playerIds = ['player_1']
+    if (numPlayers === 2) {
+      this.playerIds.push('player_2')
+    }
+    this.localPlayerId = 'player_1'
 
     this.simulation = new Simulation(this.playerIds)
     this.state = 'playing'
 
-    console.log('Single player mode started')
+    console.log(`${numPlayers} player local mode started`)
+  }
+
+  restartGame(): void {
+    // Hide game over overlay
+    this.gameOverOverlay?.classList.remove('visible')
+
+    // Restart with same number of players
+    this.startLocalGame(this.numPlayers)
+  }
+
+  // Legacy single player start (for backwards compatibility)
+  startSinglePlayer(): void {
+    this.startLocalGame(1)
   }
 
   startMultiplayer(
@@ -223,7 +261,7 @@ export class Game {
     _playerOrder: Map<string, number>,
     netcode: LockstepNetcode
   ): void {
-    this.singlePlayerMode = false
+    this.localMode = false
     this.localPlayerId = localPlayerId
     this.playerIds = playerIds
     this.netcode = netcode
@@ -251,13 +289,24 @@ export class Game {
   }
 
   update(dt: number): void {
-    const inputState = this.input.getState()
+    const p1Input = this.input.getPlayer1State()
 
-    // Handle pause
-    if (inputState.pause && this.state === 'playing') {
+    // Handle pause toggle
+    if (p1Input.pause && this.state === 'playing') {
       this.state = 'paused'
-    } else if (inputState.pause && this.state === 'paused') {
+      this.pauseOverlay?.classList.add('visible')
+    } else if (p1Input.pause && this.state === 'paused') {
       this.state = 'playing'
+      this.pauseOverlay?.classList.remove('visible')
+    }
+
+    // Update starfield even when paused/title (looks nice)
+    for (const star of this.stars) {
+      star.x -= star.speed * dt
+      if (star.x < -1000) {
+        star.x = 1000
+        star.y = (Math.random() - 0.5) * 1200
+      }
     }
 
     if (this.state !== 'playing') {
@@ -265,47 +314,63 @@ export class Game {
       return
     }
 
-    // Get current input
-    const currentInput: PlayerInput = {
-      up: inputState.up,
-      down: inputState.down,
-      left: inputState.left,
-      right: inputState.right,
-      fire: inputState.fire,
-      special: inputState.special,
-    }
-
     // Update play bounds from renderer (camera-compensated)
     if (this.simulation) {
       this.simulation.setPlayBounds(this.renderer.getPlayBounds())
     }
 
-    if (this.singlePlayerMode) {
-      // Single player: immediate simulation
+    if (this.localMode) {
+      // Local mode: get inputs for all local players
       const inputs = new Map<string, PlayerInput>()
-      inputs.set(this.localPlayerId, currentInput)
+
+      // Player 1 input
+      inputs.set('player_1', {
+        up: p1Input.up,
+        down: p1Input.down,
+        left: p1Input.left,
+        right: p1Input.right,
+        fire: p1Input.fire,
+        special: p1Input.special,
+      })
+
+      // Player 2 input (if 2 player mode)
+      if (this.numPlayers === 2) {
+        const p2Input = this.input.getPlayer2State()
+        inputs.set('player_2', {
+          up: p2Input.up,
+          down: p2Input.down,
+          left: p2Input.left,
+          right: p2Input.right,
+          fire: p2Input.fire,
+          special: p2Input.special,
+        })
+      }
 
       this.lastState = this.currentState
       this.simulation?.tick(inputs)
       this.currentState = this.simulation?.getState() ?? null
     } else {
-      // Multiplayer: lockstep
-      this.netcode?.tick(currentInput)
-    }
-
-    // Update starfield
-    for (const star of this.stars) {
-      star.x -= star.speed * dt
-
-      if (star.x < -1000) {
-        star.x = 1000
-        star.y = (Math.random() - 0.5) * 1200
+      // Network multiplayer: lockstep
+      const currentInput: PlayerInput = {
+        up: p1Input.up,
+        down: p1Input.down,
+        left: p1Input.left,
+        right: p1Input.right,
+        fire: p1Input.fire,
+        special: p1Input.special,
       }
+      this.netcode?.tick(currentInput)
     }
 
     // Check game over
     if (this.currentState?.gameOver) {
       this.state = 'gameover'
+      this.gameOverOverlay?.classList.add('visible')
+      // Update score display
+      const scoreEl = document.getElementById('finalScore')
+      if (scoreEl && this.currentState) {
+        scoreEl.textContent = this.currentState.score.toString()
+      }
     }
 
     this.input.clearFrameState()
@@ -390,9 +455,11 @@ export class Game {
       // Switch to HUD mode for flat UI elements
       this.renderer.beginHUD()
 
-      // Enemy health bars (flat, screen-aligned)
+      // Enemy health bars (flat, screen-aligned) - only show if damaged
       for (const enemy of state.enemies) {
-        this.renderEnemyHealthBar(enemy)
+        if (enemy.health < enemy.maxHealth) {
+          this.renderEnemyHealthBar(enemy)
+        }
       }
 
       // Boss health bar (flat, screen-aligned)
@@ -416,8 +483,8 @@ export class Game {
       this.renderer.drawQuad(0, 0, 100, 2000, 1200, [0.1, 0, 0, 0.9])
     }
 
-    // Show waiting indicator in multiplayer
-    if (!this.singlePlayerMode && this.netcode?.isWaitingForInputs()) {
+    // Show waiting indicator in network multiplayer
+    if (!this.localMode && this.netcode?.isWaitingForInputs()) {
       this.renderer.drawQuad(0, 200, 100, 200, 30, [1, 0.5, 0, 0.8])
     }
 

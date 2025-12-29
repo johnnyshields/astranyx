@@ -71,7 +71,7 @@ export class Input {
       'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
       'KeyW', 'KeyA', 'KeyS', 'KeyD',
       'Space', 'ShiftLeft', 'ShiftRight',
-      'Escape'
+      'Escape', 'Numpad0', 'Digit0'
     ].includes(code)
   }
 
@@ -93,6 +93,35 @@ export class Input {
     return this.keysReleased.has(code)
   }
 
+  // Get input state for player 1 (WASD + Space)
+  getPlayer1State(): InputState {
+    const gamepad = this.getGamepad()
+
+    return {
+      up: this.isKeyDown('KeyW') || this.getGamepadAxis(gamepad, 1) < -0.5,
+      down: this.isKeyDown('KeyS') || this.getGamepadAxis(gamepad, 1) > 0.5,
+      left: this.isKeyDown('KeyA') || this.getGamepadAxis(gamepad, 0) < -0.5,
+      right: this.isKeyDown('KeyD') || this.getGamepadAxis(gamepad, 0) > 0.5,
+      fire: this.isKeyDown('Space') || this.getGamepadButton(gamepad, 0),
+      special: this.isKeyDown('ShiftLeft') || this.getGamepadButton(gamepad, 1),
+      pause: this.isKeyPressed('Escape') || this.getGamepadButton(gamepad, 9),
+    }
+  }
+
+  // Get input state for player 2 (Arrows + Numpad0/0)
+  getPlayer2State(): InputState {
+    return {
+      up: this.isKeyDown('ArrowUp'),
+      down: this.isKeyDown('ArrowDown'),
+      left: this.isKeyDown('ArrowLeft'),
+      right: this.isKeyDown('ArrowRight'),
+      fire: this.isKeyDown('Numpad0') || this.isKeyDown('Digit0'),
+      special: this.isKeyDown('ShiftRight'),
+      pause: false, // Only P1 can pause
+    }
+  }
+
+  // Legacy: combined input (for single player or when only one set of controls needed)
   getState(): InputState {
     const gamepad = this.getGamepad()
 
