@@ -619,7 +619,10 @@ export class Simulation {
     x = Math.max(bounds.leftX + margin, Math.min(bounds.rightX - margin, x))
     const topY = bounds.getTopY(x) - 15
     const bottomY = bounds.getBottomY(x) + 15
-    y = Math.max(bottomY, Math.min(topY, y))
+    // Absolute Y limits to prevent camping in corners
+    const absoluteMaxY = 400
+    const absoluteMinY = -400
+    y = Math.max(Math.max(bottomY, absoluteMinY), Math.min(Math.min(topY, absoluteMaxY), y))
 
     player.x = toFixed(x)
     player.y = toFixed(y)
@@ -1449,7 +1452,7 @@ export class Simulation {
     boss.frame++
 
     // Move to target position (use visible bounds, offset further left for boss visibility)
-    const targetX = this.playBounds.rightX - 1000
+    const targetX = this.playBounds.rightX - 500
     const currentX = fromFixed(boss.x)
     if (currentX > targetX) {
       boss.x -= toFixed(100 * dt)
