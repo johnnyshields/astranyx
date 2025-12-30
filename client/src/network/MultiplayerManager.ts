@@ -26,7 +26,10 @@ export type MultiplayerState =
 
 export interface MultiplayerConfig {
   serverUrl: string
+  peerConnectionTimeout?: number
 }
+
+const DEFAULT_PEER_CONNECTION_TIMEOUT = 30000 // 30 seconds
 
 export interface LobbyState {
   rooms: RoomInfo[]
@@ -69,6 +72,7 @@ export class MultiplayerManager {
   // Peer connection tracking
   private expectedPlayers: string[] = []
   private connectedPeers: Set<string> = new Set()
+  private peerConnectionTimeoutId: ReturnType<typeof setTimeout> | null = null
 
   constructor(config: MultiplayerConfig) {
     this.config = config
@@ -112,13 +116,14 @@ export class MultiplayerManager {
       }
     })
 
-    this.phoenix.onPlayerLeft((payload) => {
+    this.phoenix.onPlayerLeft((_payload) => {
+      // PhoenixClient already filters currentRoom.players
+      // Sync our lobby state from PhoenixClient's state
       if (this.lobbyState.currentRoom) {
-        this.lobbyState.currentRoom.players =
-          this.lobbyState.currentRoom.players.filter(p => p !== payload.player_id)
-
-        // If host left, we might need to handle that
-        // For now, the server handles host transfer
+        const phoenixRoom = this.phoenix?.getCurrentRoom()
+        if (phoenixRoom) {
+          this.lobbyState.currentRoom.players = phoenixRoom.players
+        }
         this.notifyLobbyUpdate()
       }
     })
@@ -324,6 +329,18 @@ export class MultiplayerManager {
     const otherPlayers = this.expectedPlayers.filter(p => p !== localPlayerId)
     this.p2p.connectToPlayers(otherPlayers)
 
+    // Set up peer connection timeout
+    if (otherPlayers.length > 0) {
+      const timeout = this.config.peerConnectionTimeout ?? DEFAULT_PEER_CONNECTION_TIMEOUT
+      this.peerConnectionTimeoutId = setTimeout(() => {
+        if (this.state === 'connecting_peers') {
+          const missing = otherPlayers.filter(p => !this.connectedPeers.has(p))
+          console.error('Peer connection timeout. Missing peers:', missing)
+          this.handleError(new Error(`Failed to connect to peers: ${missing.join(', ')}`))
+        }
+      }, timeout)
+    }
+
     // Check if we're the only player (single player via multiplayer)
     this.checkAllPeersConnected()
   }
@@ -335,12 +352,23 @@ export class MultiplayerManager {
     // Check if we have all peer connections
     if (this.connectedPeers.size >= otherPlayers.length) {
       console.log('All peers connected!')
+
+      // Clear the timeout since we connected successfully
+      this.clearPeerConnectionTimeout()
+
       this.setState('ready')
 
       // Notify that we're ready to start
       for (const handler of this.readyHandlers) {
         handler()
       }
+    }
+  }
+
+  private clearPeerConnectionTimeout(): void {
+    if (this.peerConnectionTimeoutId) {
+      clearTimeout(this.peerConnectionTimeoutId)
+      this.peerConnectionTimeoutId = null
     }
   }
 
@@ -445,6 +473,8 @@ export class MultiplayerManager {
   // ==========================================================================
 
   private cleanup(): void {
+    this.clearPeerConnectionTimeout()
+
     this.p2p?.disconnect()
     this.p2p = null
 
@@ -462,6 +492,12 @@ export class MultiplayerManager {
     this.gameStartData = null
     this.expectedPlayers = []
     this.connectedPeers.clear()
+
+    // Clear all event handlers to prevent memory leaks
+    this.stateChangeHandlers.clear()
+    this.lobbyUpdateHandlers.clear()
+    this.errorHandlers.clear()
+    this.readyHandlers.clear()
   }
 
   /**

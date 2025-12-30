@@ -7,7 +7,10 @@ import { Socket, Channel } from 'phoenix'
 export interface PhoenixConfig {
   url: string
   playerId?: string
+  connectionTimeout?: number
 }
+
+const DEFAULT_CONNECTION_TIMEOUT = 10000 // 10 seconds
 
 export interface RoomInfo {
   id: string
@@ -84,7 +87,6 @@ export class PhoenixClient {
   private playerLeftHandlers: Set<PlayerLeftHandler> = new Set()
   private gameStartingHandlers: Set<GameStartingHandler> = new Set()
 
-  private inputSequence = 0
   private currentRoom: RoomData | null = null
 
   constructor(private config: PhoenixConfig) {}
@@ -93,18 +95,47 @@ export class PhoenixClient {
     return new Promise((resolve, reject) => {
       this.playerId = this.config.playerId || this.generatePlayerId()
 
+      const timeout = this.config.connectionTimeout ?? DEFAULT_CONNECTION_TIMEOUT
+      let timeoutId: ReturnType<typeof setTimeout> | null = null
+      let settled = false
+
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
+      }
+
+      // Set connection timeout
+      timeoutId = setTimeout(() => {
+        if (!settled) {
+          settled = true
+          this.socket?.disconnect()
+          this.socket = null
+          reject(new Error('Connection timeout - server unreachable'))
+        }
+      }, timeout)
+
       this.socket = new Socket(this.config.url, {
         params: { player_id: this.playerId },
       })
 
       this.socket.onOpen(() => {
-        console.log('Phoenix: Connected')
-        resolve(this.playerId)
+        if (!settled) {
+          settled = true
+          cleanup()
+          console.log('Phoenix: Connected')
+          resolve(this.playerId)
+        }
       })
 
       this.socket.onError((error: unknown) => {
-        console.error('Phoenix: Connection error', error)
-        reject(new Error('Failed to connect to server'))
+        if (!settled) {
+          settled = true
+          cleanup()
+          console.error('Phoenix: Connection error', error)
+          reject(new Error('Failed to connect to server'))
+        }
       })
 
       this.socket.onClose(() => {
@@ -202,10 +233,7 @@ export class PhoenixClient {
   sendInput(input: PlayerInput): void {
     if (!this.roomChannel) return
 
-    this.roomChannel.push('input', {
-      tick: this.inputSequence++,
-      input,
-    })
+    this.roomChannel.push('input', { input })
   }
 
   async ping(): Promise<number> {

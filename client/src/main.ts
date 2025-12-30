@@ -286,8 +286,6 @@ function startMultiplayerGame(
   }
 
   // Hide lobby
-  const lobbyScreen = document.getElementById('lobbyScreen')
-  lobbyScreen?.classList.add('hidden')
   lobbyUI.hide()
 
   // Start the game
