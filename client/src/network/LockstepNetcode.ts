@@ -32,11 +32,23 @@ export interface PlayerInput {
   pause: boolean       // Pause toggle (edge-triggered)
 }
 
+/**
+ * Owner-authoritative game events
+ * These events are only detected by the owning player and broadcast to others
+ */
+export type GameEvent =
+  | { type: 'damage'; playerId: string; amount: number; newShields: number; newLives: number }
+  | { type: 'death'; playerId: string }
+  | { type: 'respawn'; playerId: string }
+  | { type: 'pickup'; playerId: string; pickupId: number }
+  | { type: 'weapon_pickup'; playerId: string; dropId: number }
+
 export interface FrameInput {
   frame: number
   playerId: string
   input: PlayerInput
-  checksum?: number  // For desync detection
+  events?: GameEvent[]  // Owner-authoritative events for this frame
+  checksum?: number     // For desync detection
 }
 
 export interface LockstepConfig {
@@ -47,7 +59,7 @@ export interface LockstepConfig {
   playerOrder: Map<string, number>  // player_id -> index
 }
 
-type InputHandler = (inputs: Map<string, PlayerInput>) => void
+type InputHandler = (inputs: Map<string, PlayerInput>, events: GameEvent[]) => void
 type DesyncHandler = (frame: number, expected: number, got: number) => void
 
 export class LockstepNetcode {
@@ -150,12 +162,25 @@ export class LockstepNetcode {
     this.peers.delete(playerId)
   }
 
+  // Checksum storage for desync detection
+  // frame -> player_id -> checksum
+  private checksumBuffer: Map<number, Map<string, number>> = new Map()
+  private lastLocalChecksum = 0
+
   /**
    * Called each game tick with local input
+   * @param localInput - The local player's input
+   * @param events - Owner-authoritative events detected this frame
+   * @param checksum - Optional checksum of current game state for desync detection
    * Returns true if simulation should advance
    */
-  tick(localInput: PlayerInput): boolean {
+  tick(localInput: PlayerInput, events?: GameEvent[], checksum?: number): boolean {
     if (!this.running) return false
+
+    // Store local checksum for comparison
+    if (checksum !== undefined) {
+      this.lastLocalChecksum = checksum
+    }
 
     // Create input for future frame (with input delay)
     const targetFrame = this.currentFrame + this.config.inputDelay
@@ -163,6 +188,8 @@ export class LockstepNetcode {
       frame: targetFrame,
       playerId: this.config.localPlayerId,
       input: localInput,
+      events: events && events.length > 0 ? events : undefined,
+      checksum: checksum, // Include checksum for desync detection
     }
 
     // Store locally
@@ -196,17 +223,29 @@ export class LockstepNetcode {
 
     this.waitingForInputs = false
 
-    // Collect inputs in player order for determinism
+    // Check for desync (compare checksums from previous frame)
+    // We compare checksums from inputDelay frames ago since that's when they were generated
+    const checksumFrame = this.currentFrame - this.config.inputDelay
+    if (checksumFrame >= 0) {
+      this.checkForDesync(checksumFrame, frameInputs)
+    }
+
+    // Collect inputs and events in player order for determinism
     const orderedInputs = new Map<string, PlayerInput>()
+    const allEvents: GameEvent[] = []
     for (const [playerId] of this.config.playerOrder) {
       const input = frameInputs.get(playerId)
       if (input) {
         orderedInputs.set(playerId, input.input)
+        // Collect events from this player
+        if (input.events) {
+          allEvents.push(...input.events)
+        }
       }
     }
 
-    // Notify game to simulate with these inputs
-    this.onInputsReady?.(orderedInputs)
+    // Notify game to simulate with these inputs and events
+    this.onInputsReady?.(orderedInputs, allEvents)
 
     // Advance frame
     this.confirmedFrame = this.currentFrame
@@ -216,6 +255,28 @@ export class LockstepNetcode {
     this.cleanupOldInputs()
 
     return true
+  }
+
+  /**
+   * Check if any checksums mismatch, indicating a desync
+   */
+  private checkForDesync(frame: number, frameInputs: Map<string, FrameInput>): void {
+    // Get local checksum from the input we sent for this frame
+    const localInput = frameInputs.get(this.config.localPlayerId)
+    if (!localInput?.checksum) return
+
+    // Compare against all remote checksums
+    for (const [playerId, input] of frameInputs) {
+      if (playerId === this.config.localPlayerId) continue
+      if (input.checksum === undefined) continue
+
+      if (input.checksum !== localInput.checksum) {
+        console.error(`DESYNC DETECTED at frame ${frame}!`)
+        console.error(`  Local checksum: ${localInput.checksum}`)
+        console.error(`  Remote (${playerId}) checksum: ${input.checksum}`)
+        this.onDesync?.(frame, localInput.checksum, input.checksum)
+      }
+    }
   }
 
   private storeInput(frameInput: FrameInput): void {

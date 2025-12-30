@@ -100,9 +100,22 @@ describe('LockstepNetcode', () => {
       expect(result).toBe(false)
     })
 
-    it('should return false when waiting for inputs', () => {
+    it('should advance frames 0 to inputDelay-1 (pre-seeded with empty inputs)', () => {
       lockstep.start()
-      // With 2 players, need inputs from both to advance
+      // With pre-seeding, frames 0-2 have empty inputs for all players
+      // So first tick should advance from frame 0 to frame 1
+      const result = lockstep.tick(createInput())
+      expect(result).toBe(true)
+      expect(lockstep.getCurrentFrame()).toBe(1)
+    })
+
+    it('should return false when waiting for inputs after pre-seeded frames', () => {
+      lockstep.start()
+      // Advance through pre-seeded frames (0, 1, 2)
+      for (let i = 0; i < 3; i++) {
+        lockstep.tick(createInput())
+      }
+      // Now frame 3 needs actual inputs from both players
       const result = lockstep.tick(createInput())
       expect(result).toBe(false)
     })
@@ -237,8 +250,13 @@ describe('LockstepNetcode', () => {
       expect(lockstep.isWaitingForInputs()).toBe(false)
     })
 
-    it('should return true when waiting for peer inputs', () => {
+    it('should return true when waiting for peer inputs after pre-seeded frames', () => {
       lockstep.start()
+      // Advance through pre-seeded frames (0, 1, 2)
+      for (let i = 0; i < 3; i++) {
+        lockstep.tick(createInput())
+      }
+      // Now frame 3 needs actual inputs from both players
       lockstep.tick(createInput())
       expect(lockstep.isWaitingForInputs()).toBe(true)
     })
@@ -265,7 +283,7 @@ describe('LockstepNetcode', () => {
   })
 
   describe('single player mode', () => {
-    it('should work with single player', () => {
+    it('should advance through pre-seeded frames in single player', () => {
       const singleConfig = createConfig({
         playerCount: 1,
         playerOrder: new Map([['player1', 0]]),
@@ -276,17 +294,38 @@ describe('LockstepNetcode', () => {
       const inputHandler = vi.fn()
       singleLockstep.setInputHandler(inputHandler)
 
-      // Should advance immediately with just local input
+      // With pre-seeding, frames 0-2 have empty inputs for the single player
+      // So first tick should advance
       const result = singleLockstep.tick(createInput({ fire: true }))
+      expect(result).toBe(true)
+      expect(inputHandler).toHaveBeenCalled()
+    })
 
-      // In single player, we have our input for frame 0 + inputDelay
-      // But we're trying to process frame 0
-      // We need to check if we have inputs for frame 0
+    it('should continue advancing after pre-seeded frames (inputs from earlier ticks)', () => {
+      const singleConfig = createConfig({
+        playerCount: 1,
+        playerOrder: new Map([['player1', 0]]),
+      })
+      const singleLockstep = new LockstepNetcode(singleConfig)
+      singleLockstep.start()
 
-      // Actually, for frame 0 to process, we need input for frame 0
-      // Local tick sends input for frame (0 + 3) = 3
-      // So frame 0 has no inputs yet
-      expect(result).toBe(false)
+      const inputHandler = vi.fn()
+      singleLockstep.setInputHandler(inputHandler)
+
+      // Advance through pre-seeded frames (0, 1, 2)
+      // Each tick also sends input for a future frame
+      for (let i = 0; i < 3; i++) {
+        singleLockstep.tick(createInput())
+      }
+
+      // Now at frame 3, but tick 1 sent input for frame 3, tick 2 for frame 4, etc.
+      // So frame 3 already has an input from earlier tick
+      inputHandler.mockClear()
+
+      const result = singleLockstep.tick(createInput({ fire: true }))
+      // Should still advance because we have input from earlier tick
+      expect(result).toBe(true)
+      expect(inputHandler).toHaveBeenCalled()
     })
   })
 })

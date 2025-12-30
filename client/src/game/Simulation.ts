@@ -16,7 +16,7 @@
  * - Arrays only (no object iteration order issues)
  */
 
-import type { PlayerInput } from '../network/LockstepNetcode.ts'
+import type { PlayerInput, GameEvent } from '../network/LockstepNetcode.ts'
 import {
   type WeaponType,
   type WeaponDrop,
@@ -383,6 +383,8 @@ export class Simulation {
   private state: SimulationState
   private playerIdMap: Map<string, number> = new Map()
   private playBounds: PlayBounds = DEFAULT_BOUNDS
+  private localPlayerId: string | null = null  // Set for multiplayer to enable owner-authoritative events
+  private pendingEvents: GameEvent[] = []      // Events detected this frame (for local player)
 
   constructor(playerIds: string[], seed: number = 12345) {
     this.state = {
@@ -502,6 +504,152 @@ export class Simulation {
 
   getPlayBounds(): PlayBounds {
     return this.playBounds
+  }
+
+  // ==========================================================================
+  // Owner-Authoritative Events (Multiplayer)
+  // ==========================================================================
+
+  /**
+   * Set the local player ID for owner-authoritative event detection.
+   * When set, collisions affecting this player generate events instead of
+   * being simulated directly. Events for other players are skipped (they send events).
+   */
+  setLocalPlayerId(playerId: string): void {
+    this.localPlayerId = playerId
+  }
+
+  /**
+   * Get and clear pending events detected this frame.
+   * Call this after tick() to get events to broadcast to peers.
+   */
+  getPendingEvents(): GameEvent[] {
+    const events = this.pendingEvents
+    this.pendingEvents = []
+    return events
+  }
+
+  /**
+   * Apply events received from remote players.
+   * Call this BEFORE tick() to ensure events are applied in the correct frame.
+   */
+  applyEvents(events: GameEvent[]): void {
+    for (const event of events) {
+      this.applyEvent(event)
+    }
+  }
+
+  private applyEvent(event: GameEvent): void {
+    switch (event.type) {
+      case 'damage': {
+        const player = this.state.players.find(p => p.playerId === event.playerId)
+        if (player && !player.dead) {
+          player.shields = event.newShields
+          player.lives = event.newLives
+          if (player.shields <= 0 && player.lives > 0) {
+            // Player will respawn
+            player.dead = true
+            player.respawnTimer = 120 // 2 seconds
+            this.state.screenShake = 0.4
+            this.spawnExplosion(player.x, player.y, 20)
+          }
+        }
+        break
+      }
+      case 'death': {
+        const player = this.state.players.find(p => p.playerId === event.playerId)
+        if (player && !player.dead) {
+          player.dead = true
+          player.respawnTimer = 120
+          player.shields = 0
+          this.state.screenShake = 0.5
+          this.spawnExplosion(player.x, player.y, 25)
+        }
+        break
+      }
+      case 'respawn': {
+        const player = this.state.players.find(p => p.playerId === event.playerId)
+        if (player && player.dead) {
+          this.respawnPlayer(player)
+        }
+        break
+      }
+      case 'pickup': {
+        // Remove powerup and give to player
+        const powerup = this.state.powerups.find(p => p.id === event.pickupId)
+        const player = this.state.players.find(p => p.playerId === event.playerId)
+        if (powerup && player) {
+          this.addPlayerPowerup(player, powerup.type)
+          this.spawnExplosion(powerup.x, powerup.y, 6)
+          this.state.powerups = this.state.powerups.filter(p => p.id !== event.pickupId)
+        }
+        break
+      }
+      case 'weapon_pickup': {
+        // Remove weapon drop and give to player
+        const drop = this.state.weaponDrops.find(d => d.id === event.dropId)
+        const player = this.state.players.find(p => p.playerId === event.playerId)
+        if (drop && player) {
+          this.pickupWeapon(player, drop)
+          this.spawnExplosion(drop.x, drop.y, 6)
+          this.state.weaponDrops = this.state.weaponDrops.filter(d => d.id !== event.dropId)
+        }
+        break
+      }
+    }
+  }
+
+  /**
+   * Check if this player is the local player (for owner-authoritative events).
+   */
+  private isLocalPlayer(player: Player): boolean {
+    return this.localPlayerId === null || player.playerId === this.localPlayerId
+  }
+
+  /**
+   * Check if owner-authoritative mode is enabled.
+   */
+  private isMultiplayer(): boolean {
+    return this.localPlayerId !== null
+  }
+
+  /**
+   * Generate a checksum of critical game state for desync detection.
+   * This should be compared between clients periodically.
+   */
+  getChecksum(): number {
+    let hash = 0
+
+    // Hash frame number
+    hash = (hash * 31 + this.state.frame) >>> 0
+
+    // Hash player states (most important for desync detection)
+    for (const player of this.state.players) {
+      hash = (hash * 31 + player.x) >>> 0
+      hash = (hash * 31 + player.y) >>> 0
+      hash = (hash * 31 + player.shields) >>> 0
+      hash = (hash * 31 + (player.dead ? 1 : 0)) >>> 0
+      hash = (hash * 31 + player.lives) >>> 0
+    }
+
+    // Hash enemy count and first few enemy positions
+    hash = (hash * 31 + this.state.enemies.length) >>> 0
+    for (let i = 0; i < Math.min(5, this.state.enemies.length); i++) {
+      const enemy = this.state.enemies[i]!
+      hash = (hash * 31 + enemy.x) >>> 0
+      hash = (hash * 31 + enemy.y) >>> 0
+    }
+
+    // Hash bullet count
+    hash = (hash * 31 + this.state.bullets.length) >>> 0
+
+    // Hash score
+    hash = (hash * 31 + this.state.score) >>> 0
+
+    // Hash RNG state for determinism verification
+    hash = (hash * 31 + this.state.rng.getSeed()) >>> 0
+
+    return hash
   }
 
   // ==========================================================================
@@ -724,9 +872,18 @@ export class Simulation {
     }
 
     // Manual weapon pickup (E key - edge triggered)
-    if (input.pickup) {
+    // In multiplayer, only local player can pickup (remote pickups come via events)
+    if (input.pickup && (!this.isMultiplayer() || this.isLocalPlayer(player))) {
       const pickedUp = this.tryManualPickup(player)
       if (pickedUp) {
+        // In multiplayer, generate event
+        if (this.isMultiplayer()) {
+          this.pendingEvents.push({
+            type: 'weapon_pickup',
+            playerId: player.playerId,
+            dropId: pickedUp.id,
+          })
+        }
         // Remove the picked up drop from state
         this.state.weaponDrops = this.state.weaponDrops.filter(d => d.id !== pickedUp.id)
       }
@@ -931,12 +1088,24 @@ export class Simulation {
     player.invincible = 30 // 0.5 seconds
     this.state.screenShake = 0.15
 
-    if (player.shields <= 0) {
+    const died = player.shields <= 0
+
+    if (died) {
       this.playerDie(player)
-      return true
     }
 
-    return false
+    // In multiplayer, generate event for local player damage
+    if (this.isMultiplayer() && this.isLocalPlayer(player)) {
+      this.pendingEvents.push({
+        type: 'damage',
+        playerId: player.playerId,
+        amount,
+        newShields: player.shields,
+        newLives: player.lives,
+      })
+    }
+
+    return died
   }
 
   private playerDie(player: Player): void {
@@ -2181,7 +2350,11 @@ export class Simulation {
 
     // Damage players in laser path
     for (const player of this.state.players) {
-      if (!player.dead && Math.abs(fromFixed(player.y - boss.y)) < 30) {
+      if (player.dead) continue
+      // In multiplayer, only check local player collisions
+      if (this.isMultiplayer() && !this.isLocalPlayer(player)) continue
+
+      if (Math.abs(fromFixed(player.y - boss.y)) < 30) {
         this.playerTakeDamage(player, 40)
       }
     }
@@ -2236,11 +2409,21 @@ export class Simulation {
       // Check if collected
       for (const player of this.state.players) {
         if (player.dead) continue
+        // In multiplayer, only check local player pickups
+        if (this.isMultiplayer() && !this.isLocalPlayer(player)) continue
 
         const dx = Math.abs(fromFixed(player.x - powerup.x))
         const dy = Math.abs(fromFixed(player.y - powerup.y))
 
         if (dx < 18 && dy < 18) {
+          // In multiplayer, generate event instead of applying directly
+          if (this.isMultiplayer()) {
+            this.pendingEvents.push({
+              type: 'pickup',
+              playerId: player.playerId,
+              pickupId: powerup.id,
+            })
+          }
           this.addPlayerPowerup(player, powerup.type)
           this.spawnExplosion(powerup.x, powerup.y, 6)
           toRemove.push(powerup.id)
@@ -2270,6 +2453,8 @@ export class Simulation {
       // Check if collected by player (auto-pickup if has empty slot)
       for (const player of this.state.players) {
         if (player.dead) continue
+        // In multiplayer, only check local player pickups
+        if (this.isMultiplayer() && !this.isLocalPlayer(player)) continue
 
         const dx = Math.abs(fromFixed(player.x - drop.x))
         const dy = Math.abs(fromFixed(player.y - drop.y))
@@ -2278,6 +2463,14 @@ export class Simulation {
         if (dx < 25 && dy < 25) {
           // Auto-pickup if player has empty slots
           if (player.weaponSlots.length < player.maxWeaponSlots) {
+            // In multiplayer, generate event instead of applying directly
+            if (this.isMultiplayer()) {
+              this.pendingEvents.push({
+                type: 'weapon_pickup',
+                playerId: player.playerId,
+                dropId: drop.id,
+              })
+            }
             this.pickupWeapon(player, drop)
             this.spawnExplosion(drop.x, drop.y, 6)
             toRemove.push(drop.id)
@@ -2782,6 +2975,8 @@ export class Simulation {
 
       for (const player of this.state.players) {
         if (player.dead || player.invincible > 0) continue
+        // In multiplayer, only check local player collisions
+        if (this.isMultiplayer() && !this.isLocalPlayer(player)) continue
 
         const px = fromFixed(player.x)
         const py = fromFixed(player.y)
@@ -2803,6 +2998,8 @@ export class Simulation {
 
       for (const player of this.state.players) {
         if (player.dead || player.invincible > 0) continue
+        // In multiplayer, only check local player collisions
+        if (this.isMultiplayer() && !this.isLocalPlayer(player)) continue
 
         const px = fromFixed(player.x)
         const py = fromFixed(player.y)
@@ -3090,25 +3287,6 @@ export class Simulation {
       bossActive: this.state.bossActive,
       gameOver: this.state.gameOver,
     }
-  }
-
-  getChecksum(): number {
-    let hash = this.state.frame
-    for (const player of this.state.players) {
-      hash ^= player.id
-      hash ^= player.x
-      hash ^= player.y
-      hash ^= player.shields
-      hash = (hash * 31) >>> 0
-    }
-    for (const enemy of this.state.enemies) {
-      hash ^= enemy.id
-      hash ^= enemy.x
-      hash ^= enemy.y
-      hash ^= enemy.health
-      hash = (hash * 31) >>> 0
-    }
-    return hash
   }
 
   getFrame(): number {

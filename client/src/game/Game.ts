@@ -1,7 +1,7 @@
 import type { Renderer, MeshHandle } from '../core/Renderer.ts'
 import type { Input } from '../core/Input.ts'
 import { Simulation, type EnemyType, type BulletType, type PowerupType, type BossType } from './Simulation.ts'
-import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
+import { LockstepNetcode, type PlayerInput, type GameEvent } from '../network/LockstepNetcode.ts'
 import { WEAPON_STATS, WEAPON_COLORS, AMMO_TYPE_COLORS, type WeaponType } from './Weapons.ts'
 import { HUD, type WeaponDropLabel, type EntityHealthBar } from '../ui/HUD.ts'
 
@@ -332,8 +332,11 @@ export class Game {
     // All players use same seed for determinism
     this.simulation = new Simulation(playerIds, seed)
 
+    // Enable owner-authoritative events for this player
+    this.simulation.setLocalPlayerId(localPlayerId)
+
     // Set up netcode input handler
-    netcode.setInputHandler((inputs) => {
+    netcode.setInputHandler((inputs, events) => {
       // Check if any player pressed pause
       let anyPaused = false
       for (const [, input] of inputs) {
@@ -355,6 +358,13 @@ export class Game {
 
       // Only tick simulation if not paused
       if (this.state === 'playing') {
+        // Apply remote events BEFORE tick (so they're processed in correct frame)
+        // Filter out our own events (we already applied them locally)
+        const remoteEvents = events.filter(e => e.playerId !== localPlayerId)
+        if (remoteEvents.length > 0) {
+          this.simulation?.applyEvents(remoteEvents)
+        }
+
         this.simulation?.tick(inputs)
         this.lastState = this.currentState
         this.currentState = this.simulation?.getState() ?? null
@@ -470,7 +480,14 @@ export class Game {
         pickup: p1Input.pickup,
         pause: p1Input.pause,
       }
-      this.netcode?.tick(currentInput)
+      // Get pending events from simulation (damage, pickups, etc. for local player)
+      const pendingEvents = this.simulation?.getPendingEvents() ?? []
+
+      // Get checksum for desync detection (every 30 frames to reduce bandwidth)
+      const checksum = this.simulation && this.simulation.getState().frame % 30 === 0
+        ? this.simulation.getChecksum()
+        : undefined
+      this.netcode?.tick(currentInput, pendingEvents, checksum)
     }
 
     // Check game over
