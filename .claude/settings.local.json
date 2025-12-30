@@ -56,7 +56,9 @@
       "Bash(ls:*)",
       "Bash(xxd:*)",
       "Bash(bun test:*)",
-      "Bash(bun -e:*)"
+      "Bash(bun -e:*)",
+      "Bash(npx tsc:*)",
+      "Bash(source ~/.asdf/asdf.sh)"
     ],
     "deny": [],
     "ask": []

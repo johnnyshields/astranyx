@@ -300,15 +300,18 @@ export class Game {
     localPlayerId: string,
     playerIds: string[],
     _playerOrder: Map<string, number>,
-    netcode: LockstepNetcode
+    netcode: LockstepNetcode,
+    seed: number
   ): void {
     this.localMode = false
     this.localPlayerId = localPlayerId
     this.playerIds = playerIds
     this.netcode = netcode
 
+    // Hide any overlays
+    this.titleScreen?.classList.add('hidden')
+
     // All players use same seed for determinism
-    const seed = 12345
     this.simulation = new Simulation(playerIds, seed)
 
     // Set up netcode input handler

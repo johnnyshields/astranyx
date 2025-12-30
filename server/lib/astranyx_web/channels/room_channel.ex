@@ -49,11 +49,15 @@ defmodule AstranyxWeb.RoomChannel do
 
     case Lobby.start_game(room_id, player_id) do
       {:ok, room} ->
+        # Generate deterministic seed for all players
+        seed = :rand.uniform(2_147_483_647)
+
         # Broadcast to all players including sender
         broadcast(socket, "game_starting", %{
           room: room,
           # Assign player indices for deterministic simulation
-          player_order: Enum.with_index(room.players) |> Map.new()
+          player_order: Enum.with_index(room.players) |> Map.new(),
+          seed: seed
         })
 
         {:reply, :ok, socket}
@@ -61,6 +65,12 @@ defmodule AstranyxWeb.RoomChannel do
       {:error, reason} ->
         {:reply, {:error, %{reason: reason}}, socket}
     end
+  end
+
+  @impl true
+  def handle_in("list_rooms", _payload, socket) do
+    rooms = Lobby.list_rooms()
+    {:reply, {:ok, %{rooms: rooms}}, socket}
   end
 
   @impl true

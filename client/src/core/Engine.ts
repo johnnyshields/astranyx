@@ -90,6 +90,13 @@ export class Engine {
     }
   }
 
+  /**
+   * Get the game instance for external wiring (e.g., multiplayer)
+   */
+  getGame(): Game {
+    return this.game
+  }
+
   private loop = (currentTime: number): void => {
     if (!this.running) return
 

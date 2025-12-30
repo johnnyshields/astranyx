@@ -36,7 +36,8 @@ describe('HUD', () => {
     vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
       if (tagName === 'canvas') {
         const canvas = originalCreateElement('canvas') as HTMLCanvasElement
-        vi.spyOn(canvas, 'getContext').mockReturnValue(mockContext as unknown as RenderingContext)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        vi.spyOn(canvas, 'getContext').mockReturnValue(mockContext as any)
         return canvas
       }
       return originalCreateElement(tagName)

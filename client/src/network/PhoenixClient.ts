@@ -9,6 +9,27 @@ export interface PhoenixConfig {
   playerId?: string
 }
 
+export interface RoomInfo {
+  id: string
+  host: string
+  player_count: number
+  max_players: number
+  status: 'waiting' | 'starting' | 'playing'
+}
+
+export interface RoomData {
+  id: string
+  host: string
+  players: string[]
+  status: 'waiting' | 'starting' | 'playing'
+}
+
+export interface GameStartingData {
+  room: RoomData
+  player_order: Record<string, number>
+  seed: number
+}
+
 export interface RoomState {
   tick: number
   timestamp: number
@@ -45,6 +66,9 @@ export interface PlayerInput {
 
 type StateHandler = (state: RoomState) => void
 type EventHandler = (event: GameEvent) => void
+type PlayerJoinedHandler = (payload: { player_id: string; players: string[] }) => void
+type PlayerLeftHandler = (payload: { player_id: string }) => void
+type GameStartingHandler = (data: GameStartingData) => void
 
 export class PhoenixClient {
   private socket: Socket | null = null
@@ -56,8 +80,12 @@ export class PhoenixClient {
 
   private stateHandlers: Set<StateHandler> = new Set()
   private eventHandlers: Set<EventHandler> = new Set()
+  private playerJoinedHandlers: Set<PlayerJoinedHandler> = new Set()
+  private playerLeftHandlers: Set<PlayerLeftHandler> = new Set()
+  private gameStartingHandlers: Set<GameStartingHandler> = new Set()
 
   private inputSequence = 0
+  private currentRoom: RoomData | null = null
 
   constructor(private config: PhoenixConfig) {}
 
@@ -87,7 +115,7 @@ export class PhoenixClient {
     })
   }
 
-  async joinRoom(roomId: string): Promise<RoomState> {
+  async joinRoom(roomId: string, asHost = false): Promise<RoomData> {
     if (!this.socket) {
       throw new Error('Not connected')
     }
@@ -95,7 +123,7 @@ export class PhoenixClient {
     this.roomId = roomId
 
     return new Promise((resolve, reject) => {
-      this.roomChannel = this.socket!.channel(`room:${roomId}`, {})
+      this.roomChannel = this.socket!.channel(`room:${roomId}`, { host: asHost })
 
       this.roomChannel.on('state', (state: RoomState) => {
         for (const handler of this.stateHandlers) {
@@ -109,20 +137,40 @@ export class PhoenixClient {
         }
       })
 
-      this.roomChannel.on('player_joined', (payload: { player_id: string }) => {
+      this.roomChannel.on('player_joined', (payload: { player_id: string; players: string[] }) => {
         console.log('Player joined:', payload.player_id)
+        if (this.currentRoom) {
+          this.currentRoom.players = payload.players
+        }
+        for (const handler of this.playerJoinedHandlers) {
+          handler(payload)
+        }
       })
 
       this.roomChannel.on('player_left', (payload: { player_id: string }) => {
         console.log('Player left:', payload.player_id)
+        if (this.currentRoom) {
+          this.currentRoom.players = this.currentRoom.players.filter(p => p !== payload.player_id)
+        }
+        for (const handler of this.playerLeftHandlers) {
+          handler(payload)
+        }
+      })
+
+      this.roomChannel.on('game_starting', (data: GameStartingData) => {
+        console.log('Game starting:', data)
+        for (const handler of this.gameStartingHandlers) {
+          handler(data)
+        }
       })
 
       this.roomChannel
         .join()
-        .receive('ok', (response: { state: RoomState; player_id: string }) => {
+        .receive('ok', (response: { room: RoomData; player_id: string }) => {
           console.log('Joined room:', roomId)
           this.playerId = response.player_id
-          resolve(response.state)
+          this.currentRoom = response.room
+          resolve(response.room)
         })
         .receive('error', (error: { reason: string }) => {
           console.error('Failed to join room:', error)
@@ -206,6 +254,46 @@ export class PhoenixClient {
     this.signalingChannel?.on(type, handler)
   }
 
+  // Room management
+
+  async listRooms(): Promise<RoomInfo[]> {
+    if (!this.roomChannel) {
+      throw new Error('Not in a room channel')
+    }
+
+    return new Promise((resolve, reject) => {
+      this.roomChannel!.push('list_rooms', {})
+        .receive('ok', (response: { rooms: RoomInfo[] }) => {
+          resolve(response.rooms)
+        })
+        .receive('error', (error: { reason: string }) => {
+          reject(new Error(error.reason))
+        })
+    })
+  }
+
+  async startGame(): Promise<void> {
+    if (!this.roomChannel) {
+      throw new Error('Not in a room')
+    }
+
+    return new Promise((resolve, reject) => {
+      this.roomChannel!.push('start_game', {})
+        .receive('ok', () => resolve())
+        .receive('error', (error: { reason: string }) => {
+          reject(new Error(error.reason))
+        })
+    })
+  }
+
+  getCurrentRoom(): RoomData | null {
+    return this.currentRoom
+  }
+
+  getSignalingChannel(): Channel | null {
+    return this.signalingChannel
+  }
+
   // Event handlers
 
   onState(handler: StateHandler): () => void {
@@ -216,6 +304,21 @@ export class PhoenixClient {
   onEvent(handler: EventHandler): () => void {
     this.eventHandlers.add(handler)
     return () => this.eventHandlers.delete(handler)
+  }
+
+  onPlayerJoined(handler: PlayerJoinedHandler): () => void {
+    this.playerJoinedHandlers.add(handler)
+    return () => this.playerJoinedHandlers.delete(handler)
+  }
+
+  onPlayerLeft(handler: PlayerLeftHandler): () => void {
+    this.playerLeftHandlers.add(handler)
+    return () => this.playerLeftHandlers.delete(handler)
+  }
+
+  onGameStarting(handler: GameStartingHandler): () => void {
+    this.gameStartingHandlers.add(handler)
+    return () => this.gameStartingHandlers.delete(handler)
   }
 
   // Getters
@@ -239,6 +342,8 @@ export class PhoenixClient {
     this.roomChannel = null
     this.signalingChannel?.leave()
     this.signalingChannel = null
+    this.currentRoom = null
+    this.roomId = ''
   }
 
   disconnect(): void {
