@@ -16,6 +16,13 @@ export interface LobbyUICallbacks {
   onBackToTitle: () => void
 }
 
+/** Truncate long player IDs for display */
+function truncatePlayerId(playerId: string): string {
+  return playerId.length > 20
+    ? playerId.slice(0, 8) + '...' + playerId.slice(-8)
+    : playerId
+}
+
 export class LobbyUI {
   private callbacks: LobbyUICallbacks
 
@@ -218,10 +225,7 @@ export class LobbyUI {
         if (isHost) classes.push('host')
         if (isLocal) classes.push('local')
 
-        // Truncate long player IDs for display
-        const displayName = playerId.length > 20
-          ? playerId.slice(0, 8) + '...' + playerId.slice(-8)
-          : playerId
+        const displayName = truncatePlayerId(playerId)
 
         return `
           <div class="${classes.join(' ')}">
@@ -248,9 +252,7 @@ export class LobbyUI {
 
     const items: string[] = []
     for (const [playerId, state] of peers) {
-      const displayName = playerId.length > 20
-        ? playerId.slice(0, 8) + '...' + playerId.slice(-8)
-        : playerId
+      const displayName = truncatePlayerId(playerId)
 
       items.push(`
         <div class="peer-status-item">
