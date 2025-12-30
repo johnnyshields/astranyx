@@ -905,12 +905,13 @@ export class Game {
   private renderBeam(beam: ReturnType<Simulation['getState']>['beams'][0]): void {
     const x = beam.x + this.shakeOffset.x
     const y = beam.y + this.shakeOffset.y
-    // beam.width is thickness (8 or 20), beam extends to right edge
-    const beamLength = 500 - beam.x + 50 // Extend past screen edge
+    // Beam extends to right edge of screen
+    const beamLength = 500 - beam.x + 50
+    // Thickness based on beam width (8 thin, 20 wide)
     const beamThickness = beam.width
 
     // Beam glow
-    this.renderer.drawQuad(x + beamLength/2, y, -1, beamLength, beamThickness + 12, [0, 1, 1, 0.2])
+    this.renderer.drawQuad(x + beamLength/2, y, -1, beamLength, beamThickness + 20, [0, 1, 1, 0.2])
     // Beam core
     this.renderer.drawQuad(x + beamLength/2, y, 0, beamLength, beamThickness, [0, 1, 1, 0.8])
     this.renderer.drawQuad(x + beamLength/2, y, 1, beamLength, beamThickness/2, [1, 1, 1, 0.9])

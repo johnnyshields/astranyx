@@ -1149,10 +1149,10 @@ export class Simulation {
     const toRemove: number[] = []
 
     for (const missile of this.state.missiles) {
-      // Missile x, y, vx, vy are all in world coordinates (not fixed-point)
+      // Missiles use fixed-point coordinates
       // Find target position
-      let targetX = missile.x + 200
-      let targetY = missile.y
+      let targetX = fromFixed(missile.x) + 200
+      let targetY = fromFixed(missile.y)
 
       if (missile.targetId !== null) {
         const enemy = this.state.enemies.find((e) => e.id === missile.targetId)
@@ -1169,26 +1169,30 @@ export class Simulation {
       }
 
       // Home towards target
-      const angle = Math.atan2(targetY - missile.y, targetX - missile.x)
+      const mx = fromFixed(missile.x)
+      const my = fromFixed(missile.y)
+      const angle = Math.atan2(targetY - my, targetX - mx)
       const speed = 250
 
-      const newVx = missile.vx + Math.cos(angle) * 500 * dt
-      const newVy = missile.vy + Math.sin(angle) * 500 * dt
+      const vx = fromFixed(missile.vx)
+      const vy = fromFixed(missile.vy)
+      const newVx = vx + Math.cos(angle) * 500 * dt
+      const newVy = vy + Math.sin(angle) * 500 * dt
 
       const currentSpeed = Math.hypot(newVx, newVy)
-      missile.vx = (newVx / currentSpeed) * speed
-      missile.vy = (newVy / currentSpeed) * speed
+      missile.vx = toFixed((newVx / currentSpeed) * speed)
+      missile.vy = toFixed((newVy / currentSpeed) * speed)
 
-      missile.x += missile.vx * dt
-      missile.y += missile.vy * dt
+      missile.x += Math.round(missile.vx * dt)
+      missile.y += Math.round(missile.vy * dt)
       missile.lifetime--
 
       // Check bounds - missiles can go further right to hit off-screen enemies
       if (
-        missile.x < -WORLD_HALF_WIDTH - 50 ||
-        missile.x > WORLD_HALF_WIDTH + 500 ||
-        missile.y < -WORLD_HALF_HEIGHT - 50 ||
-        missile.y > WORLD_HALF_HEIGHT + 50 ||
+        mx < -WORLD_HALF_WIDTH - 50 ||
+        mx > WORLD_HALF_WIDTH + 500 ||
+        my < -WORLD_HALF_HEIGHT - 50 ||
+        my > WORLD_HALF_HEIGHT + 50 ||
         missile.lifetime <= 0
       ) {
         toRemove.push(missile.id)
@@ -1648,11 +1652,12 @@ export class Simulation {
     // Find nearest enemy for targeting
     const target = this.findNearestEnemy(x, y)
 
+    // Missiles use fixed-point coordinates (matching spawnMissile)
     this.state.missiles.push({
       id: this.state.nextId++,
-      x: fromFixed(x),
-      y: fromFixed(y),
-      vx: stats.projectileSpeed * 0.3, // Start slow
+      x,
+      y,
+      vx: toFixed(stats.projectileSpeed * 0.3), // Start slow
       vy: 0,
       targetId: target ? target.id : null,
       ownerId: player.playerId,
@@ -2687,10 +2692,10 @@ export class Simulation {
       }
     }
 
-    // Missiles vs enemies/boss (missile.x/y are world coords, not fixed-point)
+    // Missiles vs enemies/boss (missile.x/y are fixed-point)
     for (const missile of this.state.missiles) {
-      const mx = missile.x
-      const my = missile.y
+      const mx = fromFixed(missile.x)
+      const my = fromFixed(missile.y)
 
       for (const enemy of this.state.enemies) {
         const ex = fromFixed(enemy.x)
@@ -2701,7 +2706,7 @@ export class Simulation {
 
         if (Math.hypot(ex - mx, ey - my) < 25) {
           enemy.health -= missile.damage
-          this.spawnExplosion(toFixed(missile.x), toFixed(missile.y), 8)
+          this.spawnExplosion(missile.x, missile.y, 8)
           missile.lifetime = 0
 
           if (enemy.health <= 0) {
@@ -2718,7 +2723,7 @@ export class Simulation {
 
         if (Math.hypot(bossX - mx, bossY - my) < 50) {
           this.state.boss.health -= missile.damage
-          this.spawnExplosion(toFixed(missile.x), toFixed(missile.y), 8)
+          this.spawnExplosion(missile.x, missile.y, 8)
           missile.lifetime = 0
 
           if (this.state.boss.health <= 0) {
