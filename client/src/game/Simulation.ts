@@ -17,6 +17,14 @@
  */
 
 import type { PlayerInput } from '../network/LockstepNetcode.ts'
+import {
+  type WeaponType,
+  type WeaponDrop,
+  type PlayerWeapon,
+  type WeaponStats,
+  WEAPON_STATS,
+  getAvailableWeapons,
+} from './Weapons.ts'
 
 // ============================================================================
 // Fixed-Point Math (16.16 format)
@@ -154,6 +162,11 @@ export interface Player {
   }
   orbs: Orb[]
   drones: Drone[]
+  // Weapon system
+  weaponSlots: PlayerWeapon[]
+  activeWeaponIndex: number
+  maxWeaponSlots: number
+  baseGunCooldown: number
 }
 
 export interface Bullet {
@@ -210,6 +223,7 @@ export interface Enemy {
   hasShield?: boolean
   shieldHealth?: number
   splitCount?: number
+  equippedWeapon?: WeaponType // Weapon this enemy carries (drops on death)
 }
 
 export interface Boss {
@@ -257,6 +271,7 @@ export interface SimulationState {
   enemies: Enemy[]
   boss: Boss | null
   powerups: Powerup[]
+  weaponDrops: WeaponDrop[]
   particles: Particle[]
   nextId: number
   rng: SeededRandom
@@ -376,6 +391,7 @@ export class Simulation {
       enemies: [],
       boss: null,
       powerups: [],
+      weaponDrops: [],
       particles: [],
       nextId: 1,
       rng: new SeededRandom(seed),
@@ -421,6 +437,11 @@ export class Simulation {
         },
         orbs: [],
         drones: [],
+        // Weapon system
+        weaponSlots: [],
+        activeWeaponIndex: 0,
+        maxWeaponSlots: 2,
+        baseGunCooldown: 0,
       }
       this.state.players.push(player)
       this.playerIdMap.set(playerId, player.id)
@@ -507,6 +528,9 @@ export class Simulation {
         right: false,
         fire: false,
         special: false,
+        secondary: false,
+        swap: false,
+        pickup: false,
       }
       this.updatePlayer(player, input, dt)
     }
@@ -530,6 +554,9 @@ export class Simulation {
 
     // Update powerups
     this.updatePowerups(dt)
+
+    // Update weapon drops
+    this.updateWeaponDrops(dt)
 
     // Update particles
     this.updateParticles(dt)
@@ -677,6 +704,35 @@ export class Simulation {
           false,
           player.playerId
         )
+      }
+    }
+
+    // Weapon system: update cooldowns
+    for (const weapon of player.weaponSlots) {
+      if (weapon.cooldown > 0) {
+        weapon.cooldown -= dt * 60
+      }
+    }
+
+    // Weapon swap (Q key - edge triggered)
+    if (input.swap) {
+      this.cycleWeapon(player)
+    }
+
+    // Manual weapon pickup (E key - edge triggered)
+    if (input.pickup) {
+      const pickedUp = this.tryManualPickup(player)
+      if (pickedUp) {
+        // Remove the picked up drop from state
+        this.state.weaponDrops = this.state.weaponDrops.filter(d => d.id !== pickedUp.id)
+      }
+    }
+
+    // Secondary fire (equipped weapon)
+    if (input.secondary && player.weaponSlots.length > 0) {
+      const weapon = player.weaponSlots[player.activeWeaponIndex]
+      if (weapon && weapon.cooldown <= 0 && weapon.ammo > 0) {
+        this.fireWeapon(player, weapon)
       }
     }
   }
@@ -1150,6 +1206,16 @@ export class Simulation {
 
   private spawnEnemy(type: EnemyType, x: number, y: number): void {
     const stats = ENEMY_STATS[type]
+
+    // Determine if this enemy has a weapon (based on enemy type and wave)
+    // Stronger enemies more likely to have weapons
+    let equippedWeapon: WeaponType | undefined
+    const weaponChance = this.getEnemyWeaponChance(type)
+    if (this.state.rng.next() < weaponChance) {
+      const availableWeapons = getAvailableWeapons(this.state.wave)
+      equippedWeapon = availableWeapons[this.state.rng.nextInt(availableWeapons.length)]
+    }
+
     this.state.enemies.push({
       id: this.state.nextId++,
       type,
@@ -1166,7 +1232,27 @@ export class Simulation {
       hasShield: type === 'shield',
       shieldHealth: type === 'shield' ? 50 : 0,
       splitCount: type === 'splitter' ? 2 : 0,
+      equippedWeapon,
     })
+  }
+
+  // Chance for enemy type to have a weapon equipped
+  private getEnemyWeaponChance(type: EnemyType): number {
+    switch (type) {
+      case 'tank': return 0.8       // Heavy enemies almost always have weapons
+      case 'carrier': return 0.9
+      case 'shield': return 0.7
+      case 'bomber': return 0.6
+      case 'sniper': return 0.5
+      case 'shooter': return 0.4
+      case 'spiral': return 0.4
+      case 'splitter': return 0.3
+      case 'swerver': return 0.25
+      case 'grunt': return 0.15     // Basic enemies rarely have weapons
+      case 'speeder': return 0.2
+      case 'mine': return 0         // Mines never have weapons
+      default: return 0.2
+    }
   }
 
   private updateEnemies(dt: number): void {
@@ -1394,8 +1480,11 @@ export class Simulation {
     this.state.multiplier = Math.min(8, this.state.multiplier + 0.2)
     this.state.screenShake = 0.08
 
-    // Chance to drop powerup
-    if (this.state.rng.next() < 0.3) {
+    // Drop weapon if enemy had one equipped
+    if (enemy.equippedWeapon) {
+      this.spawnWeaponDrop(enemy.x, enemy.y, enemy.equippedWeapon)
+    } else if (this.state.rng.next() < 0.3) {
+      // Otherwise chance to drop powerup
       this.spawnPowerup(enemy.x, enemy.y)
     }
 
@@ -1403,6 +1492,373 @@ export class Simulation {
     if (enemy.type === 'splitter' && enemy.splitCount && enemy.splitCount > 0) {
       this.spawnEnemy('grunt', enemy.x + toFixed(20), enemy.y - toFixed(20))
       this.spawnEnemy('grunt', enemy.x + toFixed(20), enemy.y + toFixed(20))
+    }
+  }
+
+  private spawnWeaponDrop(x: number, y: number, weaponType: WeaponType): void {
+    const stats = WEAPON_STATS[weaponType]
+    this.state.weaponDrops.push({
+      id: this.state.nextId++,
+      x,
+      y,
+      weaponType,
+      ammo: stats.ammoPerPickup,
+      frame: 0,
+    })
+  }
+
+  // ==========================================================================
+  // Weapon Firing System
+  // ==========================================================================
+
+  private fireWeapon(player: Player, weapon: PlayerWeapon): void {
+    const stats = WEAPON_STATS[weapon.type]
+
+    // Weapon mount position: forward and below player center (matching render position)
+    // Player scale is ~50-62 based on level, weapon is at +25% forward, -20% below
+    const weaponOffsetX = toFixed(35)  // Forward from player center to weapon muzzle
+    const weaponOffsetY = toFixed(-12) // Below center where weapon is mounted
+    const x = player.x + weaponOffsetX
+    const y = player.y + weaponOffsetY
+
+    // Apply recoil based on weapon
+    const recoil = this.getWeaponRecoil(weapon.type)
+    player.vx -= toFixed(recoil)
+
+    // Screen shake based on weapon power
+    this.state.screenShake = Math.max(this.state.screenShake, stats.damage / 500)
+
+    // Fire based on weapon special behavior
+    switch (stats.special) {
+      case 'none':
+        this.fireStandardWeapon(player, x, y, stats)
+        break
+      case 'homing':
+        this.fireHomingMissile(player, x, y, stats)
+        break
+      case 'explosive':
+        this.fireExplosiveShell(player, x, y, stats)
+        break
+      case 'deployable':
+        this.deployMine(player, stats)
+        break
+      case 'continuous':
+        this.fireContinuous(player, x, y, stats)
+        break
+      case 'puddle':
+        this.fireAcidBlob(player, x, y, stats)
+        break
+      case 'wave':
+        this.fireSonicWave(player, x, y, stats)
+        break
+      case 'beam':
+      case 'beam_wide':
+        this.fireLaserBeam(player, stats)
+        break
+      case 'chain':
+        this.fireLightning(player, x, y, stats)
+        break
+      case 'melee':
+        this.swingSword(player, stats)
+        break
+      case 'instant_hit':
+        this.fireRailgun(player, x, y, stats)
+        break
+      case 'bouncing':
+        this.fireGrenade(player, x, y, stats)
+        break
+    }
+
+    // Consume ammo AFTER firing (so last shot fires)
+    weapon.ammo -= 1
+    weapon.cooldown = stats.fireRate
+    if (weapon.ammo < 0) {
+      weapon.ammo = 0
+    }
+  }
+
+  private findNearestEnemy(x: number, y: number): Enemy | null {
+    let nearest: Enemy | null = null
+    let minDist = Infinity
+
+    for (const enemy of this.state.enemies) {
+      const dist = Math.hypot(
+        fromFixed(enemy.x) - fromFixed(x),
+        fromFixed(enemy.y) - fromFixed(y)
+      )
+      if (dist < minDist) {
+        minDist = dist
+        nearest = enemy
+      }
+    }
+
+    return nearest
+  }
+
+  private getWeaponRecoil(type: WeaponType): number {
+    switch (type) {
+      case 'vulcan': return 2
+      case 'shotgun': return 15
+      case 'spread_small': return 5
+      case 'spread_large': return 8
+      case 'railgun': return 30
+      case 'missile': return 10
+      case 'cannon': return 25
+      case 'mine': return 5
+      case 'grenade': return 12
+      case 'flame': return 1
+      case 'acid': return 8
+      case 'sonic': return 10
+      case 'laser_small': return 0
+      case 'laser_large': return 2
+      case 'lightning': return 8
+      case 'sword': return 15
+      default: return 5
+    }
+  }
+
+  private fireStandardWeapon(player: Player, x: number, y: number, stats: WeaponStats): void {
+    const baseAngle = 0
+    const spreadStep = stats.projectileCount > 1
+      ? stats.spread / (stats.projectileCount - 1)
+      : 0
+    const startAngle = baseAngle - stats.spread / 2
+
+    for (let i = 0; i < stats.projectileCount; i++) {
+      const angle = startAngle + spreadStep * i + (this.state.rng.next() - 0.5) * 0.05
+      const cos = Math.cos(angle)
+      const sin = Math.sin(angle)
+
+      this.spawnBullet(
+        x,
+        y,
+        toFixed(stats.projectileSpeed * cos),
+        toFixed(stats.projectileSpeed * sin),
+        'shot', // Using existing bullet type for now
+        stats.pierce,
+        stats.damage,
+        false,
+        player.playerId
+      )
+    }
+  }
+
+  private fireHomingMissile(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Find nearest enemy for targeting
+    const target = this.findNearestEnemy(x, y)
+
+    this.state.missiles.push({
+      id: this.state.nextId++,
+      x: fromFixed(x),
+      y: fromFixed(y),
+      vx: stats.projectileSpeed * 0.3, // Start slow
+      vy: 0,
+      targetId: target ? target.id : null,
+      ownerId: player.playerId,
+      lifetime: stats.lifetime,
+      damage: stats.damage,
+    })
+  }
+
+  private fireExplosiveShell(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Fire as a regular bullet that will explode on impact
+    this.spawnBullet(
+      x,
+      y,
+      toFixed(stats.projectileSpeed),
+      0,
+      'mega', // Use mega type for explosive visual
+      0, // No pierce - explodes on first hit
+      stats.damage,
+      false,
+      player.playerId
+    )
+  }
+
+  private deployMine(player: Player, stats: WeaponStats): void {
+    // Deploy mine behind player
+    const x = player.x - toFixed(30)
+    const y = player.y
+
+    this.spawnBullet(
+      x,
+      y,
+      toFixed(-stats.projectileSpeed), // Drift backward
+      0,
+      'shot',
+      0,
+      stats.damage,
+      false,
+      player.playerId
+    )
+  }
+
+  private fireContinuous(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Flamethrower - multiple small projectiles
+    for (let i = 0; i < stats.projectileCount; i++) {
+      const angle = (this.state.rng.next() - 0.5) * stats.spread
+      const speedVar = 0.8 + this.state.rng.next() * 0.4
+
+      this.spawnBullet(
+        x,
+        y,
+        toFixed(stats.projectileSpeed * speedVar * Math.cos(angle)),
+        toFixed(stats.projectileSpeed * speedVar * Math.sin(angle)),
+        'shot',
+        stats.pierce,
+        stats.damage,
+        false,
+        player.playerId
+      )
+    }
+  }
+
+  private fireAcidBlob(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Acid blob - arcing projectile
+    this.spawnBullet(
+      x,
+      y,
+      toFixed(stats.projectileSpeed),
+      toFixed(-50), // Arc upward slightly
+      'shot',
+      0,
+      stats.damage,
+      false,
+      player.playerId
+    )
+  }
+
+  private fireSonicWave(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Sonic wave - wide projectile
+    this.spawnBullet(
+      x,
+      y,
+      toFixed(stats.projectileSpeed),
+      0,
+      'spread',
+      stats.pierce,
+      stats.damage,
+      false,
+      player.playerId
+    )
+  }
+
+  private fireLaserBeam(player: Player, stats: WeaponStats): void {
+    // Instant beam - hits everything in a line
+    const width = stats.special === 'beam_wide' ? 20 : 8
+
+    this.state.beams.push({
+      id: this.state.nextId++,
+      x: fromFixed(player.x) + 25,
+      y: fromFixed(player.y),
+      width,
+      power: stats.damage,
+      ownerId: player.playerId,
+      lifetime: 3, // Very brief
+      hitEntities: new Set(),
+    })
+  }
+
+  private fireLightning(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Lightning bolt - fast projectile
+    this.spawnBullet(
+      x,
+      y,
+      toFixed(stats.projectileSpeed),
+      0,
+      'laser',
+      0, // Chain effect handled separately
+      stats.damage,
+      false,
+      player.playerId
+    )
+  }
+
+  private swingSword(player: Player, stats: WeaponStats): void {
+    // Melee attack - damage enemies in front of player
+    const attackX = fromFixed(player.x) + 40
+    const attackY = fromFixed(player.y)
+    const range = 50
+
+    for (const enemy of this.state.enemies) {
+      const ex = fromFixed(enemy.x)
+      const ey = fromFixed(enemy.y)
+      const dx = ex - attackX
+      const dy = ey - attackY
+
+      if (Math.abs(dx) < range && Math.abs(dy) < range * 0.8) {
+        this.damageEnemy(enemy, stats.damage)
+      }
+    }
+
+    // Also damage boss if in range
+    if (this.state.boss) {
+      const bx = fromFixed(this.state.boss.x)
+      const by = fromFixed(this.state.boss.y)
+      const dx = bx - attackX
+      const dy = by - attackY
+
+      if (Math.abs(dx) < range + 50 && Math.abs(dy) < range + 50) {
+        this.damageBoss(stats.damage)
+      }
+    }
+
+    this.state.screenShake = 0.15
+  }
+
+  private fireRailgun(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Railgun - instant hit line
+    this.state.beams.push({
+      id: this.state.nextId++,
+      x: fromFixed(x),
+      y: fromFixed(y),
+      width: 6,
+      power: stats.damage,
+      ownerId: player.playerId,
+      lifetime: 8,
+      hitEntities: new Set(),
+    })
+
+    this.state.screenShake = 0.2
+  }
+
+  private fireGrenade(player: Player, x: number, y: number, stats: WeaponStats): void {
+    // Grenade - arcing projectile
+    this.spawnBullet(
+      x,
+      y,
+      toFixed(stats.projectileSpeed * 0.8),
+      toFixed(-100), // Arc upward
+      'mega',
+      0,
+      stats.damage,
+      false,
+      player.playerId
+    )
+  }
+
+  private damageEnemy(enemy: Enemy, damage: number): void {
+    if (enemy.hasShield && enemy.shieldHealth && enemy.shieldHealth > 0) {
+      enemy.shieldHealth -= damage
+      if (enemy.shieldHealth <= 0) {
+        enemy.hasShield = false
+        enemy.shieldHealth = 0
+      }
+    } else {
+      enemy.health -= damage
+    }
+
+    if (enemy.health <= 0) {
+      this.enemyDie(enemy)
+      enemy.health = 0
+    }
+  }
+
+  private damageBoss(damage: number): void {
+    if (!this.state.boss) return
+    this.state.boss.health -= damage
+    if (this.state.boss.health <= 0) {
+      this.bossDie(this.state.boss)
     }
   }
 
@@ -1793,6 +2249,139 @@ export class Simulation {
     this.state.powerups = this.state.powerups.filter(
       (p) => !toRemove.includes(p.id)
     )
+  }
+
+  private updateWeaponDrops(dt: number): void {
+    const toRemove: number[] = []
+
+    for (const drop of this.state.weaponDrops) {
+      // Drift left with scrolling
+      drop.x -= toFixed(22 * dt)
+      drop.frame++
+
+      // Check if collected by player (auto-pickup if has empty slot)
+      for (const player of this.state.players) {
+        if (player.dead) continue
+
+        const dx = Math.abs(fromFixed(player.x - drop.x))
+        const dy = Math.abs(fromFixed(player.y - drop.y))
+
+        // Pickup radius
+        if (dx < 25 && dy < 25) {
+          // Auto-pickup if player has empty slots
+          if (player.weaponSlots.length < player.maxWeaponSlots) {
+            this.pickupWeapon(player, drop)
+            this.spawnExplosion(drop.x, drop.y, 6)
+            toRemove.push(drop.id)
+            break
+          }
+          // Otherwise, manual pickup via E key (handled in updatePlayer)
+        }
+      }
+
+      // Despawn if off-screen left
+      if (fromFixed(drop.x) < -WORLD_HALF_WIDTH - 30) {
+        toRemove.push(drop.id)
+      }
+    }
+
+    this.state.weaponDrops = this.state.weaponDrops.filter(
+      (d) => !toRemove.includes(d.id)
+    )
+  }
+
+  private pickupWeapon(player: Player, drop: WeaponDrop): void {
+    const stats = WEAPON_STATS[drop.weaponType]
+
+    // Check if player already has this weapon type
+    const existingIndex = player.weaponSlots.findIndex(w => w.type === drop.weaponType)
+
+    if (existingIndex >= 0) {
+      // Add ammo to existing weapon
+      player.weaponSlots[existingIndex]!.ammo = Math.min(
+        player.weaponSlots[existingIndex]!.ammo + drop.ammo,
+        player.weaponSlots[existingIndex]!.maxAmmo
+      )
+    } else if (player.weaponSlots.length < player.maxWeaponSlots) {
+      // Add new weapon to empty slot
+      player.weaponSlots.push({
+        type: drop.weaponType,
+        ammo: drop.ammo,
+        maxAmmo: stats.maxAmmo,
+        cooldown: 0,
+      })
+    }
+  }
+
+  private tryManualPickup(player: Player): WeaponDrop | null {
+    // Find nearest weapon drop within pickup range
+    let nearestDrop: WeaponDrop | null = null
+    let nearestDist = Infinity
+
+    for (const drop of this.state.weaponDrops) {
+      const dx = Math.abs(fromFixed(player.x - drop.x))
+      const dy = Math.abs(fromFixed(player.y - drop.y))
+
+      if (dx < 35 && dy < 35) {
+        const dist = dx + dy
+        if (dist < nearestDist) {
+          nearestDist = dist
+          nearestDrop = drop
+        }
+      }
+    }
+
+    if (!nearestDrop) return null
+
+    const stats = WEAPON_STATS[nearestDrop.weaponType]
+
+    // Check if player already has this weapon type
+    const existingIndex = player.weaponSlots.findIndex(w => w.type === nearestDrop!.weaponType)
+
+    if (existingIndex >= 0) {
+      // Add ammo to existing weapon
+      player.weaponSlots[existingIndex]!.ammo = Math.min(
+        player.weaponSlots[existingIndex]!.ammo + nearestDrop.ammo,
+        player.weaponSlots[existingIndex]!.maxAmmo
+      )
+    } else if (player.weaponSlots.length < player.maxWeaponSlots) {
+      // Add new weapon to empty slot
+      player.weaponSlots.push({
+        type: nearestDrop.weaponType,
+        ammo: nearestDrop.ammo,
+        maxAmmo: stats.maxAmmo,
+        cooldown: 0,
+      })
+    } else {
+      // Replace current weapon - drop the old one first
+      const currentWeapon = player.weaponSlots[player.activeWeaponIndex]
+      if (currentWeapon && currentWeapon.ammo > 0) {
+        // Spawn old weapon as a drop
+        this.spawnWeaponDrop(player.x, player.y, currentWeapon.type)
+        // Update the dropped weapon's ammo to match what player had
+        const droppedWeapon = this.state.weaponDrops[this.state.weaponDrops.length - 1]
+        if (droppedWeapon) {
+          droppedWeapon.ammo = currentWeapon.ammo
+        }
+      }
+
+      // Replace with new weapon
+      player.weaponSlots[player.activeWeaponIndex] = {
+        type: nearestDrop.weaponType,
+        ammo: nearestDrop.ammo,
+        maxAmmo: stats.maxAmmo,
+        cooldown: 0,
+      }
+    }
+
+    this.spawnExplosion(nearestDrop.x, nearestDrop.y, 6)
+    return nearestDrop
+  }
+
+  private cycleWeapon(player: Player): void {
+    if (player.weaponSlots.length > 1) {
+      player.activeWeaponIndex = (player.activeWeaponIndex + 1) % player.weaponSlots.length
+    }
   }
 
   // ==========================================================================
@@ -2317,6 +2906,9 @@ export class Simulation {
       powerups: Player['powerups']
       orbs: Orb[]
       drones: Array<{ x: number; y: number }>
+      weaponSlots: PlayerWeapon[]
+      activeWeaponIndex: number
+      maxWeaponSlots: number
     }>
     bullets: Array<{
       id: number
@@ -2347,6 +2939,7 @@ export class Simulation {
       health: number
       maxHealth: number
       hasShield: boolean
+      equippedWeapon?: WeaponType
     }>
     boss: {
       id: number
@@ -2365,6 +2958,14 @@ export class Simulation {
       x: number
       y: number
       type: PowerupType
+      frame: number
+    }>
+    weaponDrops: Array<{
+      id: number
+      x: number
+      y: number
+      weaponType: WeaponType
+      ammo: number
       frame: number
     }>
     particles: Array<{
@@ -2401,6 +3002,9 @@ export class Simulation {
         powerups: { ...p.powerups },
         orbs: p.orbs.map((o) => ({ ...o })),
         drones: p.drones.map((d) => ({ x: d.x, y: d.y })),
+        weaponSlots: p.weaponSlots.map((w) => ({ ...w })),
+        activeWeaponIndex: p.activeWeaponIndex,
+        maxWeaponSlots: p.maxWeaponSlots,
       })),
       bullets: this.state.bullets.map((b) => ({
         id: b.id,
@@ -2431,6 +3035,7 @@ export class Simulation {
         health: e.health,
         maxHealth: e.maxHealth,
         hasShield: e.hasShield ?? false,
+        equippedWeapon: e.equippedWeapon,
       })),
       boss: this.state.boss
         ? {
@@ -2454,6 +3059,14 @@ export class Simulation {
         y: fromFixed(p.y),
         type: p.type,
         frame: p.frame,
+      })),
+      weaponDrops: this.state.weaponDrops.map((w) => ({
+        id: w.id,
+        x: fromFixed(w.x),
+        y: fromFixed(w.y),
+        weaponType: w.weaponType,
+        ammo: w.ammo,
+        frame: w.frame,
       })),
       particles: this.state.particles.map((p) => ({
         id: p.id,

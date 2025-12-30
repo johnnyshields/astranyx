@@ -26,6 +26,9 @@ export interface PlayerInput {
   right: boolean
   fire: boolean
   special: boolean
+  secondary: boolean   // Secondary fire (equipped weapon)
+  swap: boolean        // Swap weapon (edge-triggered)
+  pickup: boolean      // Manual pickup (edge-triggered)
 }
 
 export interface FrameInput {
@@ -264,6 +267,9 @@ export function emptyInput(): PlayerInput {
     right: false,
     fire: false,
     special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
   }
 }
 

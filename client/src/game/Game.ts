@@ -2,6 +2,7 @@ import type { Renderer, MeshHandle } from '../core/Renderer.ts'
 import type { Input } from '../core/Input.ts'
 import { Simulation, type EnemyType, type BulletType, type PowerupType, type BossType } from './Simulation.ts'
 import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
+import { WEAPON_STATS, WEAPON_COLORS, AMMO_TYPE_COLORS, type WeaponType } from './Weapons.ts'
 
 // Mesh file paths
 const MESH_PATHS = {
@@ -13,6 +14,26 @@ const MESH_PATHS = {
   orb: '/assets/meshes/orb.glb',
   powerup: '/assets/meshes/powerup.glb',
   mine: '/assets/meshes/mine.glb',
+}
+
+// Weapon mesh paths (all 16 weapons)
+const WEAPON_MESH_PATHS: Record<WeaponType, string> = {
+  vulcan: '/assets/meshes/weapons/vulcan.glb',
+  shotgun: '/assets/meshes/weapons/shotgun.glb',
+  spread_small: '/assets/meshes/weapons/spread_small.glb',
+  spread_large: '/assets/meshes/weapons/spread_large.glb',
+  railgun: '/assets/meshes/weapons/railgun.glb',
+  missile: '/assets/meshes/weapons/missile.glb',
+  cannon: '/assets/meshes/weapons/cannon.glb',
+  mine: '/assets/meshes/weapons/mine.glb',
+  grenade: '/assets/meshes/weapons/grenade.glb',
+  flame: '/assets/meshes/weapons/flame.glb',
+  acid: '/assets/meshes/weapons/acid.glb',
+  sonic: '/assets/meshes/weapons/sonic.glb',
+  laser_small: '/assets/meshes/weapons/laser_small.glb',
+  laser_large: '/assets/meshes/weapons/laser_large.glb',
+  lightning: '/assets/meshes/weapons/lightning.glb',
+  sword: '/assets/meshes/weapons/sword.glb',
 }
 
 export type GameState = 'title' | 'lobby' | 'connecting' | 'playing' | 'paused' | 'gameover'
@@ -169,6 +190,9 @@ export class Game {
     mine: null,
   }
 
+  // Weapon meshes
+  private weaponMeshes: Map<WeaponType, MeshHandle> = new Map()
+
   constructor(renderer: Renderer, input: Input) {
     this.renderer = renderer
     this.input = input
@@ -195,6 +219,17 @@ export class Game {
     this.meshes.orb = orb
     this.meshes.powerup = powerup
     this.meshes.mine = mine
+
+    // Load weapon meshes
+    const weaponTypes = Object.keys(WEAPON_MESH_PATHS) as WeaponType[]
+    const weaponMeshPromises = weaponTypes.map(type =>
+      this.renderer.loadGLB(`weapon_${type}`, WEAPON_MESH_PATHS[type])
+        .then(mesh => ({ type, mesh }))
+    )
+    const loadedWeaponMeshes = await Promise.all(weaponMeshPromises)
+    for (const { type, mesh } of loadedWeaponMeshes) {
+      this.weaponMeshes.set(type, mesh)
+    }
 
     // Initialize starfield
     for (let i = 0; i < 200; i++) {
@@ -331,6 +366,9 @@ export class Game {
         right: p1Input.right,
         fire: p1Input.fire,
         special: p1Input.special,
+        secondary: p1Input.secondary,
+        swap: p1Input.swap,
+        pickup: p1Input.pickup,
       })
 
       // Player 2 input (if 2 player mode)
@@ -343,6 +381,9 @@ export class Game {
           right: p2Input.right,
           fire: p2Input.fire,
           special: p2Input.special,
+          secondary: p2Input.secondary,
+          swap: p2Input.swap,
+          pickup: p2Input.pickup,
         })
       }
 
@@ -358,6 +399,9 @@ export class Game {
         right: p1Input.right,
         fire: p1Input.fire,
         special: p1Input.special,
+        secondary: p1Input.secondary,
+        swap: p1Input.swap,
+        pickup: p1Input.pickup,
       }
       this.netcode?.tick(currentInput)
     }
@@ -413,6 +457,11 @@ export class Game {
         this.renderPowerup(powerup)
       }
 
+      // Weapon drops
+      for (const drop of state.weaponDrops) {
+        this.renderWeaponDrop(drop)
+      }
+
       // Enemy bullets
       for (const bullet of state.bullets) {
         if (bullet.isEnemy) {
@@ -465,6 +514,11 @@ export class Game {
       // Boss health bar (flat, screen-aligned)
       if (state.boss) {
         this.renderBossHealthBar(state.boss)
+      }
+
+      // Weapon drop labels (floating names)
+      for (const drop of state.weaponDrops) {
+        this.renderWeaponDropLabel(drop)
       }
 
       // Draw main HUD
@@ -568,6 +622,27 @@ export class Game {
       this.renderer.drawQuad(x + baseScale/4, y, 10, baseScale/5, baseScale/6, color, clampedPitch)
     }
 
+    // Draw equipped weapon (active slot)
+    if (player.weaponSlots && player.weaponSlots.length > 0) {
+      const activeWeapon = player.weaponSlots[player.activeWeaponIndex]
+      if (activeWeapon && activeWeapon.ammo > 0) {
+        const weaponMesh = this.weaponMeshes.get(activeWeapon.type)
+        if (weaponMesh) {
+          const weaponColor = WEAPON_COLORS[activeWeapon.type]
+          // Position weapon below and forward of the ship
+          const weaponX = x + baseScale * 0.25  // Forward (player faces right)
+          const weaponY = y - baseScale * 0.2   // Below
+          this.renderer.drawMesh(
+            weaponMesh,
+            weaponX, weaponY, 8,
+            28, 28, 28,
+            weaponColor,
+            clampedPitch * 0.5, clampedRoll * 0.5, 0  // Slight follow of ship rotation
+          )
+        }
+      }
+    }
+
     // Charge indicator
     if (player.charging) {
       const chargeSize = Math.min(player.chargeTime * 30, 24)
@@ -627,6 +702,24 @@ export class Game {
         color,
         0, wobble, 0
       )
+    }
+
+    // Draw equipped weapon if enemy has one
+    if (enemy.equippedWeapon) {
+      const weaponMesh = this.weaponMeshes.get(enemy.equippedWeapon)
+      if (weaponMesh) {
+        const weaponColor = WEAPON_COLORS[enemy.equippedWeapon]
+        // Position weapon on enemy (slightly forward and below center)
+        const weaponX = x - scale * 0.3  // Forward (enemy faces left)
+        const weaponY = y - scale * 0.15  // Slightly below
+        this.renderer.drawMesh(
+          weaponMesh,
+          weaponX, weaponY, 5,
+          25, 25, 25,
+          weaponColor,
+          0, Math.PI, 0  // Rotated to point left (enemy direction)
+        )
+      }
     }
   }
 
@@ -924,6 +1017,49 @@ export class Game {
     this.renderer.drawQuad(x, y, -2, size, size, color)
   }
 
+  private renderWeaponDrop(drop: ReturnType<Simulation['getState']>['weaponDrops'][0]): void {
+    const x = drop.x + this.shakeOffset.x
+    const y = drop.y + this.shakeOffset.y
+    const bob = Math.sin(drop.frame * 0.08) * 4
+    const spin = drop.frame * 0.06
+
+    const weaponMesh = this.weaponMeshes.get(drop.weaponType)
+    const color = WEAPON_COLORS[drop.weaponType]
+    const stats = WEAPON_STATS[drop.weaponType]
+    const ammoColor = AMMO_TYPE_COLORS[stats.ammoType]
+
+    // Glow based on ammo type
+    this.renderer.drawQuad(x, y + bob, -8, 45, 45, [ammoColor[0], ammoColor[1], ammoColor[2], 0.25])
+
+    // Draw weapon mesh (spinning)
+    if (weaponMesh) {
+      this.renderer.drawMesh(
+        weaponMesh,
+        x, y + bob, 0,
+        50, 50, 50,
+        color,
+        0, spin, spin * 0.3
+      )
+    }
+  }
+
+  private renderWeaponDropLabel(drop: ReturnType<Simulation['getState']>['weaponDrops'][0]): void {
+    // Project world position to screen for floating label
+    const worldX = drop.x + this.shakeOffset.x
+    const worldY = drop.y + this.shakeOffset.y + 35  // Above the drop
+    const screen = this.renderer.worldToScreen(worldX, worldY, 0)
+
+    const stats = WEAPON_STATS[drop.weaponType]
+    const ammoColor = AMMO_TYPE_COLORS[stats.ammoType]
+
+    // Label background
+    const labelWidth = stats.name.length * 6 + 8
+    this.renderer.drawQuad(screen.x, screen.y, 0, labelWidth, 14, [0.1, 0.1, 0.15, 0.85])
+
+    // Label color bar (shows ammo type)
+    this.renderer.drawQuad(screen.x, screen.y, 1, labelWidth - 2, 2, ammoColor)
+  }
+
   // ==========================================================================
   // HUD Rendering
   // ==========================================================================
@@ -970,6 +1106,56 @@ export class Game {
       for (let i = 0; i < count; i++) {
         this.renderer.drawQuad(powerupX, 175, 50, 12, 12, color)
         powerupX += 14
+      }
+    }
+
+    // Weapon slots HUD (below shield bar, left side)
+    if (localPlayer.weaponSlots) {
+      const slotStartX = -420
+      const slotY = 145
+      const slotWidth = 60
+      const slotHeight = 28
+      const slotGap = 8
+
+      for (let i = 0; i < localPlayer.maxWeaponSlots; i++) {
+        const slotX = slotStartX + i * (slotWidth + slotGap)
+        const weapon = localPlayer.weaponSlots[i]
+        const isActive = i === localPlayer.activeWeaponIndex
+
+        // Slot background
+        this.renderer.drawQuad(slotX, slotY, 50, slotWidth + 2, slotHeight + 2, [0.1, 0.1, 0.15, 0.9])
+
+        // Active indicator (white bar on top)
+        if (isActive) {
+          this.renderer.drawQuad(slotX, slotY + slotHeight / 2 + 2, 51, slotWidth, 3, [1, 1, 1, 0.9])
+        }
+
+        if (weapon) {
+          const stats = WEAPON_STATS[weapon.type]
+          const ammoColor = AMMO_TYPE_COLORS[stats.ammoType]
+          const weaponColor = WEAPON_COLORS[weapon.type]
+
+          // Weapon icon area (colored by weapon)
+          this.renderer.drawQuad(slotX, slotY + 5, 51, slotWidth - 4, slotHeight - 14, weaponColor)
+
+          // Ammo bar background
+          this.renderer.drawQuad(slotX, slotY - slotHeight / 2 + 5, 51, slotWidth - 4, 6, [0.2, 0.2, 0.25, 0.9])
+
+          // Ammo bar fill
+          const ammoRatio = weapon.ammo / weapon.maxAmmo
+          const ammoBarWidth = (slotWidth - 4) * ammoRatio
+          this.renderer.drawQuad(
+            slotX - ((slotWidth - 4) - ammoBarWidth) / 2,
+            slotY - slotHeight / 2 + 5,
+            52,
+            ammoBarWidth,
+            4,
+            ammoColor
+          )
+        } else {
+          // Empty slot
+          this.renderer.drawQuad(slotX, slotY, 51, slotWidth - 4, slotHeight - 4, [0.15, 0.15, 0.2, 0.5])
+        }
       }
     }
 

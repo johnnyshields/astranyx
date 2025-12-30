@@ -13,6 +13,23 @@ import {
   createOrbMesh,
   createPowerupMesh,
   createMineMesh,
+  // Weapon meshes
+  createVulcanMesh,
+  createShotgunMesh,
+  createSpreadSmallMesh,
+  createSpreadLargeMesh,
+  createRailgunMesh,
+  createMissileMesh,
+  createCannonMesh,
+  createLimpetMesh,
+  createGrenadeMesh,
+  createFlameMesh,
+  createAcidMesh,
+  createSonicMesh,
+  createLaserSmallMesh,
+  createLaserLargeMesh,
+  createLightningMesh,
+  createSwordMesh,
   type MeshData,
 } from '../src/graphics/MeshGenerator.ts'
 
@@ -234,6 +251,10 @@ function meshDataToGlb(meshData: MeshData, name: string): Uint8Array {
 
 async function exportMeshes() {
   const outputDir = './public/assets/meshes'
+  const weaponsDir = `${outputDir}/weapons`
+
+  // Ensure weapons directory exists
+  await Bun.write(`${weaponsDir}/.gitkeep`, '')
 
   const meshes: Array<{ name: string; data: MeshData }> = [
     { name: 'player-ship', data: createPlayerShipMesh() },
@@ -246,9 +267,41 @@ async function exportMeshes() {
     { name: 'mine', data: createMineMesh() },
   ]
 
+  // Weapon meshes (output to weapons/ subdirectory)
+  const weaponMeshes: Array<{ name: string; data: MeshData }> = [
+    // BULLET weapons
+    { name: 'vulcan', data: createVulcanMesh() },
+    { name: 'shotgun', data: createShotgunMesh() },
+    { name: 'spread_small', data: createSpreadSmallMesh() },
+    { name: 'spread_large', data: createSpreadLargeMesh() },
+    { name: 'railgun', data: createRailgunMesh() },
+    // BOMB weapons
+    { name: 'missile', data: createMissileMesh() },
+    { name: 'cannon', data: createCannonMesh() },
+    { name: 'mine', data: createLimpetMesh() },
+    { name: 'grenade', data: createGrenadeMesh() },
+    // OIL weapons
+    { name: 'flame', data: createFlameMesh() },
+    { name: 'acid', data: createAcidMesh() },
+    // ENERGY weapons
+    { name: 'sonic', data: createSonicMesh() },
+    { name: 'laser_small', data: createLaserSmallMesh() },
+    { name: 'laser_large', data: createLaserLargeMesh() },
+    { name: 'lightning', data: createLightningMesh() },
+    { name: 'sword', data: createSwordMesh() },
+  ]
+
   for (const mesh of meshes) {
     const glb = meshDataToGlb(mesh.data, mesh.name)
     const path = `${outputDir}/${mesh.name}.glb`
+    await Bun.write(path, glb)
+    console.log(`Exported: ${path} (${glb.byteLength} bytes, ${mesh.data.vertexCount} vertices)`)
+  }
+
+  console.log('\nExporting weapon meshes...')
+  for (const mesh of weaponMeshes) {
+    const glb = meshDataToGlb(mesh.data, mesh.name)
+    const path = `${weaponsDir}/${mesh.name}.glb`
     await Bun.write(path, glb)
     console.log(`Exported: ${path} (${glb.byteLength} bytes, ${mesh.data.vertexCount} vertices)`)
   }

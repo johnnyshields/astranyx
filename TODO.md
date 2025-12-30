@@ -6,8 +6,47 @@
 
 
 - Weapons
+name in code - UI Label - Description
+------------------
+vulcan - Vulcan -- Minigun/vulcan cannon | ammo type: bullet
+shotgun - Bulldog -- Shotgun | ammo type: bullet
+spread_small - Jericho - Spread gun (5x spread) | ammo type: bullet
+spread_large - Kitsune - Spread gun (9x spread) | ammo type: bullet
+railgun - Odin -- Railgun | ammo type: bullet
+missile - Hornet -- Torpedo-like accelerating missile with slight homing | ammo type: bomb
+cannon - Megiddo -- Cannon | ammo type: bomb
+mine - Limpet -- Homing mine | ammo type: bomb
+grenade - Magus -- Area effect grenade | ammo type: bomb
+flame - Diablo -- Flamethower | ammo type: oil
+acid - Slag -- caustic spray | ammo type: oil
+sonic - Banshee - Sonic wave | ammo type: energy
+laser_small - Lancet - Small percing laser | ammo type: energy
+laser_large - Paladin - Charge laser | ammo type: energy
+lighting - Valkyrie -- Lightning with chain-lightning ability | ammo type: energy
+sword - Durandal -- Laser sword | ammo type: energy
 
-Avenger -- Minigun
+-----------
+
+look at nuclear throne
+
+
+hammer - Mjolnir -- with lightning effect
+magus
+magicant
+Amaterasu
+Cicada
+Barracuda
+Tarantula
+Fusillade
+Trident
+Prism
+Blossom
+Arc Storm
+Pincer
+X-ray
+Enigma
+Graviton
+Avenger
 Flash
 Aurora
 Valkyrie -- Lighting cannon (with chain lightning effect)
@@ -46,8 +85,6 @@ Hornet -- slight homing missles
 Grappler -- Grappling hook
 Bandit -- Grappling hook???
 Bandido
-Limpet -- Homing mine
-Jericho -- Spread Gun
 Vitriol -- caustic spray
 Slag -- caustic spray
 Hydra (multiple heads)
@@ -58,6 +95,19 @@ Cascade
 Peacock
 Domino -- chain reaciton
 Pandora -- chain reaciton
+
+Hydra (multi-headed, regenerating shots?)
+Cerberus (3-way, or triple burst)
+Phoenix (fire spread, maybe respawns projectiles)
+Leviathan (massive wave)
+Basilisk (piercing or petrify effect)
+Griffin (hybrid weapon type?)
+Quetzal (colorful, exotic)
+Raijin (lightning scatter)
+Fujin (wind-based, wide arc)
+Orochi (8 heads—8-way spread)
+Byakko (white tiger, fast/aggressive)
+Suzaku (vermillion bird—fire spread, pairs nicely with Peacock aesthetically)
 
 Area Effect Grenade
 Chiron

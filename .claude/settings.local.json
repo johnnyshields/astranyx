@@ -51,7 +51,8 @@
       "Bash(dpkg:*)",
       "Bash(timeout 5 bun run dev:*)",
       "Bash(bun run dev)",
-      "SlashCommand(/harden)"
+      "SlashCommand(/harden)",
+      "Bash(bun run:*)"
     ],
     "deny": [],
     "ask": []
