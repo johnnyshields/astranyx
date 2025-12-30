@@ -16,6 +16,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
+      // Mock phoenix for tests - the actual package is loaded at runtime from Phoenix server
+      'phoenix': resolve(__dirname, './__mocks__/phoenix.ts'),
     },
   },
 })

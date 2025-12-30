@@ -54,7 +54,9 @@
       "SlashCommand(/harden)",
       "Bash(bun run:*)",
       "Bash(ls:*)",
-      "Bash(xxd:*)"
+      "Bash(xxd:*)",
+      "Bash(bun test:*)",
+      "Bash(bun -e:*)"
     ],
     "deny": [],
     "ask": []

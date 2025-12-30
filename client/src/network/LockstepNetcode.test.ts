@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   LockstepNetcode,
-  LockstepConfig,
-  PlayerInput,
+  type LockstepConfig,
+  type PlayerInput,
   emptyInput,
   inputsEqual,
 } from './LockstepNetcode'
@@ -64,7 +64,7 @@ describe('LockstepNetcode', () => {
 
     it('should default input delay to 3', () => {
       const partialConfig = createConfig()
-      delete (partialConfig as Record<string, unknown>).inputDelay
+      delete (partialConfig as unknown as Record<string, unknown>).inputDelay
       const customLockstep = new LockstepNetcode(partialConfig)
       expect(customLockstep.getInputDelay()).toBe(3)
     })
@@ -143,14 +143,14 @@ describe('LockstepNetcode', () => {
     it('should broadcast local input to peers', () => {
       lockstep.tick(createInput({ up: true }))
       expect(channel.send).toHaveBeenCalled()
-      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0][0])
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
       expect(sentData.playerId).toBe('player1')
       expect(sentData.input.up).toBe(true)
     })
 
     it('should store input for future frame with delay', () => {
       lockstep.tick(createInput({ up: true }))
-      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0][0])
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
       // Frame should be currentFrame + inputDelay
       expect(sentData.frame).toBe(0 + 3) // 0 + inputDelay(3)
     })

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { Input, InputState } from './Input'
+import { Input, type InputState } from './Input'
 
 describe('Input', () => {
   let input: Input
