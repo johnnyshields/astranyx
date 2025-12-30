@@ -1058,9 +1058,9 @@ export class Simulation {
   ): void {
     this.state.beams.push({
       id: this.state.nextId++,
-      x,
-      y,
-      width: toFixed(800),
+      x: fromFixed(x),
+      y: fromFixed(y),
+      width: 8 + power * 4, // Thickness scales with power level
       power,
       ownerId,
       lifetime: 20, // ~0.33 seconds
