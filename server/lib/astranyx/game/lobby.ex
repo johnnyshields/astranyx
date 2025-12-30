@@ -100,13 +100,13 @@ defmodule Astranyx.Game.Lobby do
     rooms =
       state.rooms
       |> Map.values()
-      |> Enum.filter(&(&1.status == :waiting))
       |> Enum.map(fn room ->
         %{
           id: room.id,
           host: room.host,
           player_count: length(room.players),
-          max_players: @max_players_per_room
+          max_players: @max_players_per_room,
+          status: room.status
         }
       end)
 

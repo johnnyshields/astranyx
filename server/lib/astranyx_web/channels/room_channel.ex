@@ -29,17 +29,24 @@ defmodule AstranyxWeb.RoomChannel do
       {:ok, room} ->
         socket = assign(socket, :room_id, room_id)
 
-        # Notify others
-        broadcast_from(socket, "player_joined", %{
-          player_id: player_id,
-          players: room.players
-        })
+        # Defer broadcast until after join completes
+        send(self(), {:after_join, player_id, room.players})
 
         {:ok, %{room: room, player_id: player_id}, socket}
 
       {:error, reason} ->
         {:error, %{reason: reason}}
     end
+  end
+
+  @impl true
+  def handle_info({:after_join, player_id, players}, socket) do
+    broadcast_from(socket, "player_joined", %{
+      player_id: player_id,
+      players: players
+    })
+
+    {:noreply, socket}
   end
 
   @impl true

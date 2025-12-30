@@ -202,6 +202,10 @@ function setupMultiplayer(engine: Engine): void {
     try {
       await multiplayer.connect()
       lobbyUI?.setLocalPlayerId(multiplayer.getLocalPlayerId())
+
+      // Auto-refresh room list on connect
+      const rooms = await multiplayer.listRooms()
+      lobbyUI?.updateRoomList(rooms)
     } catch (error) {
       lobbyUI?.showError('Failed to connect to server. Local play still available.')
       console.error('Failed to connect:', error)

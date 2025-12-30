@@ -75,6 +75,7 @@ type GameStartingHandler = (data: GameStartingData) => void
 
 export class PhoenixClient {
   private socket: Socket | null = null
+  private lobbyChannel: Channel | null = null
   private roomChannel: Channel | null = null
   private signalingChannel: Channel | null = null
 
@@ -120,11 +121,19 @@ export class PhoenixClient {
         params: { player_id: this.playerId },
       })
 
-      this.socket.onOpen(() => {
+      this.socket.onOpen(async () => {
         if (!settled) {
           settled = true
           cleanup()
           console.log('Phoenix: Connected')
+
+          // Auto-join lobby channel for room listing
+          try {
+            await this.joinLobby()
+          } catch (e) {
+            console.warn('Failed to join lobby channel:', e)
+          }
+
           resolve(this.playerId)
         }
       })
@@ -143,6 +152,26 @@ export class PhoenixClient {
       })
 
       this.socket.connect()
+    })
+  }
+
+  private async joinLobby(): Promise<void> {
+    if (!this.socket) {
+      throw new Error('Not connected')
+    }
+
+    return new Promise((resolve, reject) => {
+      this.lobbyChannel = this.socket!.channel('lobby:main', {})
+
+      this.lobbyChannel
+        .join()
+        .receive('ok', () => {
+          console.log('Joined lobby channel')
+          resolve()
+        })
+        .receive('error', (error: { reason: string }) => {
+          reject(new Error(error.reason))
+        })
     })
   }
 
@@ -285,12 +314,12 @@ export class PhoenixClient {
   // Room management
 
   async listRooms(): Promise<RoomInfo[]> {
-    if (!this.roomChannel) {
-      throw new Error('Not in a room channel')
+    if (!this.lobbyChannel) {
+      throw new Error('Not connected to lobby')
     }
 
     return new Promise((resolve, reject) => {
-      this.roomChannel!.push('list_rooms', {})
+      this.lobbyChannel!.push('list_rooms', {})
         .receive('ok', (response: { rooms: RoomInfo[] }) => {
           resolve(response.rooms)
         })

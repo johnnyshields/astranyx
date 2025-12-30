@@ -11,12 +11,19 @@ defmodule AstranyxWeb.SignalingChannel do
   def join("signaling:" <> room_id, _params, socket) do
     socket = assign(socket, :room_id, room_id)
 
-    # Notify others in the room
+    # Defer broadcast until after join completes
+    send(self(), :after_join)
+
+    {:ok, %{player_id: socket.assigns.player_id}, socket}
+  end
+
+  @impl true
+  def handle_info(:after_join, socket) do
     broadcast_from(socket, "peer_joined", %{
       player_id: socket.assigns.player_id
     })
 
-    {:ok, %{player_id: socket.assigns.player_id}, socket}
+    {:noreply, socket}
   end
 
   @impl true

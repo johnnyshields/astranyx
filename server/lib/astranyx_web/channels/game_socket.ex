@@ -10,6 +10,7 @@ defmodule AstranyxWeb.GameSocket do
   use Phoenix.Socket
 
   # Channels
+  channel "lobby:*", AstranyxWeb.LobbyChannel
   channel "room:*", AstranyxWeb.RoomChannel
   channel "signaling:*", AstranyxWeb.SignalingChannel
 

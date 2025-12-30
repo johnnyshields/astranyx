@@ -142,12 +142,6 @@ export class MultiplayerManager {
       throw new Error('Not connected')
     }
 
-    // We need to be in a room to call list_rooms (Phoenix channel requirement)
-    // So this is only callable when in_lobby state
-    if (this.state !== 'in_lobby') {
-      return []
-    }
-
     try {
       const rooms = await this.phoenix.listRooms()
       this.lobbyState.rooms = rooms
