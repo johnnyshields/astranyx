@@ -52,7 +52,9 @@
       "Bash(timeout 5 bun run dev:*)",
       "Bash(bun run dev)",
       "SlashCommand(/harden)",
-      "Bash(bun run:*)"
+      "Bash(bun run:*)",
+      "Bash(ls:*)",
+      "Bash(xxd:*)"
     ],
     "deny": [],
     "ask": []

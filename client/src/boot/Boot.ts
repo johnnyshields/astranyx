@@ -51,21 +51,18 @@ export class Boot {
         message: 'INITIALIZING...',
       })
 
-      // Check WebGL2 support early
+      // Check graphics support (WebGPU preferred, WebGL2 fallback)
       const canvas = document.getElementById('game') as HTMLCanvasElement
       if (!canvas) {
         throw new Error('Canvas element not found')
       }
 
-      const gl = canvas.getContext('webgl2')
-      if (!gl) {
-        throw new Error('WebGL2 not supported')
-      }
+      const graphicsBackend = await this.checkGraphicsSupport(canvas)
 
       this.updateState({
         phase: 'init',
         progress: 10,
-        message: 'WEBGL2 OK...',
+        message: `${graphicsBackend} OK...`,
       })
 
       // Phase 2: Load assets (fonts, etc.)
@@ -116,6 +113,32 @@ export class Boot {
       })
       throw error
     }
+  }
+
+  /**
+   * Check graphics support (WebGPU preferred, WebGL2 fallback)
+   */
+  private async checkGraphicsSupport(canvas: HTMLCanvasElement): Promise<string> {
+    // Check WebGPU first
+    if ('gpu' in navigator) {
+      try {
+        const gpu = navigator.gpu as GPU
+        const adapter = await gpu.requestAdapter()
+        if (adapter) {
+          return 'WEBGPU'
+        }
+      } catch {
+        // WebGPU not available, fall through to WebGL2
+      }
+    }
+
+    // Fall back to WebGL2
+    const gl = canvas.getContext('webgl2')
+    if (!gl) {
+      throw new Error('Neither WebGPU nor WebGL2 supported')
+    }
+
+    return 'WEBGL2'
   }
 
   /**
