@@ -190,6 +190,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       const initialFrame = simulation.getState().frame
@@ -209,6 +210,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       const initialX = simulation.getState().players[0]!.x
@@ -232,6 +234,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       const initialInvincible = simulation.getState().players[0]!.invincible
@@ -261,6 +264,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       const initialVy = simulation.getState().players[0]!.vy
@@ -284,6 +288,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       const initialVy = simulation.getState().players[0]!.vy
@@ -323,6 +328,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       for (let i = 0; i < 100; i++) {
@@ -377,6 +383,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       for (let i = 0; i < 100; i++) {
@@ -407,6 +414,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       const inputs2: PlayerInput = {
@@ -419,6 +427,7 @@ describe('Simulation', () => {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
 
       for (let i = 0; i < 10; i++) {

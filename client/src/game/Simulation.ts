@@ -534,6 +534,7 @@ export class Simulation {
         secondary: false,
         swap: false,
         pickup: false,
+        pause: false,
       }
       this.updatePlayer(player, input, dt)
     }

@@ -165,6 +165,11 @@ export class Game {
   private pauseOverlay: HTMLElement | null = null
   private gameOverOverlay: HTMLElement | null = null
 
+  // Multiplayer UI state
+  private voiceEnabled = false
+  private onChatOpen: (() => void) | null = null
+  private onVoiceToggle: ((enabled: boolean) => void) | null = null
+
   // 3D Meshes
   private meshes: {
     playerShip: MeshHandle | null
@@ -296,6 +301,19 @@ export class Game {
     this.startLocalGame(1)
   }
 
+  // Multiplayer UI callbacks
+  setChatHandler(handler: () => void): void {
+    this.onChatOpen = handler
+  }
+
+  setVoiceToggleHandler(handler: (enabled: boolean) => void): void {
+    this.onVoiceToggle = handler
+  }
+
+  isVoiceEnabled(): boolean {
+    return this.voiceEnabled
+  }
+
   startMultiplayer(
     localPlayerId: string,
     playerIds: string[],
@@ -316,9 +334,31 @@ export class Game {
 
     // Set up netcode input handler
     netcode.setInputHandler((inputs) => {
-      this.simulation?.tick(inputs)
-      this.lastState = this.currentState
-      this.currentState = this.simulation?.getState() ?? null
+      // Check if any player pressed pause
+      let anyPaused = false
+      for (const [, input] of inputs) {
+        if (input.pause) {
+          anyPaused = true
+          break
+        }
+      }
+
+      if (anyPaused) {
+        if (this.state === 'playing') {
+          this.state = 'paused'
+          this.pauseOverlay?.classList.add('visible')
+        } else if (this.state === 'paused') {
+          this.state = 'playing'
+          this.pauseOverlay?.classList.remove('visible')
+        }
+      }
+
+      // Only tick simulation if not paused
+      if (this.state === 'playing') {
+        this.simulation?.tick(inputs)
+        this.lastState = this.currentState
+        this.currentState = this.simulation?.getState() ?? null
+      }
     })
 
     netcode.start()
@@ -336,13 +376,26 @@ export class Game {
   update(dt: number): void {
     const p1Input = this.input.getPlayer1State()
 
-    // Handle pause toggle
-    if (p1Input.pause && this.state === 'playing') {
-      this.state = 'paused'
-      this.pauseOverlay?.classList.add('visible')
-    } else if (p1Input.pause && this.state === 'paused') {
-      this.state = 'playing'
-      this.pauseOverlay?.classList.remove('visible')
+    // Handle pause toggle (local mode only - multiplayer handles via synced input)
+    if (this.localMode) {
+      if (p1Input.pause && this.state === 'playing') {
+        this.state = 'paused'
+        this.pauseOverlay?.classList.add('visible')
+      } else if (p1Input.pause && this.state === 'paused') {
+        this.state = 'playing'
+        this.pauseOverlay?.classList.remove('visible')
+      }
+    }
+
+    // Handle chat/voice (multiplayer only, not synced - local UI actions)
+    if (!this.localMode && this.state === 'playing') {
+      if (p1Input.chat) {
+        this.onChatOpen?.()
+      }
+      if (p1Input.voice) {
+        this.voiceEnabled = !this.voiceEnabled
+        this.onVoiceToggle?.(this.voiceEnabled)
+      }
     }
 
     // Update starfield even when paused/title (looks nice)
@@ -360,7 +413,8 @@ export class Game {
     }
 
     // Update play bounds from renderer (camera-compensated)
-    if (this.simulation) {
+    // Only in local mode - multiplayer uses fixed bounds for determinism
+    if (this.simulation && this.localMode) {
       this.simulation.setPlayBounds(this.renderer.getPlayBounds())
     }
 
@@ -379,6 +433,7 @@ export class Game {
         secondary: p1Input.secondary,
         swap: p1Input.swap,
         pickup: p1Input.pickup,
+        pause: p1Input.pause,
       })
 
       // Player 2 input (if 2 player mode)
@@ -394,6 +449,7 @@ export class Game {
           secondary: p2Input.secondary,
           swap: p2Input.swap,
           pickup: p2Input.pickup,
+          pause: p2Input.pause,
         })
       }
 
@@ -412,6 +468,7 @@ export class Game {
         secondary: p1Input.secondary,
         swap: p1Input.swap,
         pickup: p1Input.pickup,
+        pause: p1Input.pause,
       }
       this.netcode?.tick(currentInput)
     }
@@ -525,10 +582,6 @@ export class Game {
       this.renderer.drawQuad(0, 0, 100, 2000, 1200, [0.1, 0, 0, 0.9])
     }
 
-    // Show waiting indicator in network multiplayer
-    if (!this.localMode && this.netcode?.isWaitingForInputs()) {
-      this.renderer.drawQuad(0, 200, 100, 200, 30, [1, 0.5, 0, 0.8])
-    }
 
     this.renderer.endFrame()
   }

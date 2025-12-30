@@ -37,6 +37,7 @@ function createInput(overrides?: Partial<PlayerInput>): PlayerInput {
     secondary: false,
     swap: false,
     pickup: false,
+    pause: false,
     ...overrides,
   }
 }

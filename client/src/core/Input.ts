@@ -9,6 +9,8 @@ export interface InputState {
   swap: boolean         // Swap weapon (Q) - edge triggered
   pickup: boolean       // Manual pickup (E) - edge triggered
   pause: boolean
+  chat: boolean         // Open chat (C) - edge triggered
+  voice: boolean        // Toggle voice (V) - edge triggered
 }
 
 export class Input {
@@ -101,6 +103,7 @@ export class Input {
       'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
       'KeyW', 'KeyA', 'KeyS', 'KeyD',
       'KeyQ', 'KeyE',  // Weapon swap and pickup
+      'KeyC', 'KeyV',  // Chat and voice
       'Space', 'ShiftLeft', 'ShiftRight',
       'Escape', 'Numpad0', 'Digit0'
     ].includes(code)
@@ -148,6 +151,8 @@ export class Input {
       swap: this.isKeyPressed('KeyQ') || this.isGamepadButtonPressed(gamepad, 4), // LB - edge triggered
       pickup: this.isKeyPressed('KeyE') || this.isGamepadButtonPressed(gamepad, 2), // Y/Triangle
       pause: this.isKeyPressed('Escape') || this.isGamepadButtonPressed(gamepad, 9),
+      chat: this.isKeyPressed('KeyC'),
+      voice: this.isKeyPressed('KeyV'),
     }
   }
 
@@ -164,6 +169,8 @@ export class Input {
       swap: this.isKeyPressed('Numpad1') || this.isKeyPressed('Digit1'), // 1 key for P2 swap
       pickup: this.isKeyPressed('Numpad2') || this.isKeyPressed('Digit2'), // 2 key for P2 pickup
       pause: false, // Only P1 can pause
+      chat: false,
+      voice: false,
     }
   }
 
@@ -182,6 +189,8 @@ export class Input {
       swap: this.isKeyPressed('KeyQ') || this.isGamepadButtonPressed(gamepad, 4),
       pickup: this.isKeyPressed('KeyE') || this.isGamepadButtonPressed(gamepad, 2),
       pause: this.isKeyPressed('Escape') || this.isGamepadButtonPressed(gamepad, 9),
+      chat: this.isKeyPressed('KeyC'),
+      voice: this.isKeyPressed('KeyV'),
     }
   }
 

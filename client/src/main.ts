@@ -292,6 +292,19 @@ function startMultiplayerGame(
   // Hide lobby
   lobbyUI.hide()
 
+  // Set up chat/voice handlers
+  game.setChatHandler(() => {
+    console.log('Chat opened (C key) - TODO: implement chat UI')
+    // TODO: Implement text chat UI
+    // Could use WebRTC data channel for P2P chat messages
+  })
+
+  game.setVoiceToggleHandler((enabled) => {
+    console.log(`Voice ${enabled ? 'enabled' : 'disabled'} (V key) - TODO: implement voice chat`)
+    // TODO: Implement WebRTC voice chat
+    // Would need to request microphone access and set up audio tracks
+  })
+
   // Start the game
   game.startMultiplayer(
     multiplayer.getLocalPlayerId(),

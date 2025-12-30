@@ -29,6 +29,7 @@ export interface PlayerInput {
   secondary: boolean   // Secondary fire (equipped weapon)
   swap: boolean        // Swap weapon (edge-triggered)
   pickup: boolean      // Manual pickup (edge-triggered)
+  pause: boolean       // Pause toggle (edge-triggered)
 }
 
 export interface FrameInput {
@@ -103,6 +104,7 @@ export class LockstepNetcode {
       secondary: false,
       swap: false,
       pickup: false,
+      pause: false,
     }
 
     for (let frame = 0; frame < this.config.inputDelay; frame++) {
@@ -308,6 +310,7 @@ export function emptyInput(): PlayerInput {
     secondary: false,
     swap: false,
     pickup: false,
+    pause: false,
   }
 }
 
