@@ -1557,7 +1557,7 @@ export class Simulation {
         break
       case 'beam':
       case 'beam_wide':
-        this.fireLaserBeam(player, stats)
+        this.fireLaserBeam(player, x, y, stats)
         break
       case 'chain':
         this.fireLightning(player, x, y, stats)
@@ -1750,14 +1750,14 @@ export class Simulation {
     )
   }
 
-  private fireLaserBeam(player: Player, stats: WeaponStats): void {
+  private fireLaserBeam(player: Player, x: number, y: number, stats: WeaponStats): void {
     // Instant beam - hits everything in a line
     const width = stats.special === 'beam_wide' ? 20 : 8
 
     this.state.beams.push({
       id: this.state.nextId++,
-      x: fromFixed(player.x) + 25,
-      y: fromFixed(player.y),
+      x: fromFixed(x),
+      y: fromFixed(y),
       width,
       power: stats.damage,
       ownerId: player.playerId,
