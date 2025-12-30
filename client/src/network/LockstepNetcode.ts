@@ -90,6 +90,40 @@ export class LockstepNetcode {
     this.confirmedFrame = -1
     this.inputBuffer.clear()
     this.localInputQueue = []
+
+    // Pre-seed frames 0 to inputDelay-1 with empty inputs for all players
+    // This is needed because the first real inputs go to frame inputDelay
+    const emptyInput: PlayerInput = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      fire: false,
+      special: false,
+      secondary: false,
+      swap: false,
+      pickup: false,
+    }
+
+    for (let frame = 0; frame < this.config.inputDelay; frame++) {
+      const frameInputs = new Map<string, FrameInput>()
+      for (const [playerId] of this.config.playerOrder) {
+        frameInputs.set(playerId, {
+          frame,
+          playerId,
+          input: emptyInput,
+        })
+      }
+      this.inputBuffer.set(frame, frameInputs)
+    }
+
+    console.log('Lockstep: Started', {
+      playerCount: this.config.playerCount,
+      inputDelay: this.config.inputDelay,
+      localPlayerId: this.config.localPlayerId,
+      peers: Array.from(this.peers.keys()),
+      preSeededFrames: this.config.inputDelay,
+    })
   }
 
   stop(): void {
@@ -100,10 +134,12 @@ export class LockstepNetcode {
    * Add a peer connection
    */
   addPeer(playerId: string, dataChannel: RTCDataChannel): void {
+    console.log(`Lockstep: Adding peer ${playerId}`)
     this.peers.set(playerId, dataChannel)
 
     dataChannel.onmessage = (event) => {
       const data = JSON.parse(event.data as string) as FrameInput
+      console.log(`Lockstep: Received input from ${data.playerId} for frame ${data.frame}`)
       this.receiveInput(data)
     }
   }
@@ -144,12 +180,14 @@ export class LockstepNetcode {
     const frameInputs = this.inputBuffer.get(this.currentFrame)
 
     if (!frameInputs) {
+      console.log(`Lockstep: No inputs for frame ${this.currentFrame}`)
       this.waitingForInputs = true
       return false
     }
 
     // Check if we have inputs from all players
     if (frameInputs.size < this.config.playerCount) {
+      console.log(`Lockstep: Frame ${this.currentFrame} has ${frameInputs.size}/${this.config.playerCount} inputs`)
       this.waitingForInputs = true
       return false
     }

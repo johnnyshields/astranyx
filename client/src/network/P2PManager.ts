@@ -33,13 +33,43 @@ export class P2PManager {
   private onPeerConnected: ConnectionHandler | null = null
   private onPeerDisconnected: DisconnectHandler | null = null
 
-  private readonly iceServers: RTCIceServer[] = [
+  // ICE servers for WebRTC connection establishment
+  // These are set dynamically via setIceServers() with credentials from server
+  // See /docs/deployment.md for TURN server setup
+  private iceServers: RTCIceServer[] = [
+    // STUN only as fallback - TURN credentials come from server
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
   ]
 
   constructor(localPlayerId: string) {
     this.localPlayerId = localPlayerId
+  }
+
+  /**
+   * Set ICE servers with TURN credentials from server
+   */
+  setIceServers(turnUrls: string[], username: string, credential: string): void {
+    this.iceServers = [
+      // STUN servers
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // TURN servers with ephemeral credentials
+      ...turnUrls.map(url => ({
+        urls: url,
+        username,
+        credential,
+      })),
+    ]
+  }
+
+  /**
+   * Update ICE servers (for credential refresh).
+   * Note: This only affects new connections - existing connections
+   * continue using their original credentials until they need to reconnect.
+   */
+  updateIceServers(turnUrls: string[], username: string, credential: string): void {
+    this.setIceServers(turnUrls, username, credential)
   }
 
   /**
@@ -129,16 +159,28 @@ export class P2PManager {
   }
 
   private createPeerConnection(playerId: string): RTCPeerConnection {
+    console.log('P2P: Creating connection with ICE servers:', this.iceServers)
     const connection = new RTCPeerConnection({
       iceServers: this.iceServers,
     })
 
     connection.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('P2P: ICE candidate:', event.candidate.type, event.candidate.candidate)
         this.sendSignaling('ice_candidate', playerId, {
           candidate: event.candidate,
         })
+      } else {
+        console.log('P2P: ICE gathering complete')
       }
+    }
+
+    connection.onicegatheringstatechange = () => {
+      console.log('P2P: ICE gathering state:', connection.iceGatheringState)
+    }
+
+    connection.oniceconnectionstatechange = () => {
+      console.log('P2P: ICE connection state:', connection.iceConnectionState)
     }
 
     connection.onconnectionstatechange = () => {

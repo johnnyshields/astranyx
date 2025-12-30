@@ -9,4 +9,4 @@ Steps:
    - (BUT do NOT go overboard here.)
 2. After adding tests -> re-run tests:
    - Client: `cd client && bun run typecheck`
-   - Server: `cd server && source ~/.asdf/asdf.sh && mix test`
+   - Server: `cd server && mix test`

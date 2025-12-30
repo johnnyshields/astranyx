@@ -12,6 +12,7 @@ defmodule AstranyxWeb.RoomChannel do
   use Phoenix.Channel
 
   alias Astranyx.Game.Lobby
+  alias Astranyx.TurnCredentials
 
   @impl true
   def join("room:" <> room_id, params, socket) do
@@ -59,12 +60,23 @@ defmodule AstranyxWeb.RoomChannel do
         # Generate deterministic seed for all players
         seed = :rand.uniform(2_147_483_647)
 
+        # Generate TURN credentials for this game session
+        # Credentials are only provided when a game actually starts
+        turn_credentials =
+          try do
+            TurnCredentials.generate(room_id)
+          rescue
+            _ -> nil
+          end
+
         # Broadcast to all players including sender
         broadcast(socket, "game_starting", %{
           room: room,
           # Assign player indices for deterministic simulation
           player_order: Enum.with_index(room.players) |> Map.new(),
-          seed: seed
+          seed: seed,
+          # TURN credentials - only available at game start
+          turn: turn_credentials
         })
 
         {:reply, :ok, socket}
@@ -93,6 +105,21 @@ defmodule AstranyxWeb.RoomChannel do
   @impl true
   def handle_in("ping", _payload, socket) do
     {:reply, {:ok, %{pong: System.system_time(:millisecond)}}, socket}
+  end
+
+  @impl true
+  def handle_in("refresh_turn_credentials", _payload, socket) do
+    room_id = socket.assigns.room_id
+
+    case TurnCredentials.generate(room_id) do
+      credentials when is_map(credentials) ->
+        {:reply, {:ok, %{turn: credentials}}, socket}
+
+      _ ->
+        {:reply, {:error, %{reason: "Failed to generate credentials"}}, socket}
+    end
+  rescue
+    _ -> {:reply, {:error, %{reason: "TURN not configured"}}, socket}
   end
 
   @impl true

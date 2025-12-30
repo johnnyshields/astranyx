@@ -74,6 +74,10 @@ export class MultiplayerManager {
   private connectedPeers: Set<string> = new Set()
   private peerConnectionTimeoutId: ReturnType<typeof setTimeout> | null = null
 
+  // Credential refresh timer (refresh before 1-hour expiry)
+  private credentialRefreshIntervalId: ReturnType<typeof setInterval> | null = null
+  private static readonly CREDENTIAL_REFRESH_INTERVAL = 45 * 60 * 1000 // 45 minutes
+
   constructor(config: MultiplayerConfig) {
     this.config = config
   }
@@ -283,6 +287,14 @@ export class MultiplayerManager {
     const localPlayerId = this.phoenix!.getPlayerId()
     this.p2p = new P2PManager(localPlayerId)
 
+    // Set TURN credentials if provided (secure, only at game start)
+    if (data.turn) {
+      console.log('Using TURN credentials from server')
+      this.p2p.setIceServers(data.turn.urls, data.turn.username, data.turn.credential)
+    } else {
+      console.warn('No TURN credentials provided - STUN only')
+    }
+
     // Set up signaling channel
     const signalingChannel = this.phoenix!.getSignalingChannel()
     if (signalingChannel) {
@@ -337,6 +349,40 @@ export class MultiplayerManager {
 
     // Check if we're the only player (single player via multiplayer)
     this.checkAllPeersConnected()
+
+    // Start credential refresh timer for long games
+    this.startCredentialRefresh()
+  }
+
+  /**
+   * Start periodic credential refresh to support games longer than 1 hour
+   * and to have fresh credentials ready for any reconnection attempts.
+   */
+  private startCredentialRefresh(): void {
+    this.stopCredentialRefresh()
+
+    this.credentialRefreshIntervalId = setInterval(async () => {
+      if (this.state !== 'playing' && this.state !== 'ready') {
+        return
+      }
+
+      try {
+        const credentials = await this.phoenix?.refreshTurnCredentials()
+        if (credentials && this.p2p) {
+          console.log('Refreshed TURN credentials')
+          this.p2p.updateIceServers(credentials.urls, credentials.username, credentials.credential)
+        }
+      } catch (error) {
+        console.warn('Failed to refresh TURN credentials:', error)
+      }
+    }, MultiplayerManager.CREDENTIAL_REFRESH_INTERVAL)
+  }
+
+  private stopCredentialRefresh(): void {
+    if (this.credentialRefreshIntervalId) {
+      clearInterval(this.credentialRefreshIntervalId)
+      this.credentialRefreshIntervalId = null
+    }
   }
 
   private checkAllPeersConnected(): void {
@@ -468,6 +514,7 @@ export class MultiplayerManager {
 
   private cleanup(): void {
     this.clearPeerConnectionTimeout()
+    this.stopCredentialRefresh()
 
     this.p2p?.disconnect()
     this.p2p = null

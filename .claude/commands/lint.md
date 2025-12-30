@@ -11,7 +11,7 @@ cd client && bun run typecheck
 
 ## Server (Elixir)
 ```bash
-cd server && source ~/.asdf/asdf.sh && mix format
+cd server && mix format
 ```
 
 Fix all issues and all warnings in the output (do not suppress them).

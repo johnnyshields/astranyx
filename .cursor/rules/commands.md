@@ -30,7 +30,6 @@ bun run typecheck     # TypeScript type check
 ### Server
 ```bash
 cd server
-source ~/.asdf/asdf.sh  # Load Elixir/Erlang
 mix deps.get            # Install dependencies
 mix phx.server          # Start Phoenix (port 4200)
 mix test                # Run tests
@@ -39,4 +38,4 @@ iex -S mix phx.server   # Interactive mode
 
 ## Shell Execution
 - WSL2/Linux environment -> Use Bash
-- Always `source ~/.asdf/asdf.sh` before Elixir commands
+- asdf shims are in PATH, so `mix`/`elixir`/`iex` work directly

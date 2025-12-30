@@ -27,10 +27,18 @@ export interface RoomData {
   status: 'waiting' | 'starting' | 'playing'
 }
 
+export interface TurnCredentials {
+  username: string
+  credential: string
+  ttl: number
+  urls: string[]
+}
+
 export interface GameStartingData {
   room: RoomData
   player_order: Record<string, number>
   seed: number
+  turn: TurnCredentials | null
 }
 
 export interface RoomState {
@@ -339,6 +347,27 @@ export class PhoenixClient {
         .receive('ok', () => resolve())
         .receive('error', (error: { reason: string }) => {
           reject(new Error(error.reason))
+        })
+    })
+  }
+
+  /**
+   * Request fresh TURN credentials (for reconnection or long games)
+   * Only available while in a room during/after game start
+   */
+  async refreshTurnCredentials(): Promise<TurnCredentials | null> {
+    if (!this.roomChannel) {
+      throw new Error('Not in a room')
+    }
+
+    return new Promise((resolve, reject) => {
+      this.roomChannel!.push('refresh_turn_credentials', {})
+        .receive('ok', (response: { turn: TurnCredentials }) => {
+          resolve(response.turn)
+        })
+        .receive('error', (error: { reason: string }) => {
+          console.warn('Failed to refresh TURN credentials:', error.reason)
+          resolve(null)
         })
     })
   }

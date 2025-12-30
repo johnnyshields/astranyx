@@ -88,7 +88,6 @@ bun run typecheck     # Type check
 ### Server
 ```bash
 cd server
-source ~/.asdf/asdf.sh
 mix deps.get          # Install dependencies
 mix phx.server        # Start server (port 4200)
 mix test              # Run tests
@@ -100,6 +99,29 @@ mix test              # Run tests
 |---------|------|
 | Vite (client) | 4100 |
 | Phoenix (server) | 4200 |
+| Coturn TURN/STUN | 3478 |
+
+## TURN Server (Coturn)
+
+WebRTC requires a TURN server for NAT traversal. Uses ephemeral credentials (HMAC-SHA1).
+
+**Docker (development):**
+```bash
+docker run -d --network=host coturn/coturn \
+  -n --log-file=stdout \
+  --realm=astranyx \
+  --use-auth-secret \
+  --static-auth-secret=dev-secret-123
+```
+
+**Environment variables (server):**
+```bash
+TURN_SECRET=dev-secret-123          # Must match Coturn static-auth-secret
+TURN_URLS=turn:localhost:3478       # Comma-separated for multiple
+```
+
+Credentials are generated server-side and provided to clients only when a game starts.
+See `/docs/deployment.md` for production setup.
 
 ## Design Influences
 
