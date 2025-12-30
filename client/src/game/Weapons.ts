@@ -390,3 +390,27 @@ export const ALL_WEAPON_TYPES: WeaponType[] = [
   'flame', 'acid',
   'sonic', 'laser_small', 'laser_large', 'lightning', 'sword',
 ]
+
+// Map weapon types to bullet visual types for rendering
+export const WEAPON_BULLET_TYPE: Record<WeaponType, string> = {
+  // BULLET weapons - cyan/blue shots
+  vulcan: 'shot',
+  shotgun: 'shot',
+  spread_small: 'spread',   // Orange/yellow spread
+  spread_large: 'spread',   // Orange/yellow spread
+  railgun: 'laser',         // Cyan laser
+  // BOMB weapons
+  missile: 'missile',
+  cannon: 'big',            // Large red projectile
+  mine: 'shot',
+  grenade: 'big',
+  // OIL weapons - red/orange
+  flame: 'flame',           // Fire projectile
+  acid: 'acid',             // Green acid
+  // ENERGY weapons
+  sonic: 'ring',            // Expanding ring
+  laser_small: 'laser',
+  laser_large: 'laser',
+  lightning: 'laser',
+  sword: 'shot',
+}

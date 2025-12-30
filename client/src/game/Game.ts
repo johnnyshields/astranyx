@@ -3,6 +3,7 @@ import type { Input } from '../core/Input.ts'
 import { Simulation, type EnemyType, type BulletType, type PowerupType, type BossType } from './Simulation.ts'
 import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
 import { WEAPON_STATS, WEAPON_COLORS, AMMO_TYPE_COLORS, type WeaponType } from './Weapons.ts'
+import { HUD, type WeaponDropLabel, type EntityHealthBar } from '../ui/HUD.ts'
 
 // Mesh file paths
 const MESH_PATHS = {
@@ -55,6 +56,8 @@ const COLORS = {
   aimed: [1.0, 0.4, 0.0, 1.0] as [number, number, number, number],      // Orange-red
   big: [1.0, 0.0, 0.0, 1.0] as [number, number, number, number],        // Red
   ring: [1.0, 0.0, 1.0, 1.0] as [number, number, number, number],       // Magenta
+  flame: [1.0, 0.3, 0.0, 1.0] as [number, number, number, number],      // Red-orange fire
+  acid: [0.3, 1.0, 0.2, 1.0] as [number, number, number, number],       // Green acid
 
   // Enemy colors
   grunt: [0.6, 0.2, 0.2, 1.0] as [number, number, number, number],
@@ -129,13 +132,6 @@ const BOSS_SIZES = [
   { w: 130, h: 120, d: 100 }, // FINAL
 ]
 
-// Get health bar color based on health ratio
-function getHealthBarColor(healthRatio: number): [number, number, number, number] {
-  if (healthRatio > 0.5) return [0, 0.8, 0.5, 1]
-  if (healthRatio > 0.25) return [1, 1, 0, 1]
-  return [1, 0.3, 0.2, 1]
-}
-
 export class Game {
   private renderer: Renderer
   private input: Input
@@ -193,9 +189,13 @@ export class Game {
   // Weapon meshes
   private weaponMeshes: Map<WeaponType, MeshHandle> = new Map()
 
+  // 2D HUD overlay
+  private hud: HUD
+
   constructor(renderer: Renderer, input: Input) {
     this.renderer = renderer
     this.input = input
+    this.hud = new HUD()
   }
 
   async init(): Promise<void> {
@@ -245,6 +245,12 @@ export class Game {
     this.titleScreen = document.getElementById('titleScreen')
     this.pauseOverlay = document.getElementById('pauseOverlay')
     this.gameOverOverlay = document.getElementById('gameOverOverlay')
+
+    // Initialize HUD canvas overlay
+    const gameContainer = document.getElementById('game-container')
+    if (gameContainer) {
+      this.hud.init(gameContainer)
+    }
 
     // Set up button handlers
     document.getElementById('btn1P')?.addEventListener('click', () => this.startLocalGame(1))
@@ -321,6 +327,7 @@ export class Game {
   resize(width: number, height: number): void {
     this.screenWidth = width
     this.screenHeight = height
+    this.hud.resize(width, height)
   }
 
   update(dt: number): void {
@@ -501,30 +508,8 @@ export class Game {
         this.renderPlayer(player)
       }
 
-      // Switch to HUD mode for flat UI elements
-      this.renderer.beginHUD()
-
-      // Enemy health bars (flat, screen-aligned) - only show if damaged
-      for (const enemy of state.enemies) {
-        if (enemy.health < enemy.maxHealth) {
-          this.renderEnemyHealthBar(enemy)
-        }
-      }
-
-      // Boss health bar (flat, screen-aligned)
-      if (state.boss) {
-        this.renderBossHealthBar(state.boss)
-      }
-
-      // Weapon drop labels (floating names)
-      for (const drop of state.weaponDrops) {
-        this.renderWeaponDropLabel(drop)
-      }
-
-      // Draw main HUD
-      this.renderHUD(state)
-
-      this.renderer.endHUD()
+      // Render 2D Canvas HUD overlay (includes health bars)
+      this.renderCanvasHUD(state)
     }
 
     // Draw pause overlay
@@ -723,25 +708,6 @@ export class Game {
     }
   }
 
-  private renderEnemyHealthBar(enemy: ReturnType<Simulation['getState']>['enemies'][0]): void {
-    // Get enemy scale from config
-    const config = ENEMY_RENDER_CONFIG[enemy.type] ?? { scale: 40, depth: 0.6 }
-    const { scale, depth } = config
-
-    // Project world position to screen
-    const worldX = enemy.x + this.shakeOffset.x
-    const worldY = enemy.y + this.shakeOffset.y - scale * depth / 2 - 12
-    const screen = this.renderer.worldToScreen(worldX, worldY, 0)
-
-    // Health bar (flat, fixed size regardless of perspective)
-    const healthRatio = enemy.health / enemy.maxHealth
-    const barWidth = 40
-    const barHeight = 4
-
-    this.renderer.drawQuad(screen.x, screen.y, 0, barWidth + 2, barHeight + 2, [0.2, 0.2, 0.2, 0.8])
-    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, getHealthBarColor(healthRatio))
-  }
-
   private renderBoss(boss: ReturnType<Simulation['getState']>['boss']): void {
     if (!boss) return
 
@@ -891,25 +857,6 @@ export class Game {
     }
   }
 
-  private renderBossHealthBar(boss: ReturnType<Simulation['getState']>['boss']): void {
-    if (!boss) return
-
-    const size = BOSS_SIZES[boss.type] ?? BOSS_SIZES[0]!
-
-    // Project world position to screen
-    const worldX = boss.x + this.shakeOffset.x
-    const worldY = boss.y + this.shakeOffset.y - size.h / 2 - 20
-    const screen = this.renderer.worldToScreen(worldX, worldY, 0)
-
-    // Health bar (flat, fixed size)
-    const healthRatio = boss.health / boss.maxHealth
-    const barWidth = 100
-    const barHeight = 10
-
-    this.renderer.drawQuad(screen.x, screen.y, 0, barWidth + 4, barHeight + 4, [0.2, 0.2, 0.2, 0.8])
-    this.renderer.drawQuad(screen.x - (1 - healthRatio) * barWidth / 2, screen.y, 0, barWidth * healthRatio, barHeight, getHealthBarColor(healthRatio))
-  }
-
   private renderBullet(bullet: ReturnType<Simulation['getState']>['bullets'][0]): void {
     const x = bullet.x + this.shakeOffset.x
     const y = bullet.y + this.shakeOffset.y
@@ -958,13 +905,15 @@ export class Game {
   private renderBeam(beam: ReturnType<Simulation['getState']>['beams'][0]): void {
     const x = beam.x + this.shakeOffset.x
     const y = beam.y + this.shakeOffset.y
-    const beamHeight = 8 + beam.power * 4
+    // beam.width is thickness (8 or 20), beam extends to right edge
+    const beamLength = 500 - beam.x + 50 // Extend past screen edge
+    const beamThickness = beam.width
 
     // Beam glow
-    this.renderer.drawQuad(x + beam.width/2, y, -1, beam.width, beamHeight + 20, [0, 1, 1, 0.2])
+    this.renderer.drawQuad(x + beamLength/2, y, -1, beamLength, beamThickness + 12, [0, 1, 1, 0.2])
     // Beam core
-    this.renderer.drawQuad(x + beam.width/2, y, 0, beam.width, beamHeight, [0, 1, 1, 0.8])
-    this.renderer.drawQuad(x + beam.width/2, y, 1, beam.width, beamHeight/2, [1, 1, 1, 0.9])
+    this.renderer.drawQuad(x + beamLength/2, y, 0, beamLength, beamThickness, [0, 1, 1, 0.8])
+    this.renderer.drawQuad(x + beamLength/2, y, 1, beamLength, beamThickness/2, [1, 1, 1, 0.9])
   }
 
   private renderMissile(missile: ReturnType<Simulation['getState']>['missiles'][0]): void {
@@ -1043,141 +992,71 @@ export class Game {
     }
   }
 
-  private renderWeaponDropLabel(drop: ReturnType<Simulation['getState']>['weaponDrops'][0]): void {
-    // Project world position to screen for floating label
-    const worldX = drop.x + this.shakeOffset.x
-    const worldY = drop.y + this.shakeOffset.y + 35  // Above the drop
-    const screen = this.renderer.worldToScreen(worldX, worldY, 0)
-
-    const stats = WEAPON_STATS[drop.weaponType]
-    const ammoColor = AMMO_TYPE_COLORS[stats.ammoType]
-
-    // Label background
-    const labelWidth = stats.name.length * 6 + 8
-    this.renderer.drawQuad(screen.x, screen.y, 0, labelWidth, 14, [0.1, 0.1, 0.15, 0.85])
-
-    // Label color bar (shows ammo type)
-    this.renderer.drawQuad(screen.x, screen.y, 1, labelWidth - 2, 2, ammoColor)
-  }
-
   // ==========================================================================
-  // HUD Rendering
+  // Canvas HUD Rendering
   // ==========================================================================
 
-  private renderHUD(state: ReturnType<Simulation['getState']>): void {
+  private renderCanvasHUD(state: ReturnType<Simulation['getState']>): void {
+    // Clear previous frame
+    this.hud.clear()
+
     const localPlayer = state.players.find(p => p.playerId === this.localPlayerId)
     if (!localPlayer) return
 
-    // Shield bar background
-    this.renderer.drawQuad(-400, 250, 50, 154, 18, [0.1, 0.1, 0.15, 0.9])
-    // Shield bar border
-    this.renderer.drawQuad(-400, 250, 51, 152, 16, [0, 0.5, 0.5, 0.8])
-    // Shield bar fill
-    const shieldRatio = localPlayer.shields / localPlayer.maxShields
-    const shieldColor: [number, number, number, number] = shieldRatio > 0.25
-      ? [0, 1, 0.5, 1]
-      : [1, 0.3, 0.2, 1]
-    this.renderer.drawQuad(-400 - (1 - shieldRatio) * 75, 250, 52, 150 * shieldRatio, 12, shieldColor)
+    // Render player HUD (shields, lives, level, powerups, weapons)
+    this.hud.renderPlayerHUD({
+      shields: localPlayer.shields,
+      maxShields: localPlayer.maxShields,
+      lives: localPlayer.lives,
+      shipLevel: localPlayer.shipLevel,
+      powerups: localPlayer.powerups,
+      weaponSlots: localPlayer.weaponSlots,
+      activeWeaponIndex: localPlayer.activeWeaponIndex,
+      maxWeaponSlots: localPlayer.maxWeaponSlots,
+    })
 
-    // Lives display
-    for (let i = 0; i < localPlayer.lives; i++) {
-      this.renderer.drawQuad(-420 + i * 20, 225, 50, 12, 12, [1, 0.3, 0.3, 1])
-    }
+    // Render game state (score, multiplier, wave, boss)
+    this.hud.renderGameState({
+      score: state.score,
+      multiplier: state.multiplier,
+      wave: state.wave,
+      enemyCount: state.enemies.length,
+      bossActive: state.bossActive,
+      bossHealth: state.boss?.health,
+      bossMaxHealth: state.boss?.maxHealth,
+    })
 
-    // Ship level indicator
-    for (let i = 0; i < localPlayer.shipLevel; i++) {
-      this.renderer.drawQuad(-420 + i * 15, 200, 50, 10, 10, [1, 1, 0, 1])
-    }
-
-    // Powerup indicators
-    let powerupX = -420
-    const powerups = localPlayer.powerups
-    const powerupColors: Array<[string, [number, number, number, number]]> = [
-      ['spread', COLORS.SPREAD],
-      ['laser', COLORS.LASER],
-      ['missile', COLORS.MISSILE],
-      ['rapid', COLORS.RAPID],
-      ['pierce', COLORS.PIERCE],
-      ['speed', COLORS.SPEED],
-    ]
-
-    for (const [key, color] of powerupColors) {
-      const count = powerups[key as keyof typeof powerups]
-      for (let i = 0; i < count; i++) {
-        this.renderer.drawQuad(powerupX, 175, 50, 12, 12, color)
-        powerupX += 14
+    // Render weapon drop labels
+    const dropLabels: WeaponDropLabel[] = state.weaponDrops.map(drop => {
+      const worldX = drop.x + this.shakeOffset.x
+      const worldY = drop.y + this.shakeOffset.y + 35
+      const screen = this.renderer.worldToScreen(worldX, worldY, 0)
+      return {
+        screenX: screen.x,
+        screenY: screen.y,
+        weaponType: drop.weaponType,
       }
-    }
+    })
+    this.hud.renderWeaponDropLabels(dropLabels)
 
-    // Weapon slots HUD (below shield bar, left side)
-    if (localPlayer.weaponSlots) {
-      const slotStartX = -420
-      const slotY = 145
-      const slotWidth = 60
-      const slotHeight = 28
-      const slotGap = 8
-
-      for (let i = 0; i < localPlayer.maxWeaponSlots; i++) {
-        const slotX = slotStartX + i * (slotWidth + slotGap)
-        const weapon = localPlayer.weaponSlots[i]
-        const isActive = i === localPlayer.activeWeaponIndex
-
-        // Slot background
-        this.renderer.drawQuad(slotX, slotY, 50, slotWidth + 2, slotHeight + 2, [0.1, 0.1, 0.15, 0.9])
-
-        // Active indicator (white bar on top)
-        if (isActive) {
-          this.renderer.drawQuad(slotX, slotY + slotHeight / 2 + 2, 51, slotWidth, 3, [1, 1, 1, 0.9])
+    // Render enemy health bars (only for damaged enemies)
+    const healthBars: EntityHealthBar[] = state.enemies
+      .filter(enemy => enemy.health < enemy.maxHealth)
+      .map(enemy => {
+        const config = ENEMY_RENDER_CONFIG[enemy.type] ?? { scale: 40, depth: 0.6 }
+        const worldX = enemy.x + this.shakeOffset.x
+        // Y+ is up in world space, so add positive offset to place bar above enemy
+        const worldY = enemy.y + this.shakeOffset.y + config.scale * config.depth / 2 + 15
+        const screen = this.renderer.worldToScreen(worldX, worldY, 0)
+        return {
+          screenX: screen.x,
+          screenY: screen.y,
+          health: enemy.health,
+          maxHealth: enemy.maxHealth,
+          width: config.scale,
         }
-
-        if (weapon) {
-          const stats = WEAPON_STATS[weapon.type]
-          const ammoColor = AMMO_TYPE_COLORS[stats.ammoType]
-          const weaponColor = WEAPON_COLORS[weapon.type]
-
-          // Weapon icon area (colored by weapon)
-          this.renderer.drawQuad(slotX, slotY + 5, 51, slotWidth - 4, slotHeight - 14, weaponColor)
-
-          // Ammo bar background
-          this.renderer.drawQuad(slotX, slotY - slotHeight / 2 + 5, 51, slotWidth - 4, 6, [0.2, 0.2, 0.25, 0.9])
-
-          // Ammo bar fill
-          const ammoRatio = weapon.ammo / weapon.maxAmmo
-          const ammoBarWidth = (slotWidth - 4) * ammoRatio
-          this.renderer.drawQuad(
-            slotX - ((slotWidth - 4) - ammoBarWidth) / 2,
-            slotY - slotHeight / 2 + 5,
-            52,
-            ammoBarWidth,
-            4,
-            ammoColor
-          )
-        } else {
-          // Empty slot
-          this.renderer.drawQuad(slotX, slotY, 51, slotWidth - 4, slotHeight - 4, [0.15, 0.15, 0.2, 0.5])
-        }
-      }
-    }
-
-    // Score display (top right)
-    // Using quads to approximate score display position
-    this.renderer.drawQuad(380, 250, 50, 100, 30, [0.1, 0.1, 0.15, 0.9])
-
-    // Multiplier indicator
-    const multiplierWidth = Math.min(100, state.multiplier * 12.5)
-    this.renderer.drawQuad(380 - (100 - multiplierWidth)/2, 225, 50, multiplierWidth, 8, [1, 0, 1, 0.8])
-
-    // Wave indicator
-    this.renderer.drawQuad(380, 200, 50, 50, 20, [0.1, 0.1, 0.15, 0.9])
-    // Wave progress bar
-    const waveProgress = Math.min(1, state.enemies.length / 10)
-    this.renderer.drawQuad(380 - (50 - 50 * waveProgress)/2, 200, 51, 50 * waveProgress, 16, [0, 0.5, 1, 0.6])
-
-    // Boss warning
-    if (state.bossActive && state.boss) {
-      const pulse = Math.sin(Date.now() / 200) * 0.3 + 0.7
-      this.renderer.drawQuad(0, 200, 60, 200, 40, [1, 0, 0, pulse * 0.3])
-    }
+      })
+    this.hud.renderEntityHealthBars(healthBars)
   }
 
   // ==========================================================================
