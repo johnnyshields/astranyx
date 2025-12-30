@@ -407,3 +407,404 @@ describe('inputsEqual', () => {
     expect(inputsEqual(input1, input2)).toBe(true)
   })
 })
+
+describe('GameEvent handling', () => {
+  let lockstep: LockstepNetcode
+  let channel: RTCDataChannel
+
+  function createGameEvent(type: string, playerId: string): import('./LockstepNetcode').GameEvent {
+    switch (type) {
+      case 'damage':
+        return { type: 'damage', playerId, amount: 25, newShields: 75, newLives: 3 }
+      case 'death':
+        return { type: 'death', playerId }
+      case 'respawn':
+        return { type: 'respawn', playerId }
+      case 'pickup':
+        return { type: 'pickup', playerId, pickupId: 123 }
+      case 'weapon_pickup':
+        return { type: 'weapon_pickup', playerId, dropId: 456 }
+      default:
+        throw new Error(`Unknown event type: ${type}`)
+    }
+  }
+
+  beforeEach(() => {
+    const config = createConfig()
+    lockstep = new LockstepNetcode(config)
+    lockstep.start()
+    channel = createMockDataChannel()
+    lockstep.addPeer('player2', channel)
+  })
+
+  describe('sending events', () => {
+    it('should include events in broadcast message', () => {
+      const events = [createGameEvent('damage', 'player1')]
+      lockstep.tick(createInput(), events)
+
+      expect(channel.send).toHaveBeenCalled()
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      expect(sentData.events).toBeDefined()
+      expect(sentData.events).toHaveLength(1)
+      expect(sentData.events[0].type).toBe('damage')
+      expect(sentData.events[0].playerId).toBe('player1')
+    })
+
+    it('should not include events field when no events', () => {
+      lockstep.tick(createInput())
+
+      expect(channel.send).toHaveBeenCalled()
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      expect(sentData.events).toBeUndefined()
+    })
+
+    it('should not include events field when empty array', () => {
+      lockstep.tick(createInput(), [])
+
+      expect(channel.send).toHaveBeenCalled()
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      expect(sentData.events).toBeUndefined()
+    })
+
+    it('should include multiple events in single message', () => {
+      const events = [
+        createGameEvent('damage', 'player1'),
+        createGameEvent('pickup', 'player1'),
+      ]
+      lockstep.tick(createInput(), events)
+
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      expect(sentData.events).toHaveLength(2)
+      expect(sentData.events[0].type).toBe('damage')
+      expect(sentData.events[1].type).toBe('pickup')
+    })
+
+    it('should include all event types correctly', () => {
+      const eventTypes = ['damage', 'death', 'respawn', 'pickup', 'weapon_pickup']
+
+      for (const type of eventTypes) {
+        const newLockstep = new LockstepNetcode(createConfig())
+        newLockstep.start()
+        const newChannel = createMockDataChannel()
+        newLockstep.addPeer('player2', newChannel)
+
+        const events = [createGameEvent(type, 'player1')]
+        newLockstep.tick(createInput(), events)
+
+        const sentData = JSON.parse((newChannel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+        expect(sentData.events[0].type).toBe(type)
+      }
+    })
+  })
+
+  describe('receiving events', () => {
+    it('should pass received events to input handler', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      // Simulate receiving input with events from player2
+      const remoteEvents = [createGameEvent('damage', 'player2')]
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+          events: remoteEvents,
+        })
+      } as MessageEvent)
+
+      // Also send our own input for frame 0 (to complete the frame)
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      // Trigger processing
+      lockstep.tick(createInput())
+
+      expect(inputHandler).toHaveBeenCalled()
+      const [, events] = inputHandler.mock.calls[0]!
+      expect(events).toHaveLength(1)
+      expect(events[0].type).toBe('damage')
+      expect(events[0].playerId).toBe('player2')
+    })
+
+    it('should collect events from multiple players', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      // Player 1 events
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+          events: [createGameEvent('pickup', 'player1')],
+        })
+      } as MessageEvent)
+
+      // Player 2 events
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+          events: [createGameEvent('damage', 'player2')],
+        })
+      } as MessageEvent)
+
+      // Trigger processing
+      lockstep.tick(createInput())
+
+      expect(inputHandler).toHaveBeenCalled()
+      const [, events] = inputHandler.mock.calls[0]!
+      expect(events).toHaveLength(2)
+
+      // Events should be in player order (player1 first, then player2)
+      expect(events[0].playerId).toBe('player1')
+      expect(events[1].playerId).toBe('player2')
+    })
+
+    it('should handle inputs without events', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      // No events from either player
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      lockstep.tick(createInput())
+
+      expect(inputHandler).toHaveBeenCalled()
+      const [, events] = inputHandler.mock.calls[0]!
+      expect(events).toEqual([])
+    })
+
+    it('should preserve event order within a player', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      // Multiple events from same player
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+          events: [
+            createGameEvent('damage', 'player1'),
+            createGameEvent('death', 'player1'),
+            createGameEvent('respawn', 'player1'),
+          ],
+        })
+      } as MessageEvent)
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      lockstep.tick(createInput())
+
+      const [, events] = inputHandler.mock.calls[0]!
+      expect(events).toHaveLength(3)
+      expect(events[0].type).toBe('damage')
+      expect(events[1].type).toBe('death')
+      expect(events[2].type).toBe('respawn')
+    })
+  })
+
+  describe('event data integrity', () => {
+    it('should preserve damage event fields', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      const damageEvent = {
+        type: 'damage' as const,
+        playerId: 'player2',
+        amount: 50,
+        newShields: 25,
+        newLives: 2,
+      }
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+          events: [damageEvent],
+        })
+      } as MessageEvent)
+
+      lockstep.tick(createInput())
+
+      const [, events] = inputHandler.mock.calls[0]!
+      const received = events[0]
+      expect(received.type).toBe('damage')
+      if (received.type === 'damage') {
+        expect(received.amount).toBe(50)
+        expect(received.newShields).toBe(25)
+        expect(received.newLives).toBe(2)
+      }
+    })
+
+    it('should preserve pickup event fields', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      const pickupEvent = {
+        type: 'pickup' as const,
+        playerId: 'player2',
+        pickupId: 999,
+      }
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+          events: [pickupEvent],
+        })
+      } as MessageEvent)
+
+      lockstep.tick(createInput())
+
+      const [, events] = inputHandler.mock.calls[0]!
+      const received = events[0]
+      expect(received.type).toBe('pickup')
+      if (received.type === 'pickup') {
+        expect(received.pickupId).toBe(999)
+      }
+    })
+
+    it('should preserve weapon_pickup event fields', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      const weaponPickupEvent = {
+        type: 'weapon_pickup' as const,
+        playerId: 'player2',
+        dropId: 777,
+      }
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+          events: [weaponPickupEvent],
+        })
+      } as MessageEvent)
+
+      lockstep.tick(createInput())
+
+      const [, events] = inputHandler.mock.calls[0]!
+      const received = events[0]
+      expect(received.type).toBe('weapon_pickup')
+      if (received.type === 'weapon_pickup') {
+        expect(received.dropId).toBe(777)
+      }
+    })
+  })
+
+  describe('edge cases', () => {
+    it('should handle events with checksum', () => {
+      const events = [createGameEvent('damage', 'player1')]
+      lockstep.tick(createInput(), events, 12345)
+
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      expect(sentData.events).toHaveLength(1)
+      expect(sentData.checksum).toBe(12345)
+    })
+
+    it('should handle undefined events parameter', () => {
+      lockstep.tick(createInput(), undefined, 12345)
+
+      const sentData = JSON.parse((channel.send as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      expect(sentData.events).toBeUndefined()
+    })
+
+    it('should not include events for already processed frames', () => {
+      const inputHandler = vi.fn()
+      lockstep.setInputHandler(inputHandler)
+
+      // Setup frame 0 inputs
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player1',
+          input: createInput(),
+          events: [createGameEvent('pickup', 'player1')],
+        })
+      } as MessageEvent)
+
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+        })
+      } as MessageEvent)
+
+      // Process frame 0
+      lockstep.tick(createInput())
+      expect(lockstep.getConfirmedFrame()).toBe(0)
+
+      // Try to send old event for frame 0 again
+      inputHandler.mockClear()
+      channel.onmessage?.({
+        data: JSON.stringify({
+          frame: 0,
+          playerId: 'player2',
+          input: createInput(),
+          events: [createGameEvent('damage', 'player2')],
+        })
+      } as MessageEvent)
+
+      // Old events should be ignored
+      expect(inputHandler).not.toHaveBeenCalled()
+    })
+  })
+})

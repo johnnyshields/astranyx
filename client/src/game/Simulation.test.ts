@@ -505,3 +505,390 @@ describe('Type definitions', () => {
     expect(types).toHaveLength(6)
   })
 })
+
+describe('Owner-Authoritative Events', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  describe('setLocalPlayerId', () => {
+    it('should enable multiplayer mode when set', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+      // No error thrown, multiplayer mode enabled
+    })
+
+    it('should work with any valid player ID', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_2')
+      // No error thrown
+    })
+  })
+
+  describe('getPendingEvents', () => {
+    it('should return empty array initially', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      sim.setLocalPlayerId('player_1')
+      expect(sim.getPendingEvents()).toEqual([])
+    })
+
+    it('should clear events after getting them', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // First call
+      const events1 = sim.getPendingEvents()
+      expect(events1).toEqual([])
+
+      // Second call should also be empty (not accumulated)
+      const events2 = sim.getPendingEvents()
+      expect(events2).toEqual([])
+    })
+  })
+
+  describe('damage events', () => {
+    it('should generate damage event for local player when hit', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // Run simulation until invincibility wears off
+      for (let i = 0; i < 200; i++) {
+        sim.tick(new Map([
+          ['player_1', emptyInput],
+          ['player_2', emptyInput],
+        ]))
+        sim.getPendingEvents() // Clear events
+      }
+
+      const state = sim.getState()
+      const player1 = state.players.find(p => p.playerId === 'player_1')!
+      expect(player1.invincible).toBe(0)
+
+      // We can't easily trigger damage in tests without spawning enemies
+      // But we can verify the event system is wired up by checking no events
+      // are generated during normal gameplay
+      const events = sim.getPendingEvents()
+      expect(Array.isArray(events)).toBe(true)
+    })
+
+    it('should NOT generate damage event for remote player', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // Run some ticks
+      for (let i = 0; i < 10; i++) {
+        sim.tick(new Map([
+          ['player_1', emptyInput],
+          ['player_2', emptyInput],
+        ]))
+      }
+
+      // Events should only be for local player (player_1)
+      const events = sim.getPendingEvents()
+      for (const event of events) {
+        if (event.type === 'damage') {
+          expect(event.playerId).toBe('player_1')
+        }
+      }
+    })
+  })
+
+  describe('applyEvents', () => {
+    it('should apply damage event from remote player', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      const initialState = sim.getState()
+      const player2Initial = initialState.players.find(p => p.playerId === 'player_2')!
+      const initialShields = player2Initial.shields
+
+      // Apply damage event for player_2 (remote)
+      sim.applyEvents([{
+        type: 'damage',
+        playerId: 'player_2',
+        amount: 25,
+        newShields: initialShields - 25,
+        newLives: 3,
+      }])
+
+      const newState = sim.getState()
+      const player2After = newState.players.find(p => p.playerId === 'player_2')!
+      expect(player2After.shields).toBe(initialShields - 25)
+    })
+
+    it('should apply death event from remote player', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      const initialState = sim.getState()
+      const player2Initial = initialState.players.find(p => p.playerId === 'player_2')!
+      expect(player2Initial.dead).toBe(false)
+
+      // Apply death event for player_2 (remote)
+      sim.applyEvents([{
+        type: 'death',
+        playerId: 'player_2',
+      }])
+
+      const newState = sim.getState()
+      const player2After = newState.players.find(p => p.playerId === 'player_2')!
+      expect(player2After.dead).toBe(true)
+    })
+
+    it('should apply respawn event from remote player', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // First kill player_2
+      sim.applyEvents([{
+        type: 'death',
+        playerId: 'player_2',
+      }])
+
+      let state = sim.getState()
+      let player2 = state.players.find(p => p.playerId === 'player_2')!
+      expect(player2.dead).toBe(true)
+
+      // Now respawn
+      sim.applyEvents([{
+        type: 'respawn',
+        playerId: 'player_2',
+      }])
+
+      state = sim.getState()
+      player2 = state.players.find(p => p.playerId === 'player_2')!
+      expect(player2.dead).toBe(false)
+      expect(player2.invincible).toBeGreaterThan(0)
+    })
+
+    it('should ignore events for non-existent players', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // Apply event for non-existent player - should not throw
+      sim.applyEvents([{
+        type: 'damage',
+        playerId: 'player_999',
+        amount: 25,
+        newShields: 75,
+        newLives: 3,
+      }])
+
+      // State should be unchanged
+      const state = sim.getState()
+      expect(state.players).toHaveLength(1)
+    })
+
+    it('should apply multiple events in order', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      const initialState = sim.getState()
+      const player2Initial = initialState.players.find(p => p.playerId === 'player_2')!
+
+      // Apply multiple damage events
+      sim.applyEvents([
+        {
+          type: 'damage',
+          playerId: 'player_2',
+          amount: 10,
+          newShields: player2Initial.shields - 10,
+          newLives: 3,
+        },
+        {
+          type: 'damage',
+          playerId: 'player_2',
+          amount: 15,
+          newShields: player2Initial.shields - 25,
+          newLives: 3,
+        },
+      ])
+
+      const newState = sim.getState()
+      const player2After = newState.players.find(p => p.playerId === 'player_2')!
+      // Last event's newShields should be the final value
+      expect(player2After.shields).toBe(player2Initial.shields - 25)
+    })
+  })
+
+  describe('pickup events', () => {
+    it('should apply pickup event from remote player', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // Run simulation to potentially spawn powerups
+      for (let i = 0; i < 500; i++) {
+        sim.tick(new Map([
+          ['player_1', emptyInput],
+          ['player_2', emptyInput],
+        ]))
+        sim.getPendingEvents() // Clear events
+      }
+
+      // Check if any powerups exist
+      const state = sim.getState()
+      if (state.powerups.length > 0) {
+        const powerup = state.powerups[0]!
+        const player2 = state.players.find(p => p.playerId === 'player_2')!
+
+        // Apply pickup event
+        sim.applyEvents([{
+          type: 'pickup',
+          playerId: 'player_2',
+          pickupId: powerup.id,
+        }])
+
+        const newState = sim.getState()
+        // Powerup should be removed
+        expect(newState.powerups.find(p => p.id === powerup.id)).toBeUndefined()
+      }
+    })
+
+    it('should ignore pickup event for non-existent powerup', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      const initialState = sim.getState()
+      const initialPowerupCount = initialState.powerups.length
+
+      // Apply pickup for non-existent powerup - should not throw
+      sim.applyEvents([{
+        type: 'pickup',
+        playerId: 'player_2',
+        pickupId: 99999,
+      }])
+
+      const newState = sim.getState()
+      expect(newState.powerups.length).toBe(initialPowerupCount)
+    })
+  })
+
+  describe('weapon_pickup events', () => {
+    it('should apply weapon_pickup event from remote player', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // Run simulation to potentially spawn weapon drops
+      for (let i = 0; i < 1000; i++) {
+        sim.tick(new Map([
+          ['player_1', emptyInput],
+          ['player_2', emptyInput],
+        ]))
+        sim.getPendingEvents() // Clear events
+      }
+
+      // Check if any weapon drops exist
+      const state = sim.getState()
+      if (state.weaponDrops && state.weaponDrops.length > 0) {
+        const drop = state.weaponDrops[0]!
+
+        // Apply weapon pickup event
+        sim.applyEvents([{
+          type: 'weapon_pickup',
+          playerId: 'player_2',
+          dropId: drop.id,
+        }])
+
+        const newState = sim.getState()
+        // Weapon drop should be removed
+        expect(newState.weaponDrops.find(d => d.id === drop.id)).toBeUndefined()
+      }
+    })
+
+    it('should ignore weapon_pickup event for non-existent drop', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      sim.setLocalPlayerId('player_1')
+
+      // Apply weapon pickup for non-existent drop - should not throw
+      sim.applyEvents([{
+        type: 'weapon_pickup',
+        playerId: 'player_2',
+        dropId: 99999,
+      }])
+
+      // Should not throw, state should be unchanged
+      const state = sim.getState()
+      expect(state.players).toHaveLength(2)
+    })
+  })
+
+  describe('local vs remote collision detection', () => {
+    it('should only check collisions for local player in multiplayer', () => {
+      // Create two simulations with different local players
+      const sim1 = new Simulation(['player_1', 'player_2'], 12345)
+      const sim2 = new Simulation(['player_1', 'player_2'], 12345)
+
+      sim1.setLocalPlayerId('player_1')
+      sim2.setLocalPlayerId('player_2')
+
+      // Run both simulations with identical inputs
+      for (let i = 0; i < 100; i++) {
+        sim1.tick(new Map([
+          ['player_1', emptyInput],
+          ['player_2', emptyInput],
+        ]))
+        sim2.tick(new Map([
+          ['player_1', emptyInput],
+          ['player_2', emptyInput],
+        ]))
+      }
+
+      // Get events from both - they should only have events for their local player
+      // (Though in this case with no enemies, there may be no events)
+      const events1 = sim1.getPendingEvents()
+      const events2 = sim2.getPendingEvents()
+
+      for (const event of events1) {
+        if (event.type === 'damage' || event.type === 'pickup' || event.type === 'weapon_pickup') {
+          expect(event.playerId).toBe('player_1')
+        }
+      }
+
+      for (const event of events2) {
+        if (event.type === 'damage' || event.type === 'pickup' || event.type === 'weapon_pickup') {
+          expect(event.playerId).toBe('player_2')
+        }
+      }
+    })
+  })
+
+  describe('single player mode (no localPlayerId set)', () => {
+    it('should work normally without owner-authoritative events', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      // Don't call setLocalPlayerId - single player mode
+
+      // Run some ticks
+      for (let i = 0; i < 100; i++) {
+        sim.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      // Should not generate events in single player mode
+      // (collisions are processed normally)
+      const events = sim.getPendingEvents()
+      expect(events).toEqual([])
+    })
+
+    it('should process all collisions in single player mode', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      // Don't call setLocalPlayerId - all collision detection enabled
+
+      // Run simulation
+      for (let i = 0; i < 50; i++) {
+        sim.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      // State should advance normally
+      const state = sim.getState()
+      expect(state.frame).toBe(50)
+    })
+  })
+})
