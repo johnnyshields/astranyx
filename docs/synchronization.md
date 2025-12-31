@@ -32,9 +32,9 @@ The lockstep netcode is formally verified using TLA+ model checking. The model i
 | `AdvanceFrame(p)` | `tryAdvanceFrame()` | `LockstepNetcode.ts` |
 | `BroadcastHeartbeat(leader)` | `broadcastHeartbeat()` | `LeaderElection.ts` |
 | `StartElection(p)` | `startElection()` | `LeaderElection.ts` |
-| `Vote(voter, candidate)` | `handleRequestVote()` | `LeaderElection.ts` |
+| `Vote(voter, candidate)` | `handleVoteRequest()` | `LeaderElection.ts` |
 | `BecomeLeader(p)` | `becomeLeader()` | `LeaderElection.ts` |
-| `Stepdown(p)` | `stepDown()` | `LeaderElection.ts` |
+| `StepDown(p)` | `stepDown()` | `LeaderElection.ts` |
 
 ### Running the Model Checker
 
