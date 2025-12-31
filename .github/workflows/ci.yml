@@ -170,30 +170,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Cache TLC tools
-        uses: actions/cache@v4
-        with:
-          path: ~/tla2tools.jar
-          key: tlc-1.8.0
-
-      - name: Download TLC
-        run: |
-          if [[ ! -f ~/tla2tools.jar ]]; then
-            curl -L -o ~/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
-          fi
-
-      - name: Cache TLC results
-        uses: actions/cache@v4
-        with:
-          path: tla/.tlc_passed
-          key: tlc_passed-${{ hashFiles('tla/LockstepNetcode.tla', 'tla/MCLockstepNetcode.cfg') }}
-
-      - name: Run TLC model checker
+      - name: Verify TLA+ model hashes
         working-directory: tla
-        run: ./run_tlc.sh
+        run: ./run_tlc.sh --ci

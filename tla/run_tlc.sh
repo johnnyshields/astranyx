@@ -2,25 +2,24 @@
 # Run TLC model checker on lockstep specifications
 #
 # Models:
-#   LeaderElection  - Raft election, term safety, majority voting (~21K states)
+#   LeaderElection  - Raft election, term safety, majority voting (~114M states)
 #   LockstepSimple  - Frame sync, basic events, leader authority (~1M states)
 #   LockstepState   - Event ownership, syncTerm validation, desync recovery (~50M states)
 #   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
 #
 # Usage:
 #   ./run_tlc.sh                              # Run all models (default)
-#   ./run_tlc.sh -f LeaderElection            # Run single model
-#   ./run_tlc.sh -f LeaderElection,LockstepSimple  # Run specific models
+#   ./run_tlc.sh -m LeaderElection            # Run single model
+#   ./run_tlc.sh -m LeaderElection,LockstepSimple  # Run specific models
 #   ./run_tlc.sh --force                      # Force re-run ignoring cache
 #   ./run_tlc.sh --max                        # Use maximum resources (48GB heap, 28 workers)
-#
-# Environment:
-#   TLC_JAR - Path to tla2tools.jar (default: ~/tla2tools.jar)
+#   ./run_tlc.sh --ci                         # CI mode: fail if any hashes missing (no TLC run)
+#   ./run_tlc.sh -d, --download-jar           # Auto-download TLC jar to tla/tmp if missing
+#   ./run_tlc.sh --jar ~/tla2tools.jar        # Specify path to tla2tools.jar
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TLC_JAR="${TLC_JAR:-$HOME/tla2tools.jar}"
 PASSED_FILE="$SCRIPT_DIR/.tlc_passed"
 TMP_DIR="$SCRIPT_DIR/tmp"
 
@@ -32,19 +31,32 @@ ALL_MODELS="LeaderElection,LockstepSimple,LockstepState,LockstepNetwork"
 # Parse arguments
 FORCE=false
 MAX_RESOURCES=false
-FILE_LIST=""
+CI_MODE=false
+DOWNLOAD_JAR=false
+TLC_JAR=""
+MODEL_LIST=""
 ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force) FORCE=true; shift ;;
         --max) MAX_RESOURCES=true; shift ;;
-        -f|--file)
-            FILE_LIST="$2"
+        --ci) CI_MODE=true; shift ;;
+        -d|--download-jar) DOWNLOAD_JAR=true; shift ;;
+        --jar)
+            TLC_JAR="$2"
             shift 2
             ;;
-        -f=*|--file=*)
-            FILE_LIST="${1#*=}"
+        --jar=*)
+            TLC_JAR="${1#*=}"
+            shift
+            ;;
+        -m|--model)
+            MODEL_LIST="$2"
+            shift 2
+            ;;
+        -m=*|--model=*)
+            MODEL_LIST="${1#*=}"
             shift
             ;;
         *) ARGS+=("$1"); shift ;;
@@ -52,14 +64,77 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default to all models if none specified
-if [[ -z "$FILE_LIST" ]]; then
-    FILE_LIST="$ALL_MODELS"
+if [[ -z "$MODEL_LIST" ]]; then
+    MODEL_LIST="$ALL_MODELS"
 fi
 
-if [[ ! -f "$TLC_JAR" ]]; then
-    echo "Error: TLA+ tools not found at $TLC_JAR"
-    echo "Download from: https://github.com/tlaplus/tlaplus/releases"
-    echo "Set TLC_JAR environment variable to the path of tla2tools.jar"
+# CI mode: check hashes only, don't run TLC
+if [[ "$CI_MODE" == "true" ]]; then
+    MISSING=()
+    IFS=',' read -ra MODELS <<< "$MODEL_LIST"
+    for model in "${MODELS[@]}"; do
+        model=$(echo "$model" | xargs)
+        SPEC_FILE="$SCRIPT_DIR/${model}.tla"
+        CONFIG_FILE="$SCRIPT_DIR/MC${model}.cfg"
+
+        if [[ ! -f "$SPEC_FILE" ]]; then
+            echo "Error: $SPEC_FILE not found"
+            exit 1
+        fi
+
+        HASH=$(cat "$SPEC_FILE" "$CONFIG_FILE" | sha256sum | cut -d' ' -f1)
+
+        if [[ ! -f "$PASSED_FILE" ]] || ! grep -q "$HASH" "$PASSED_FILE"; then
+            MISSING+=("$model")
+            echo "[$model] MISSING - hash not found: ${HASH:0:16}..."
+        else
+            echo "[$model] OK - hash found: ${HASH:0:16}..."
+        fi
+    done
+
+    if [[ ${#MISSING[@]} -gt 0 ]]; then
+        echo ""
+        echo "ERROR: ${#MISSING[@]} model(s) have not been verified: ${MISSING[*]}"
+        echo ""
+        echo "Run tla/run_tlc.sh locally and commit tla/.tlc_passed file after it succeeds"
+        exit 1
+    fi
+
+    echo ""
+    echo "All model hashes verified."
+    exit 0
+fi
+
+# Resolve TLC JAR location
+TLC_VERSION="1.8.0"
+TLC_URL="https://github.com/tlaplus/tlaplus/releases/download/v${TLC_VERSION}/tla2tools.jar"
+LOCAL_JAR="$TMP_DIR/tla2tools.jar"
+
+# Try to find tla2tools.jar: --jar flag, local download, or PATH
+if [[ -n "$TLC_JAR" ]]; then
+    # Explicit --jar provided
+    :
+elif [[ -f "$LOCAL_JAR" ]]; then
+    TLC_JAR="$LOCAL_JAR"
+elif command -v tla2tools.jar &> /dev/null; then
+    TLC_JAR="$(command -v tla2tools.jar)"
+fi
+
+# Download if requested and still not found
+if [[ "$DOWNLOAD_JAR" == "true" ]] && [[ ! -f "$TLC_JAR" ]]; then
+    echo "Downloading TLC tools v${TLC_VERSION}..."
+    curl -L -o "$LOCAL_JAR" "$TLC_URL"
+    echo "Downloaded to $LOCAL_JAR"
+    TLC_JAR="$LOCAL_JAR"
+fi
+
+if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
+    echo "Error: tla2tools.jar not found"
+    echo ""
+    echo "Options:"
+    echo "  1. Download from https://github.com/tlaplus/tlaplus/releases and add to PATH"
+    echo "  2. Use --jar /path/to/tla2tools.jar"
+    echo "  3. Use --download-jar to auto-download"
     exit 1
 fi
 
@@ -90,10 +165,33 @@ run_model() {
 
     # Resource configuration
     if [[ "$MAX_RESOURCES" == "true" ]]; then
-        # --max: Use most cores and lots of RAM (32 cores, 63GB RAM machine)
-        HEAP="-Xmx48g"
-        WORKERS="-workers 28"
-        echo "[$SPEC_NAME] Using MAX resources: 48GB heap, 28 workers"
+        # --max: Use most available resources (75% mem, 90% cpu)
+        if [[ -f /proc/meminfo ]]; then
+            TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+            TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+        elif command -v sysctl &> /dev/null; then
+            # macOS
+            TOTAL_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+            TOTAL_MEM_GB=$((TOTAL_MEM_BYTES / 1024 / 1024 / 1024))
+        else
+            TOTAL_MEM_GB=8
+        fi
+        HEAP_GB=$((TOTAL_MEM_GB * 75 / 100))
+        [[ $HEAP_GB -lt 4 ]] && HEAP_GB=4
+        HEAP="-Xmx${HEAP_GB}g"
+
+        if command -v nproc &> /dev/null; then
+            NUM_CPUS=$(nproc)
+        elif command -v sysctl &> /dev/null; then
+            NUM_CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+        else
+            NUM_CPUS=4
+        fi
+        NUM_WORKERS=$((NUM_CPUS * 90 / 100))
+        [[ $NUM_WORKERS -lt 2 ]] && NUM_WORKERS=2
+        WORKERS="-workers $NUM_WORKERS"
+
+        echo "[$SPEC_NAME] Using MAX resources: ${HEAP_GB}GB heap, $NUM_WORKERS workers"
     else
         # Default: Conservative settings
         HEAP="-Xmx4g"
@@ -115,8 +213,8 @@ run_model() {
     echo ""
 }
 
-# Parse comma-separated file list and run each model
-IFS=',' read -ra MODELS <<< "$FILE_LIST"
+# Parse comma-separated model list and run each model
+IFS=',' read -ra MODELS <<< "$MODEL_LIST"
 for model in "${MODELS[@]}"; do
     # Trim whitespace
     model=$(echo "$model" | xargs)
