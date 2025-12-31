@@ -1290,8 +1290,9 @@ describe('Extended Chaos Tests', () => {
                 const term = e.getCurrentTerm()
                 const leaderId = e.getDebugInfo().leader!
                 // Send to random peer
-                if (dstIdx !== srcIdx) {
-                  elections[dstIdx].handleMessage(
+                const dstElection = elections[dstIdx]
+                if (dstIdx !== srcIdx && dstElection) {
+                  dstElection.handleMessage(
                     { type: 'heartbeat', term, leaderId, frame: iteration },
                     leaderId
                   )
@@ -1302,11 +1303,13 @@ describe('Extended Chaos Tests', () => {
             break
 
           case 1: // Vote request (simulates election timeout)
-            if (elections[srcIdx].getState() === 'candidate') {
-              const term = elections[srcIdx].getCurrentTerm()
-              const candidateId = ['p1', 'p2', 'p3', 'p4', 'p5'][srcIdx]
-              if (dstIdx !== srcIdx) {
-                elections[dstIdx].handleMessage(
+            const srcElection = elections[srcIdx]
+            const dstElection = elections[dstIdx]
+            const candidateId = ['p1', 'p2', 'p3', 'p4', 'p5'][srcIdx]
+            if (srcElection && srcElection.getState() === 'candidate' && candidateId) {
+              const term = srcElection.getCurrentTerm()
+              if (dstIdx !== srcIdx && dstElection) {
+                dstElection.handleMessage(
                   { type: 'request_vote', term, candidateId, lastFrame: iteration },
                   candidateId
                 )
@@ -1452,9 +1455,10 @@ describe('Extended Chaos Tests', () => {
         const isLocal = Math.random() > 0.5
         const event: GameEvent = {
           type: 'damage',
-          targetId: `enemy${i}`,
+          playerId: isLocal ? 'local' : `remote${i}`,
           amount: 10,
-          sourceId: isLocal ? 'local' : `remote${i}`,
+          newShields: 90,
+          newLives: 3,
         }
         queue.addEvent(event, i)
         if (isLocal) localEventCount++

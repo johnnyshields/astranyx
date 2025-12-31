@@ -320,7 +320,7 @@ describe('TLA+ LockstepNetwork Properties', () => {
           for (const idx of uniqueSubmitters) {
             const input: FrameInput = {
               frame,
-              playerId: peerIds[idx],
+              playerId: peerIds[idx]!,
               input: emptyInput(),
             }
             buffer.storeInput(input)

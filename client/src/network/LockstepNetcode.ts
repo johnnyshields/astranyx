@@ -1,11 +1,35 @@
 /**
  * Lockstep Netcode for P2P multiplayer
  *
- * This is the main orchestrator that coordinates:
- * - InputBuffer: Frame input management
- * - LocalEventQueue: Owner-authoritative event buffering
- * - StateSyncManager: Periodic state synchronization
- * - LeaderElection: Raft-inspired leader election
+ * TLA+ Models:
+ * - LockstepState.tla: Complete model with election, events, state sync
+ * - LockstepNetwork.tla: Network reliability, connection states, desync detection
+ * - LeaderElection.tla: Raft-inspired leader election (focused model)
+ * - LockstepSimple.tla: Simplified model for fast iteration
+ *
+ * Key TLA+ Variables (mapped to this class and components):
+ * - frame[p]: currentFrame (per-peer simulation progress)
+ * - inputsReceived: InputBuffer tracks which peers submitted
+ * - currentTerm[p]: LeaderElection.currentTerm
+ * - state[p]: LeaderElection.state ("Leader" | "Follower" | "Candidate")
+ * - pendingEvents[p]: LocalEventQueue.pendingEvents
+ * - syncTerm[p]: StateSyncManager.lastAcceptedSyncTerm
+ * - inSync[p]: StateSyncManager.desyncDetected (inverted)
+ *
+ * Key TLA+ Actions (mapped to methods):
+ * - SubmitInput(p): tick() -> inputBuffer.storeInput()
+ * - AdvanceFrame(p): tryAdvanceFrame()
+ * - GenerateEvent(p): eventQueue.addEvents()
+ * - SendStateSync(leader): broadcastStateSync()
+ * - ReceiveStateSync(f,l): receiveStateSync() -> syncManager.receiveSyncMessage()
+ * - Desync(p): checkForDesync() -> syncManager.markDesync()
+ * - ForceLeaderChange: handleForceLeaderChange() (external trigger)
+ *
+ * Safety Invariants (verified by TLC and runtime assertions):
+ * - NoTwoLeadersInSameTerm: At most one leader per election term
+ * - FrameBoundedDrift: |frame[i] - frame[j]| <= 1
+ * - LocalEventsPreserved: After sync, only local events remain
+ * - SyncTermBounded: syncTerm[p] <= currentTerm[p]
  *
  * How it works:
  * 1. Each player runs the same deterministic simulation
@@ -280,7 +304,11 @@ export class LockstepNetcode {
   }
 
   /**
-   * Check for checksum mismatches
+   * Check for checksum mismatches.
+   * TLA+ model: Desync(p) action in LockstepState.tla
+   * - Compares checksums across peers at completed frame
+   * - Sets inSync[p] = FALSE if mismatch found (triggers state sync)
+   * - Only followers can desync (leader is authoritative)
    */
   private checkForDesync(frame: number): void {
     const mismatches = this.inputBuffer.checkDesync(frame, this.config.localPlayerId)
@@ -294,6 +322,12 @@ export class LockstepNetcode {
     }
   }
 
+  /**
+   * Process received input from a peer.
+   * TLA+ model: DeliverMessage(msg) action in LockstepNetwork.tla
+   * - Stores input in buffer for the specified frame
+   * - Triggers frame advance check if we were waiting
+   */
   private receiveInput(frameInput: FrameInput): void {
     // Ignore inputs for frames we've already processed
     if (frameInput.frame <= this.confirmedFrame) {
@@ -386,6 +420,54 @@ export class LockstepNetcode {
    */
   isLeader(): boolean {
     return this.election.isLeader()
+  }
+
+  /**
+   * Force a leader change from external trigger (e.g., server authority).
+   * TLA+ model: ForceLeaderChange(oldLeader, newLeader) action in LockstepState.tla
+   *
+   * This handles scenarios like:
+   * - Server-side authority override
+   * - Network partition recovery where server picks canonical leader
+   * - Manual operator intervention
+   *
+   * After leader change:
+   * - All peers move to new term (term bump)
+   * - Old leader steps down to follower
+   * - New leader starts sending heartbeats
+   * - Followers may be out of sync (inSync = FALSE) until state sync
+   *
+   * @param newLeaderId The peer ID to become the new leader
+   * @param newTerm The new election term (must be > current term)
+   */
+  forceLeaderChange(newLeaderId: string, newTerm: number): void {
+    if (newTerm <= this.election.getCurrentTerm()) {
+      SafeConsole.warn(
+        `LockstepNetcode: Ignoring forceLeaderChange with stale term ${newTerm} <= ${this.election.getCurrentTerm()}`
+      )
+      return
+    }
+
+    SafeConsole.log(
+      `LockstepNetcode: Force leader change to ${newLeaderId} at term ${newTerm}`
+    )
+
+    // Simulate receiving a heartbeat from the new leader with the new term
+    // This will cause the election module to step down and accept the new leader
+    this.election.handleMessage(
+      {
+        type: 'heartbeat',
+        term: newTerm,
+        leaderId: newLeaderId,
+        frame: this.currentFrame,
+      },
+      newLeaderId
+    )
+
+    // Mark potential desync - new leader's state may differ
+    if (!this.isLeader()) {
+      this.syncManager.markDesync()
+    }
   }
 
   // ===========================================================================

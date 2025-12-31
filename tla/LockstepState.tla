@@ -316,8 +316,10 @@ LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
 \* Sync term never exceeds current term (no time travel)
+\* Note: This is always true in Init (both are 0), and maintained by ReceiveStateSync
+\* which only accepts syncs where currentTerm[leader] >= syncTerm[follower]
 SyncTermBounded ==
-    \A p \in Peer : syncTerm[p] <= currentTerm[p] \/ syncTerm[p] <= MaxTerm
+    \A p \in Peer : syncTerm[p] <= currentTerm[p]
 
 ----
 \* Liveness Properties
