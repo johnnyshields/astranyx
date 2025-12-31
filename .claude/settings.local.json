@@ -58,7 +58,8 @@
       "Bash(bun test:*)",
       "Bash(bun -e:*)",
       "Bash(npx tsc:*)",
-      "Bash(source ~/.asdf/asdf.sh)"
+      "Bash(source ~/.asdf/asdf.sh)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
