@@ -216,7 +216,7 @@ export class InputBuffer {
    *
    * TLA+ Invariants checked:
    * - TypeInvariant: frame >= 0
-   * - NoAdvanceWithoutInputs: can only advance if all inputs received
+   * - InputsFromValidPeers: all inputs from valid peers
    *
    * @param currentFrame The current simulation frame
    */
@@ -230,6 +230,17 @@ export class InputBuffer {
     for (const frame of this.buffer.keys()) {
       if (frame < 0) {
         throw new Error(`TLA+ TypeInvariant violated: buffer contains negative frame ${frame}`)
+      }
+    }
+
+    // TLA+ InputsFromValidPeers: all inputs must be from valid peers
+    for (const [frame, frameInputs] of this.buffer) {
+      for (const playerId of frameInputs.keys()) {
+        if (!this.config.playerOrder.has(playerId)) {
+          throw new Error(
+            `TLA+ InputsFromValidPeers violated: input from "${playerId}" at frame ${frame} is not a valid peer`
+          )
+        }
       }
     }
   }

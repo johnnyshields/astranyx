@@ -319,18 +319,10 @@ LeaderUpToDate ==
     \A leader, p \in Peer : IsLeader(leader) => frame[leader] >= frame[p] - 1
 
 \* After state sync, follower's pending events contain ONLY local events
-\* This is the key property of LocalEventQueue.getEventsForReapply()
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
-\* Note: EventOwnerValid removed - implied by LocalEventsPreserved (e[1] = p means e[1] \in Peer)
-
 \* Sync term never exceeds current term (no time travel)
-\* This holds because:
-\* - Leader sets syncTerm[leader] = currentTerm[leader] in SendStateSync
-\* - Follower sets syncTerm[follower] = currentTerm[leader] in ReceiveStateSync
-\*   only when currentTerm[leader] >= syncTerm[follower], and voting ensures
-\*   followers update currentTerm to leader's term before accepting sync
 SyncTermBounded ==
     \A p \in Peer : syncTerm[p] <= currentTerm[p]
 
@@ -342,12 +334,11 @@ CandidateVotedForSelf ==
 LeaderVotedForSelf ==
     \A p \in Peer : IsLeader(p) => votedFor[p] = p
 
-\* Leader had majority when elected (votes are from peers in current config)
-\* Note: Leader keeps votes after becoming leader, so we check the set is valid
+\* Leader had majority when elected
 LeaderHadMajority ==
     \A p \in Peer : IsLeader(p) =>
-        \/ IsMajority(votesReceived[p])  \* Normal election
-        \/ votesReceived[p] = Peer       \* ForceLeaderChange gives all votes
+        \/ IsMajority(votesReceived[p])
+        \/ votesReceived[p] = Peer  \* ForceLeaderChange gives all votes
 
 \* Votes received must be from valid peers
 VotesFromValidPeers ==
@@ -357,11 +348,9 @@ VotesFromValidPeers ==
 VotedForValid ==
     \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
 
-\* inputsReceived is a subset of Peer (only valid peers submit inputs)
+\* inputsReceived is a subset of Peer
 InputsFromValidPeers ==
     inputsReceived \subseteq Peer
-
-\* Note: FrameNonNegative removed - redundant with TypeInvariant (frame[p] >= 0)
 
 ----
 \* Liveness Properties

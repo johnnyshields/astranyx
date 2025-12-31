@@ -662,5 +662,21 @@ export class LeaderElection {
         `TLA+ VotedForValid violated: votedFor "${this.votedFor}" is not a valid peer`
       )
     }
+
+    // TLA+ VotesFromValidPeers: all votes must be from valid peers
+    for (const voterId of this.votesReceived) {
+      if (!this.config.playerOrder.has(voterId)) {
+        throw new Error(
+          `TLA+ VotesFromValidPeers violated: vote from "${voterId}" is not a valid peer`
+        )
+      }
+    }
+
+    // TLA+ LeaderHadMajority: leader must have had majority
+    if (this.state === 'leader' && this.votesReceived.size < this.getMajority()) {
+      throw new Error(
+        `TLA+ LeaderHadMajority violated: leader has ${this.votesReceived.size} votes, needs ${this.getMajority()}`
+      )
+    }
   }
 }

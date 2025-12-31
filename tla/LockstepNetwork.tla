@@ -546,14 +546,10 @@ LeaderUpToDate ==
         IsLeader(leader) => frame[leader] >= frame[p] - 1
 
 \* After state sync, follower's pending events contain ONLY local events
-\* This is THE key correctness property for owner-authoritative events
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
-\* Note: EventOwnerValid removed - implied by LocalEventsPreserved (e[1] = p means e[1] \in Peer)
-
 \* Sync term never exceeds current term (no time travel)
-\* Maintained because ReceiveStateSync updates currentTerm to msgTerm
 SyncTermBounded ==
     \A p \in Peer : syncTerm[p] <= currentTerm[p]
 
@@ -585,7 +581,7 @@ VotesFromValidPeers ==
 LeaderHadMajority ==
     \A p \in Peer : IsLeader(p) => IsMajority(votesReceived[p])
 
-\* inputsReceived is a subset of connected peers
+\* inputsReceived is a subset of Peer
 InputsFromValidPeers ==
     inputsReceived \subseteq Peer
 
