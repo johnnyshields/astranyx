@@ -8,7 +8,42 @@ Astranyx uses a hybrid synchronization approach:
 
 1. **Lockstep Input Sync**: All players exchange inputs every frame
 2. **Owner-Authoritative Events**: Collision events are detected by the owning player
-3. **Periodic State Sync**: Host broadcasts authoritative state to correct drift
+3. **Leader Election**: Raft-inspired consensus for leader selection
+4. **Periodic State Sync**: Leader broadcasts authoritative state to correct drift
+
+## Formal Verification (TLA+)
+
+The lockstep netcode is formally verified using TLA+ model checking. The model is in `tla/LockstepNetcode.tla`.
+
+### Verified Properties
+
+| Property | Description |
+|----------|-------------|
+| `NoTwoLeadersInSameTerm` | At most one leader per election term (election safety) |
+| `FrameBoundedDrift` | All peers stay within 1 frame of each other (lockstep safety) |
+| `LeaderUpToDate` | Leader is at least as current as any other peer |
+| `EventuallyLeader` | System always elects a leader (liveness) |
+
+### TLA+ Actions → Implementation
+
+| TLA+ Action | TypeScript Method | File |
+|-------------|-------------------|------|
+| `SubmitInput(p)` | `tick()` → `storeInput()` | `LockstepNetcode.ts` |
+| `AdvanceFrame(p)` | `tryAdvanceFrame()` | `LockstepNetcode.ts` |
+| `BroadcastHeartbeat(leader)` | `broadcastHeartbeat()` | `LeaderElection.ts` |
+| `StartElection(p)` | `startElection()` | `LeaderElection.ts` |
+| `Vote(voter, candidate)` | `handleRequestVote()` | `LeaderElection.ts` |
+| `BecomeLeader(p)` | `becomeLeader()` | `LeaderElection.ts` |
+| `Stepdown(p)` | `stepDown()` | `LeaderElection.ts` |
+
+### Running the Model Checker
+
+```bash
+cd tla
+./run-tlc.sh
+```
+
+The script uses hash-based caching - it skips if the spec hasn't changed since last successful run.
 
 ## Lockstep Netcode
 
@@ -30,6 +65,48 @@ Frame N:
 - No `Date.now()` - use frame counter
 - Fixed-point math for positions
 - Arrays only (no object iteration order issues)
+
+## Leader Election
+
+Leader election uses a Raft-inspired consensus protocol.
+
+### States
+
+Each peer is in one of three states:
+
+| State | Description |
+|-------|-------------|
+| `follower` | Follows the current leader, resets election timer on heartbeat |
+| `candidate` | Requesting votes after election timeout |
+| `leader` | Elected with majority, sends heartbeats, coordinates state sync |
+
+### Election Flow
+
+```
+1. Initial: Peer with lowest index starts as leader
+2. Timeout: If follower doesn't receive heartbeat, becomes candidate
+3. Vote Request: Candidate increments term, votes for self, requests votes
+4. Vote Grant: Peers grant vote if:
+   - Candidate term >= peer term
+   - Peer hasn't voted in this term (or voted for this candidate)
+   - Candidate frame >= peer frame (log comparison)
+5. Win: Candidate with majority becomes leader
+6. Heartbeat: Leader sends periodic heartbeats to maintain authority
+```
+
+### Term
+
+The `term` is a monotonically increasing election epoch. Higher terms have priority:
+- Leader steps down if it sees a higher term
+- Peers update their term when receiving messages with higher terms
+- Ensures only one leader per term
+
+### Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `electionTimeout` | 1500ms | Time before follower starts election |
+| `heartbeatInterval` | 500ms | Leader heartbeat frequency |
 
 ## Owner-Authoritative Events
 
@@ -66,7 +143,7 @@ Even with deterministic simulation, desync can occur:
 
 ### How It Works
 
-1. **Host Selection**: Player with index 0 is the host
+1. **Leader Selection**: Via Raft-inspired election (player with lowest index initially)
 2. **Checksum Comparison**: Every 30 frames, players compare state checksums
 3. **Sync Triggers**:
    - Checksum mismatch (immediate)
@@ -75,7 +152,7 @@ Even with deterministic simulation, desync can occur:
 ### Sync Flow
 
 ```
-Host                              Non-Host
+Leader                            Follower
   |                                   |
   | [Detects sync needed]             |
   |                                   |
@@ -84,20 +161,25 @@ Host                              Non-Host
   |      type: 'state_sync',          |
   |      frame: 1234,                 | [1. Apply state]
   |      state: {...},                | [2. Re-apply pending events]
-  |      checksum: 12345              |
+  |      checksum: 12345,             |
+  |      term: 5                      | [3. Verify term authority]
   |    }                              |
   |                                   |
 ```
 
+### Term Authority
+
+State sync messages include the leader's term. Followers only accept syncs from the current term's leader, preventing stale leaders from overwriting state.
+
 ### Pending Events Buffer
 
-Non-host players buffer their local events. When state sync arrives:
+Non-leader players buffer their local events. When state sync arrives:
 
 1. Save pending events
-2. Apply authoritative state from host
+2. Apply authoritative state from leader
 3. Re-apply pending events
 
-This preserves the local player's recent actions (pickups, etc.) that may not yet be reflected in the host's state.
+This preserves the local player's recent actions (pickups, etc.) that may not yet be reflected in the leader's state.
 
 ## Checksum Algorithm
 
@@ -138,6 +220,8 @@ interface LockstepConfig {
   localPlayerId: string        // This client's player ID
   playerOrder: Map<string, number>  // Player ID -> index mapping
   stateSyncInterval?: number   // Frames between syncs (default: 300)
+  electionTimeout?: number     // Ms before election timeout (default: 1500)
+  heartbeatInterval?: number   // Ms between heartbeats (default: 500)
 }
 ```
 
@@ -147,6 +231,8 @@ interface LockstepConfig {
 |-----------|---------|-------------|
 | `inputDelay` | 3 | Higher = more lag tolerance, lower = more responsive |
 | `stateSyncInterval` | 300 | Lower = faster correction, higher = less bandwidth |
+| `electionTimeout` | 1500ms | Lower = faster failover, higher = less false elections |
+| `heartbeatInterval` | 500ms | Lower = faster detection, higher = less overhead |
 | Checksum frequency | 30 | How often to compare state |
 
 ## Debugging Desync
@@ -189,6 +275,31 @@ interface StateSyncMessage {
   frame: number
   state: SerializedState  // Full game state
   checksum: number
+  term: number           // Election term for authority
+}
+```
+
+### Election Messages
+```typescript
+interface RequestVoteMessage {
+  type: 'request_vote'
+  term: number
+  candidateId: string
+  lastFrame: number      // For log comparison
+}
+
+interface VoteResponseMessage {
+  type: 'vote_response'
+  term: number
+  voteGranted: boolean
+  voterId: string
+}
+
+interface HeartbeatMessage {
+  type: 'heartbeat'
+  term: number
+  leaderId: string
+  frame: number
 }
 ```
 
@@ -199,3 +310,4 @@ interface StateSyncMessage {
 3. **Log Desync Details**: When checksums mismatch, log full state for comparison
 4. **Adjust Sync Interval**: Lower for action-heavy games, higher for turn-based
 5. **Handle Visual Jumps**: State sync may cause brief visual discontinuity - consider interpolation
+6. **Run TLA+ Model**: After changing sync logic, verify with `./run-tlc.sh`

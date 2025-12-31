@@ -202,11 +202,13 @@ export class LockstepNetcode {
   }
 
   /**
-   * Called each game tick with local input
+   * Called each game tick with local input.
+   * TLA+ model: SubmitInput(p) action - submits input and tries to advance frame.
+   *
    * @param localInput - The local player's input
    * @param events - Owner-authoritative events detected this frame
    * @param checksum - Optional checksum of current game state for desync detection
-   * Returns true if simulation should advance
+   * @returns true if simulation should advance
    */
   tick(localInput: PlayerInput, events?: GameEvent[], checksum?: number): boolean {
     if (!this.running) return false
@@ -242,7 +244,8 @@ export class LockstepNetcode {
   }
 
   /**
-   * Try to advance to next frame if all inputs received
+   * Try to advance to next frame if all inputs received.
+   * TLA+ model: AdvanceFrame(p) action - advances when inputsReceived = Peer.
    */
   private tryAdvanceFrame(): boolean {
     if (!this.inputBuffer.hasAllInputs(this.currentFrame)) {
@@ -330,7 +333,7 @@ export class LockstepNetcode {
    * Should only be called by the leader.
    */
   broadcastStateSync(state: unknown, checksum: number): void {
-    if (!this.isHost()) {
+    if (!this.isLeader()) {
       SafeConsole.warn('LockstepNetcode: Non-leader tried to broadcast state sync')
       return
     }
@@ -353,7 +356,7 @@ export class LockstepNetcode {
    */
   private receiveStateSync(message: StateSyncMessage): void {
     // Only non-leaders should apply state sync
-    if (this.isHost()) {
+    if (this.isLeader()) {
       SafeConsole.warn('LockstepNetcode: Leader received state sync (ignoring)')
       return
     }
@@ -366,7 +369,7 @@ export class LockstepNetcode {
    * Check if it's time to send a state sync.
    */
   shouldSendStateSync(): boolean {
-    if (!this.isHost()) return false
+    if (!this.isLeader()) return false
     return this.syncManager.shouldSendSync()
   }
 
@@ -379,8 +382,9 @@ export class LockstepNetcode {
 
   /**
    * Check if this client is the leader.
+   * TLA+ model: state[p] = "Leader"
    */
-  isHost(): boolean {
+  isLeader(): boolean {
     return this.election.isLeader()
   }
 
@@ -467,7 +471,7 @@ export class LockstepNetcode {
       frame: this.currentFrame,
       confirmedFrame: this.confirmedFrame,
       waiting: this.waitingForInputs,
-      isLeader: this.isHost(),
+      isLeader: this.isLeader(),
       election: this.election.getDebugInfo(),
       sync: this.syncManager.getDebugInfo(),
       events: this.eventQueue.getDebugInfo(),

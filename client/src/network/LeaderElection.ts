@@ -246,7 +246,8 @@ export class LeaderElection {
   // ===========================================================================
 
   /**
-   * Start an election (become candidate)
+   * Start an election (become candidate).
+   * TLA+ model: StartElection(p) action - increments term, becomes candidate, votes for self.
    */
   private startElection(): void {
     if (!this.running) return
@@ -281,9 +282,10 @@ export class LeaderElection {
   }
 
   /**
-   * Handle incoming vote request
+   * Handle incoming vote request and grant vote if valid.
+   * TLA+ model: Vote(voter, candidate) action
    */
-  private handleRequestVote(message: RequestVoteMessage, fromPeerId: string): void {
+  private handleVoteRequest(message: RequestVoteMessage, fromPeerId: string): void {
     let voteGranted = false
 
     // Update term if needed
@@ -353,7 +355,8 @@ export class LeaderElection {
   }
 
   /**
-   * Become leader after winning election
+   * Become leader after winning election.
+   * TLA+ model: BecomeLeader(p) action - candidate with majority becomes leader.
    */
   private becomeLeader(): void {
     SafeConsole.log(`LeaderElection: Became leader for term ${this.currentTerm}`)
@@ -367,7 +370,8 @@ export class LeaderElection {
   }
 
   /**
-   * Step down to follower (discovered higher term)
+   * Step down to follower (discovered higher term).
+   * TLA+ model: Stepdown(p) action - leader steps down on seeing higher term.
    */
   private stepDown(newTerm: number): void {
     SafeConsole.log(`LeaderElection: Stepping down, term ${this.currentTerm} -> ${newTerm}`)
@@ -386,7 +390,8 @@ export class LeaderElection {
   // ===========================================================================
 
   /**
-   * Broadcast heartbeat to all peers (leader only)
+   * Broadcast heartbeat to all peers (leader only).
+   * TLA+ model: BroadcastHeartbeat(leader) action - sets heartbeatReceived for all peers.
    */
   private broadcastHeartbeat(): void {
     if (this.state !== 'leader') return
@@ -469,7 +474,7 @@ export class LeaderElection {
   handleMessage(message: ElectionMessage, fromPeerId: string): void {
     switch (message.type) {
       case 'request_vote':
-        this.handleRequestVote(message, fromPeerId)
+        this.handleVoteRequest(message, fromPeerId)
         break
       case 'vote_response':
         this.handleVoteResponse(message)

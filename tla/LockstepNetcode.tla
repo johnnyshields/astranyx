@@ -58,9 +58,6 @@ MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 \* Minimum frame across all peers (for lockstep check)
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 
-\* Maximum frame across all peers
-MaxFrameReached == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] <= f
-
 ----
 \* Initial state
 
@@ -109,15 +106,8 @@ BroadcastHeartbeat(leader) ==
     /\ heartbeatReceived' = [p \in Peer |-> TRUE]    \* All peers receive heartbeat
     /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived>>
 
-\* Follower's heartbeat times out (triggers election)
-\* Implementation: startElectionTimer() with timeout check
-HeartbeatTimeout(p) ==
-    /\ state[p] = "Follower"
-    /\ heartbeatReceived[p] = FALSE                  \* No heartbeat received
-    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived>>
-
-\* Reset heartbeat flag (models time passing)
+\* Reset heartbeat flag (models time passing without heartbeat)
+\* Implementation: election timer checks timeSinceHeartbeat >= electionTimeout
 ExpireHeartbeat(p) ==
     /\ heartbeatReceived[p] = TRUE
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]

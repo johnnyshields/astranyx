@@ -1115,7 +1115,7 @@ describe('Integration: Full Lockstep with Faults', () => {
 
     // Start and verify
     netcode.start()
-    expect(netcode.isHost()).toBe(true)
+    expect(netcode.isLeader()).toBe(true)
 
     // Remove peer
     netcode.removePeer('p2')
@@ -1142,7 +1142,7 @@ describe('Integration: Full Lockstep with Faults', () => {
     netcode.start()
 
     // p2 is not initially leader
-    expect(netcode.isHost()).toBe(false)
+    expect(netcode.isLeader()).toBe(false)
 
     // Note: Full leader election test would require more setup
     // This validates the handler is wired correctly
