@@ -36,6 +36,24 @@ export function error(...args: unknown[]): void {
 }
 
 /**
+ * Info message (dev only)
+ */
+export function info(...args: unknown[]): void {
+  if (isDev) {
+    console.info(...args)
+  }
+}
+
+/**
+ * Debug message (dev only)
+ */
+export function debug(...args: unknown[]): void {
+  if (isDev) {
+    console.debug(...args)
+  }
+}
+
+/**
  * Debug group (dev only)
  */
 export function group(label: string): void {
@@ -57,6 +75,8 @@ export const SafeConsole = {
   log,
   warn,
   error,
+  info,
+  debug,
   group,
   groupEnd,
 }
