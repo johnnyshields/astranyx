@@ -1,13 +1,13 @@
---------------------------------- MODULE App ---------------------------------
-\* Combined P2P Lockstep Netcode Model
+--------------------------------- MODULE LockstepCore ---------------------------------
+\* Simplified P2P Lockstep Netcode Model
 \*
-\* Simplified model covering:
-\* 1. Leader election (Raft-inspired)
-\* 2. Lockstep frame synchronization
+\* Fast verification model (~1M states) covering:
+\* 1. Lockstep frame synchronization
+\* 2. Raft-inspired leader election
 \* 3. State sync with leader authority
-\* 4. Owner-authoritative events
+\* 4. Owner-authoritative events (boolean)
 \*
-\* This is the integration model - verifies the components work together.
+\* For detailed verification, use LockstepFinal.tla
 \* Implementation: client/src/network/
 
 EXTENDS Integers, FiniteSets
@@ -17,16 +17,16 @@ CONSTANT MaxFrame
 CONSTANT MaxTerm
 
 ----
-\* Variables
+\* Variables (8 total - simplified from LockstepFinal's 9)
 
 VARIABLE frame             \* Current frame per peer
 VARIABLE inputsReceived    \* Peers who submitted input
 VARIABLE currentTerm       \* Election term per peer
 VARIABLE state             \* "Follower", "Candidate", "Leader"
-VARIABLE votedFor          \* Vote tracking
-VARIABLE votesReceived     \* Votes received
+VARIABLE votedFor          \* Vote tracking (0 = none)
+VARIABLE votesReceived     \* Votes received by candidates
 VARIABLE heartbeatReceived \* Heartbeat tracking
-VARIABLE hasPendingEvent   \* Does peer have pending local event?
+VARIABLE hasPendingEvent   \* Boolean: does peer have pending event?
 
 vars == <<frame, inputsReceived, currentTerm, state, votedFor, votesReceived, heartbeatReceived, hasPendingEvent>>
 
@@ -69,7 +69,7 @@ AdvanceFrame(p) ==
     /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, heartbeatReceived, hasPendingEvent>>
 
 ----
-\* Owner-Authoritative Events
+\* Owner-Authoritative Events (simplified to boolean)
 
 GenerateEvent(p) ==
     /\ ~hasPendingEvent[p]
@@ -77,7 +77,7 @@ GenerateEvent(p) ==
     /\ UNCHANGED <<frame, inputsReceived, currentTerm, state, votedFor, votesReceived, heartbeatReceived>>
 
 ----
-\* State Sync (requires leader)
+\* State Sync (atomic send+receive, leader clears follower events)
 
 SendStateSync(leader) ==
     /\ IsLeader(leader)
@@ -112,7 +112,7 @@ Vote(voter, candidate) ==
     /\ state[candidate] = "Candidate"
     /\ voter # candidate
     /\ currentTerm[candidate] >= currentTerm[voter]
-    /\ frame[candidate] >= frame[voter]  \* Log comparison
+    /\ frame[candidate] >= frame[voter]
     /\ \/ votedFor[voter] = 0
        \/ currentTerm[candidate] > currentTerm[voter]
     /\ votedFor' = [votedFor EXCEPT ![voter] = candidate]

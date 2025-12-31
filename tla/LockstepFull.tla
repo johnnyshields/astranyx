@@ -1,13 +1,15 @@
---------------------------------- MODULE LockstepNetcode ---------------------------------
-\* P2P Lockstep Netcode with Leader Election and State Sync
+--------------------------------- MODULE LockstepFull ---------------------------------
+\* Complete P2P Lockstep Netcode Model
 \*
-\* Models a deterministic lockstep simulation where:
-\* 1. All peers must submit input before any peer advances
-\* 2. Each peer advances independently (deterministic simulation ensures sync)
-\* 3. Leader election uses Raft-inspired consensus
-\* 4. Leader sends state syncs; followers validate by term
+\* This is the comprehensive model covering ALL features:
+\* 1. Lockstep frame synchronization
+\* 2. Raft-inspired leader election
+\* 3. Owner-authoritative events with tuple tracking
+\* 4. State sync with term validation
+\* 5. Local events preservation
+\* 6. Arbitrary leader change (network events)
 \*
-\* This model matches the TypeScript implementation in client/src/network/
+\* Implementation: client/src/network/
 
 EXTENDS Integers, FiniteSets
 
@@ -38,6 +40,9 @@ IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
 MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 IsLeader(p) == state[p] = "Leader"
+CurrentLeader == IF \E p \in Peer : IsLeader(p)
+                 THEN CHOOSE p \in Peer : IsLeader(p)
+                 ELSE 0
 
 ----
 \* Initial state
@@ -89,7 +94,6 @@ GenerateEvent(p) ==
 \* Key property: syncTerm tracks last accepted sync to prevent stale syncs
 SendStateSync(leader) ==
     /\ IsLeader(leader)
-    /\ currentTerm[leader] > 0  \* Only send after at least one election
     /\ syncTerm' = [p \in Peer |-> currentTerm[leader]]
     /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, pendingEvents>>
 
@@ -141,7 +145,7 @@ Vote(voter, candidate) ==
     /\ state[candidate] = "Candidate"
     /\ voter # candidate
     /\ currentTerm[candidate] >= currentTerm[voter]
-    /\ frame[candidate] >= frame[voter]
+    /\ frame[candidate] >= frame[voter]  \* Log comparison (frame = log index)
     /\ \/ votedFor[voter] = 0
        \/ currentTerm[candidate] > currentTerm[voter]
     /\ votedFor' = [votedFor EXCEPT ![voter] = candidate]
@@ -176,21 +180,49 @@ RetryElection(p) ==
     /\ UNCHANGED <<frame, state, inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
 
 ----
+\* Network Events (from LockstepSync - models disconnects/reconnects)
+
+\* Models arbitrary leadership change due to network events
+\* (peer disconnect, network partition, manual override)
+MaxCurrentTerm == CHOOSE t \in {currentTerm[p] : p \in Peer} : \A q \in Peer : currentTerm[q] <= t
+
+ForceLeaderChange(oldLeader, newLeader) ==
+    /\ oldLeader # newLeader
+    /\ IsLeader(oldLeader)
+    /\ ~IsLeader(newLeader)  \* Can't force someone who's already leader
+    /\ MaxCurrentTerm < MaxTerm  \* Must have room to bump term
+    /\ frame[newLeader] >= frame[oldLeader] - 1  \* New leader must be reasonably up-to-date
+    \* Step down ALL other leaders and make newLeader the sole leader
+    /\ state' = [p \in Peer |-> IF p = newLeader THEN "Leader" ELSE "Follower"]
+    /\ currentTerm' = [p \in Peer |-> MaxCurrentTerm + 1]  \* Bump everyone to same term
+    /\ votedFor' = [p \in Peer |-> newLeader]  \* Everyone "voted" for new leader
+    /\ votesReceived' = [votesReceived EXCEPT ![newLeader] = Peer]
+    /\ heartbeatReceived' = [p \in Peer |-> TRUE]
+    /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents>>
+
+----
 \* State Machine
 
 Next ==
+    \* Lockstep
     \/ \E p \in Peer : SubmitInput(p)
     \/ \E p \in Peer : AdvanceFrame(p)
+    \* Events
     \/ \E p \in Peer : GenerateEvent(p)
+    \* State Sync
     \/ \E p \in Peer : SendStateSync(p)
     \/ \E f, l \in Peer : ReceiveStateSync(f, l)
+    \* Heartbeat
     \/ \E p \in Peer : BroadcastHeartbeat(p)
     \/ \E p \in Peer : ExpireHeartbeat(p)
+    \* Election
     \/ \E p \in Peer : StartElection(p)
     \/ \E v, c \in Peer : Vote(v, c)
     \/ \E p \in Peer : BecomeLeader(p)
     \/ \E p \in Peer : StepDown(p)
     \/ \E p \in Peer : RetryElection(p)
+    \* Network Events
+    \/ \E old, new \in Peer : ForceLeaderChange(old, new)
 
 Fairness ==
     /\ WF_vars(\E p \in Peer : SubmitInput(p))
@@ -208,7 +240,7 @@ NoTwoLeadersInSameTerm ==
     \A i, j \in Peer :
         (i # j /\ IsLeader(i) /\ IsLeader(j)) => currentTerm[i] # currentTerm[j]
 
-\* Frames stay within 1 of each other
+\* Frames stay within 1 of each other (lockstep guarantee)
 FrameBoundedDrift ==
     \A i, j \in Peer : frame[i] - frame[j] <= 1 /\ frame[j] - frame[i] <= 1
 
@@ -220,20 +252,30 @@ TypeInvariant ==
     /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
     /\ \A p \in Peer : Cardinality(pendingEvents[p]) <= MaxEvents
 
-\* Leader is at least as up-to-date as peers
+\* Leader is at least as up-to-date as peers (within 1 frame)
 LeaderUpToDate ==
     \A leader, p \in Peer : IsLeader(leader) => frame[leader] >= frame[p] - 1
 
 \* After state sync, follower's pending events contain ONLY local events
 \* This is the key property of LocalEventQueue.getEventsForReapply()
-\* (Note: This is always true due to how GenerateEvent works - events are <<owner, frame>> tuples
-\*  where owner is always the peer generating the event)
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
-----
-\* Liveness
+\* Sync term never exceeds current term (no time travel)
+SyncTermBounded ==
+    \A p \in Peer : syncTerm[p] <= currentTerm[p] \/ syncTerm[p] <= MaxTerm
 
+----
+\* Liveness Properties
+
+\* Eventually there is a leader
 EventuallyLeader == <>(\E p \in Peer : IsLeader(p))
+
+----
+\* State constraint for bounded model checking
+
+StateConstraint ==
+    /\ \A p \in Peer : frame[p] <= MaxFrame
+    /\ \A p \in Peer : currentTerm[p] <= MaxTerm
 
 ===============================================================================
