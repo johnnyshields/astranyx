@@ -48,9 +48,10 @@ const TLA_ONLY_ACTIONS = new Set([
   'LockstepSimple.SendStateSync',  // Atomic version, real impl is async
   'LockstepSimple.GenerateEvent',  // Boolean version
 
-  // LockstepNetwork - network-level modeling
-  'LockstepNetwork.LoseMessage',      // Modeled, not implemented (network handles)
-  'LockstepNetwork.DuplicateMessage', // Modeled, not implemented (idempotent)
+  // LockstepNetwork - network-level modeling (TLA+ only)
+  'LockstepNetwork.LoseMessage',       // Network handles loss
+  'LockstepNetwork.CreatePartition',   // Network condition, not code
+  'LockstepNetwork.HealPartition',     // Network condition, not code
 
   // Abstract/helper actions
   'LockstepState.ForceLeaderChange',  // External trigger only

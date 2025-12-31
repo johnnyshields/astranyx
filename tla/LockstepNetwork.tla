@@ -1,475 +1,588 @@
 --------------------------------- MODULE LockstepNetwork ---------------------------------
-\* P2P Networking and Synchronization Model
+\* P2P Lockstep Netcode with Network Layer
 \*
-\* This module models aspects NOT covered by LockstepState.tla:
-\* 1. Message delivery: loss, duplication, reordering
-\* 2. Peer lifecycle: connecting, connected, disconnected
-\* 3. InputBuffer: per-frame input storage
-\* 4. Checksum-based desync detection
-\* 5. WebRTC-specific behaviors: ICE restart, connection flapping
-\* 6. Network partitions: symmetric, asymmetric, partial
+\* Combines protocol correctness (from LockstepState) with network realism:
+\* 1. Lockstep frame synchronization
+\* 2. Raft-inspired leader election
+\* 3. Owner-authoritative events with tuple tracking
+\* 4. Async state sync with term validation
+\* 5. Message network with loss
+\* 6. Network partitions (symmetric)
+\* 7. Peer disconnect/reconnect
 \*
-\* Implementation references:
-\* - InputBuffer.ts: Per-frame input storage
-\* - P2PManager.ts: WebRTC peer connections
-\* - LockstepNetcode.ts: Message handling
-\* - WebRTCClient.ts: ICE restart handling
+\* Implementation: client/src/network/
 \*
 \* ============================================================================
-\* FOCUS vs LockstepState
+\* DESIGN DECISIONS
 \* ============================================================================
 \*
-\* INCLUDED:
-\* - Message network with loss/duplication/reordering
-\* - Peer connection state machine (connecting -> connected <-> disconnected)
-\* - InputBuffer per-frame storage (Map<frame, Map<peerId, input>>)
-\* - Checksum comparison for desync detection
-\* - ICE restart (WebRTC NAT traversal recovery)
-\* - Connection flapping (rapid connect/disconnect cycles)
-\* - Partial network partitions (A<->B ok, A<->C partitioned)
+\* INCLUDED (from LockstepState):
+\* - Async state sync: SendStateSync and ReceiveStateSync are separate
+\* - Tuple events: pendingEvents is set of <<owner, frame>> tuples
+\* - Term validation: syncTerm prevents accepting stale syncs
+\* - LocalEventsPreserved invariant
 \*
-\* EXCLUDED (covered by other modules):
-\* - Leader election (see LeaderElection.tla)
-\* - Owner-authoritative events (see LockstepState.tla)
-\* - State sync with term validation (see LockstepState.tla)
+\* INCLUDED (network layer):
+\* - Message loss: Messages can be dropped (unreliable DataChannel)
+\* - Partitions: Symmetric partitions between peer pairs
+\* - Connection state: connected/disconnected per peer
+\*
+\* EXCLUDED (intentional simplifications):
+\* - ICE restart: Implementation detail, doesn't affect protocol semantics
+\* - Message reordering: Lockstep tolerates via frame numbers (wrong frame ignored)
+\* - Message duplication: Idempotent receive (sets are deduplicated)
+\* - WebRTC signaling states: Simplified to connected/disconnected (captures essential behavior)
+\* - Checksum collision: Would need concrete checksum function; abstract inSync boolean suffices
+\* - Connection flapping: Would explode state space without adding verification value
+\*
+\* Target: ~20-50M states with 3 peers
 \* ============================================================================
 
 EXTENDS Integers, FiniteSets, Sequences
 
 CONSTANT Peer
 CONSTANT MaxFrame
-CONSTANT MaxMessages      \* Maximum messages in network
-CONSTANT MaxFlaps         \* Maximum connection flap count before stabilization
+CONSTANT MaxTerm
+CONSTANT MaxEvents          \* Max pending events per peer
+CONSTANT MaxMessages        \* Max messages in network
 
 ----
 \* Variables
 
-\* Peer connection state: "disconnected", "connecting", "connected", "ice_restarting"
-\* Implementation: RTCPeerConnection.connectionState + custom ice_restarting flag
-VARIABLE connectionState
+\* --- Protocol State (from LockstepState) ---
+VARIABLE frame              \* Current simulation frame per peer
+VARIABLE currentTerm        \* Election term per peer
+VARIABLE state              \* "Follower", "Candidate", "Leader"
+VARIABLE votedFor           \* Who this peer voted for (0 = none)
+VARIABLE votesReceived      \* Votes received by candidates
+VARIABLE inputsReceived     \* Peers who submitted input for current frame
+VARIABLE heartbeatReceived  \* Whether heartbeat received this round
+VARIABLE syncTerm           \* Term of last accepted state sync
+VARIABLE pendingEvents      \* Pending events: set of <<owner, frame>> tuples
+VARIABLE inSync             \* Whether peer's state matches leader
 
-\* Network: set of in-flight messages
-\* Each message is: <<type, from, to, frame, checksum>>
-\* type: "input" | "input_request"
-VARIABLE network
+\* --- Network State ---
+VARIABLE connected          \* Whether peer is connected (boolean per peer)
+VARIABLE network            \* Set of in-flight messages
+VARIABLE partitioned        \* Symmetric partition: partitioned[{p,q}] = TRUE
 
-\* InputBuffer: peer -> frame -> has_input (boolean)
-\* Simplification: we track presence only, not actual input data
-VARIABLE inputBuffer
+vars == <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived,
+          heartbeatReceived, syncTerm, pendingEvents, inSync,
+          connected, network, partitioned>>
 
-\* Checksum per peer per frame (for desync detection)
-\* peer -> frame -> checksum (0 = no checksum yet)
-VARIABLE checksums
+protocolVars == <<frame, currentTerm, state, votedFor, votesReceived,
+                  inputsReceived, heartbeatReceived, syncTerm, pendingEvents, inSync>>
 
-\* Current frame per peer
-VARIABLE frame
+networkVars == <<connected, network, partitioned>>
 
-\* Whether peer has detected desync
-VARIABLE desynced
+----
+\* Message Types
+\*
+\* Messages are tuples: <<type, from, to, payload...>>
+\* Types:
+\*   "input"      - <<from, to, frame>>
+\*   "state_sync" - <<from, to, term, frame>>
+\*   "heartbeat"  - <<from, to, term>>
+\*   "vote_req"   - <<from, to, term, lastFrame>>
+\*   "vote_resp"  - <<from, to, term, granted>>
 
-\* Partial partition matrix: partitioned[p1][p2] = TRUE means p1 cannot reach p2
-\* Note: Can be asymmetric (p1->p2 blocked but p2->p1 ok)
-VARIABLE partitioned
-
-\* Connection flap counter per peer (for detecting unstable connections)
-\* Implementation: P2PManager tracks reconnection attempts
-VARIABLE flapCount
-
-\* ICE restart in progress: peer -> boolean
-\* Implementation: RTCPeerConnection.restartIce() pending
-VARIABLE iceRestarting
-
-vars == <<connectionState, network, inputBuffer, checksums, frame, desynced, partitioned, flapCount, iceRestarting>>
+MsgType(m) == m[1]
+MsgFrom(m) == m[2]
+MsgTo(m) == m[3]
 
 ----
 \* Helpers
 
+IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
 MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
-ConnectedPeers == {p \in Peer : connectionState[p] = "connected"}
-IsConnected(p) == connectionState[p] = "connected"
+MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
+IsLeader(p) == state[p] = "Leader"
+CurrentLeader == IF \E p \in Peer : IsLeader(p)
+                 THEN CHOOSE p \in Peer : IsLeader(p)
+                 ELSE 0
 
-\* Check if peer has all inputs for a frame
-HasAllInputs(p, f) ==
-    \A q \in ConnectedPeers : inputBuffer[p][f][q]
+\* Connected peers only
+ConnectedPeers == {p \in Peer : connected[p]}
 
-\* Get minimum frame across connected peers
-MinConnectedFrame ==
-    IF ConnectedPeers = {} THEN 0
-    ELSE CHOOSE f \in {frame[p] : p \in ConnectedPeers} :
-         \A q \in ConnectedPeers : frame[q] >= f
+\* Check if two peers can communicate (both connected, not partitioned)
+CanCommunicate(p, q) ==
+    /\ connected[p]
+    /\ connected[q]
+    /\ ~partitioned[{p, q}]
 
-\* Check if two peers can communicate (not partitioned)
-CanReach(from, to) ==
-    /\ IsConnected(from)
-    /\ IsConnected(to)
-    /\ ~partitioned[from][to]
-
-\* Check if peer is in ICE restart state
-IsIceRestarting(p) == iceRestarting[p]
-
-\* Check if peer has exceeded flap threshold (unstable connection)
-IsFlapping(p) == flapCount[p] >= MaxFlaps
+\* All partition pairs (unordered)
+PartitionPairs == {{p, q} : p, q \in Peer}
 
 ----
 \* Initial state
 
 Init ==
-    /\ connectionState = [p \in Peer |-> IF p = MinPeer THEN "connected" ELSE "disconnected"]
-    /\ network = {}
-    /\ inputBuffer = [p \in Peer |-> [f \in 0..MaxFrame |-> [q \in Peer |-> FALSE]]]
-    /\ checksums = [p \in Peer |-> [f \in 0..MaxFrame |-> 0]]
+    \* Protocol state
     /\ frame = [p \in Peer |-> 0]
-    /\ desynced = [p \in Peer |-> FALSE]
-    /\ partitioned = [p \in Peer |-> [q \in Peer |-> FALSE]]  \* No partitions initially
-    /\ flapCount = [p \in Peer |-> 0]
-    /\ iceRestarting = [p \in Peer |-> FALSE]
+    /\ currentTerm = [p \in Peer |-> 0]
+    /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
+    /\ votedFor = [p \in Peer |-> 0]
+    /\ votesReceived = [p \in Peer |-> {}]
+    /\ inputsReceived = {}
+    /\ heartbeatReceived = [p \in Peer |-> TRUE]
+    /\ syncTerm = [p \in Peer |-> 0]
+    /\ pendingEvents = [p \in Peer |-> {}]
+    /\ inSync = [p \in Peer |-> TRUE]
+    \* Network state
+    /\ connected = [p \in Peer |-> TRUE]  \* All start connected
+    /\ network = {}
+    /\ partitioned = [pair \in PartitionPairs |-> FALSE]
 
 ----
-\* Connection State Machine (P2PManager.ts)
+\* ============================================================================
+\* NETWORK ACTIONS
+\* ============================================================================
 
-\* Implementation: connectToPeer() - initiate connection
-StartConnecting(p) ==
-    /\ connectionState[p] = "disconnected"
-    /\ ~IsFlapping(p)  \* Don't reconnect if flapping too much
-    /\ connectionState' = [connectionState EXCEPT ![p] = "connecting"]
-    /\ UNCHANGED <<network, inputBuffer, checksums, frame, desynced, partitioned, flapCount, iceRestarting>>
-
-\* Implementation: DataChannel.onopen
-ConnectionEstablished(p) ==
-    /\ connectionState[p] \in {"connecting", "ice_restarting"}
-    /\ connectionState' = [connectionState EXCEPT ![p] = "connected"]
-    /\ iceRestarting' = [iceRestarting EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<network, inputBuffer, checksums, frame, desynced, partitioned, flapCount>>
-
-\* Implementation: connection.onconnectionstatechange -> "disconnected"/"failed"
-\* Also: peer_left event from Phoenix
+\* Peer disconnects (models WebRTC connection failure)
+\* Implementation: P2PManager.ts - onconnectionstatechange -> "disconnected"
 Disconnect(p) ==
-    /\ connectionState[p] \in {"connecting", "connected", "ice_restarting"}
-    /\ connectionState' = [connectionState EXCEPT ![p] = "disconnected"]
-    \* Clear any pending messages to/from this peer
-    /\ network' = {m \in network : m[2] # p /\ m[3] # p}
-    \* Increment flap counter
-    /\ flapCount' = [flapCount EXCEPT ![p] = flapCount[p] + 1]
-    /\ iceRestarting' = [iceRestarting EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<inputBuffer, checksums, frame, desynced, partitioned>>
+    /\ connected[p] = TRUE
+    /\ connected' = [connected EXCEPT ![p] = FALSE]
+    \* Drop all messages to/from this peer
+    /\ network' = {m \in network : MsgFrom(m) # p /\ MsgTo(m) # p}
+    \* If leader disconnects, others will detect via heartbeat timeout
+    /\ UNCHANGED protocolVars
+    /\ UNCHANGED partitioned
 
-\* Implementation: peer_joined event triggers reconnect attempt
+\* Peer reconnects
+\* Implementation: P2PManager.ts - connectToPeer()
 Reconnect(p) ==
-    /\ connectionState[p] = "disconnected"
-    /\ ~IsFlapping(p)  \* Backoff if flapping
-    /\ connectionState' = [connectionState EXCEPT ![p] = "connecting"]
-    /\ UNCHANGED <<network, inputBuffer, checksums, frame, desynced, partitioned, flapCount, iceRestarting>>
+    /\ connected[p] = FALSE
+    /\ connected' = [connected EXCEPT ![p] = TRUE]
+    \* Reconnecting peer may be out of sync
+    /\ inSync' = [inSync EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<network, partitioned>>
 
-----
-\* Message Network (models unreliable delivery)
-
-\* Implementation: dataChannel.send() for input broadcast
-\* InputBuffer.ts:64 storeInput()
-SendInput(sender) ==
-    /\ IsConnected(sender)
-    /\ Cardinality(network) < MaxMessages
-    /\ frame[sender] <= MaxFrame
-    \* Send to all connected peers (partition-aware)
-    /\ \E receiver \in ConnectedPeers \ {sender} :
-       /\ CanReach(sender, receiver)  \* Partition check
-       /\ \E checksum \in {1, 2, 3} :  \* Abstract checksum values
-           LET msg == <<"input", sender, receiver, frame[sender], checksum>>
-           IN /\ network' = network \union {msg}
-              /\ checksums' = [checksums EXCEPT ![sender][frame[sender]] = checksum]
-    /\ UNCHANGED <<connectionState, inputBuffer, frame, desynced, partitioned, flapCount, iceRestarting>>
-
-\* Message delivery (non-deterministic: can deliver, lose, or duplicate)
-\* This models unreliable DataChannel (ordered: false, maxRetransmits: 0)
-DeliverMessage(msg) ==
-    /\ msg \in network
-    /\ IsConnected(msg[3])  \* Receiver must be connected
-    /\ ~partitioned[msg[2]][msg[3]]  \* Not partitioned
-    /\ LET type == msg[1]
-           sender == msg[2]
-           receiver == msg[3]
-           f == msg[4]
-           checksum == msg[5]
-       IN IF type = "input"
-          THEN /\ inputBuffer' = [inputBuffer EXCEPT ![receiver][f][sender] = TRUE]
-               /\ checksums' = [checksums EXCEPT ![receiver][f] = checksum]
-          ELSE UNCHANGED <<inputBuffer, checksums>>
-    /\ network' = network \ {msg}
-    /\ UNCHANGED <<connectionState, frame, desynced, partitioned, flapCount, iceRestarting>>
-
-\* Message loss (unreliable network)
-LoseMessage(msg) ==
-    /\ msg \in network
-    /\ network' = network \ {msg}
-    /\ UNCHANGED <<connectionState, inputBuffer, checksums, frame, desynced, partitioned, flapCount, iceRestarting>>
-
-\* Message duplication (rare but possible)
-DuplicateMessage(msg) ==
-    /\ msg \in network
-    /\ Cardinality(network) < MaxMessages
-    \* Create duplicate with same content (idempotent receive)
-    /\ UNCHANGED vars  \* Duplication is already in set
-
-----
-\* Input Buffer Operations (InputBuffer.ts)
-
-\* Implementation: storeInput() for local input
-StoreLocalInput(p) ==
-    /\ IsConnected(p)
-    /\ frame[p] <= MaxFrame
-    /\ ~inputBuffer[p][frame[p]][p]  \* Haven't stored yet
-    /\ \E checksum \in {1, 2, 3} :
-       /\ inputBuffer' = [inputBuffer EXCEPT ![p][frame[p]][p] = TRUE]
-       /\ checksums' = [checksums EXCEPT ![p][frame[p]] = checksum]
-    /\ UNCHANGED <<connectionState, network, frame, desynced, partitioned, flapCount, iceRestarting>>
-
-\* Implementation: tryAdvanceFrame() in LockstepNetcode.ts
-AdvanceFrame(p) ==
-    /\ IsConnected(p)
-    /\ frame[p] < MaxFrame
-    /\ HasAllInputs(p, frame[p])  \* All inputs received
-    /\ ~desynced[p]                \* Not in desync state
-    /\ frame' = [frame EXCEPT ![p] = frame[p] + 1]
-    /\ UNCHANGED <<connectionState, network, inputBuffer, checksums, desynced, partitioned, flapCount, iceRestarting>>
-
-----
-\* Desync Detection (InputBuffer.ts:128 checkDesync())
-
-\* Implementation: checkDesync() compares checksums
-DetectDesync(p) ==
-    /\ IsConnected(p)
-    /\ ~desynced[p]
-    /\ frame[p] > 0
-    \* Check for checksum mismatch with any peer at previous frame
-    /\ \E q \in ConnectedPeers \ {p} :
-       /\ checksums[p][frame[p]-1] # 0
-       /\ checksums[q][frame[p]-1] # 0
-       /\ checksums[p][frame[p]-1] # checksums[q][frame[p]-1]
-    /\ desynced' = [desynced EXCEPT ![p] = TRUE]
-    /\ UNCHANGED <<connectionState, network, inputBuffer, checksums, frame, partitioned, flapCount, iceRestarting>>
-
-\* Implementation: State sync reception clears desync (see LockstepState.tla)
-ClearDesync(p) ==
-    /\ desynced[p]
-    /\ desynced' = [desynced EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<connectionState, network, inputBuffer, checksums, frame, partitioned, flapCount, iceRestarting>>
-
-----
-\* ICE Restart (WebRTC NAT traversal recovery)
-\*
-\* Implementation: RTCPeerConnection.restartIce()
-\* Triggered when:
-\* - Connection state becomes "disconnected" or "failed"
-\* - ICE connection check fails
-\* - Network interface changes (e.g., WiFi -> cellular)
-
-\* Start ICE restart process
-\* Implementation: P2PManager detects connection issue, calls restartIce()
-StartIceRestart(p) ==
-    /\ IsConnected(p)
-    /\ ~iceRestarting[p]
-    /\ connectionState' = [connectionState EXCEPT ![p] = "ice_restarting"]
-    /\ iceRestarting' = [iceRestarting EXCEPT ![p] = TRUE]
-    \* Messages in flight may be lost during ICE restart
-    /\ network' = {m \in network : m[2] # p /\ m[3] # p}
-    /\ UNCHANGED <<inputBuffer, checksums, frame, desynced, partitioned, flapCount>>
-
-\* ICE restart succeeds - connection re-established
-\* Implementation: RTCPeerConnection.oniceconnectionstatechange -> "connected"
-IceRestartSuccess(p) ==
-    /\ connectionState[p] = "ice_restarting"
-    /\ iceRestarting[p]
-    /\ connectionState' = [connectionState EXCEPT ![p] = "connected"]
-    /\ iceRestarting' = [iceRestarting EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<network, inputBuffer, checksums, frame, desynced, partitioned, flapCount>>
-
-\* ICE restart fails - fall back to full reconnect
-\* Implementation: RTCPeerConnection.oniceconnectionstatechange -> "failed"
-IceRestartFailed(p) ==
-    /\ connectionState[p] = "ice_restarting"
-    /\ iceRestarting[p]
-    /\ connectionState' = [connectionState EXCEPT ![p] = "disconnected"]
-    /\ iceRestarting' = [iceRestarting EXCEPT ![p] = FALSE]
-    /\ flapCount' = [flapCount EXCEPT ![p] = flapCount[p] + 1]
-    /\ UNCHANGED <<network, inputBuffer, checksums, frame, desynced, partitioned>>
-
-----
-\* Network Partitions
-\*
-\* Models various partition scenarios:
-\* - Symmetric: A and B cannot communicate (bidirectional)
-\* - Asymmetric: A->B blocked but B->A works
-\* - Partial: A<->B ok, B<->C ok, A<->C partitioned
-
-\* Create asymmetric partition (one direction blocked)
-\* Implementation: Network conditions, firewall, NAT issues
-CreateAsymmetricPartition(from, to) ==
-    /\ from # to
-    /\ ~partitioned[from][to]  \* Not already partitioned
-    /\ partitioned' = [partitioned EXCEPT ![from][to] = TRUE]
-    \* Drop in-flight messages affected by partition
-    /\ network' = {m \in network : ~(m[2] = from /\ m[3] = to)}
-    /\ UNCHANGED <<connectionState, inputBuffer, checksums, frame, desynced, flapCount, iceRestarting>>
-
-\* Create symmetric partition (both directions blocked)
-\* Implementation: Complete network isolation between two peers
-CreateSymmetricPartition(p1, p2) ==
-    /\ p1 # p2
-    /\ ~partitioned[p1][p2] \/ ~partitioned[p2][p1]  \* At least one direction not partitioned
-    /\ partitioned' = [partitioned EXCEPT ![p1][p2] = TRUE, ![p2][p1] = TRUE]
-    \* Drop all messages between these peers
+\* Create partition between two peers (symmetric)
+\* Implementation: Network conditions, NAT issues
+CreatePartition(p, q) ==
+    /\ p # q
+    /\ ~partitioned[{p, q}]
+    /\ partitioned' = [partitioned EXCEPT ![{p, q}] = TRUE]
+    \* Drop messages between partitioned peers
     /\ network' = {m \in network :
-         ~((m[2] = p1 /\ m[3] = p2) \/ (m[2] = p2 /\ m[3] = p1))}
-    /\ UNCHANGED <<connectionState, inputBuffer, checksums, frame, desynced, flapCount, iceRestarting>>
+         ~((MsgFrom(m) = p /\ MsgTo(m) = q) \/ (MsgFrom(m) = q /\ MsgTo(m) = p))}
+    /\ UNCHANGED protocolVars
+    /\ UNCHANGED connected
 
-\* Heal partition (restore connectivity)
-\* Implementation: Network conditions improve, TURN fallback succeeds
-HealPartition(from, to) ==
-    /\ partitioned[from][to]
-    /\ partitioned' = [partitioned EXCEPT ![from][to] = FALSE]
-    /\ UNCHANGED <<connectionState, network, inputBuffer, checksums, frame, desynced, flapCount, iceRestarting>>
+\* Heal partition
+\* Implementation: Network recovery, TURN fallback
+HealPartition(p, q) ==
+    /\ p # q
+    /\ partitioned[{p, q}]
+    /\ partitioned' = [partitioned EXCEPT ![{p, q}] = FALSE]
+    /\ UNCHANGED protocolVars
+    /\ UNCHANGED <<connected, network>>
 
-\* Heal all partitions (network fully recovers)
-HealAllPartitions ==
-    /\ \E p, q \in Peer : partitioned[p][q]  \* At least one partition exists
-    /\ partitioned' = [p \in Peer |-> [q \in Peer |-> FALSE]]
-    /\ UNCHANGED <<connectionState, network, inputBuffer, checksums, frame, desynced, flapCount, iceRestarting>>
-
-----
-\* Connection Flapping
-\*
-\* Models rapid connect/disconnect cycles that can destabilize the system.
-\* Implementation: P2PManager tracks reconnection attempts and backs off.
-
-\* Reset flap counter (connection stabilized)
-\* Implementation: After sustained connection, reset backoff
-ResetFlapCount(p) ==
-    /\ IsConnected(p)
-    /\ flapCount[p] > 0
-    /\ flapCount' = [flapCount EXCEPT ![p] = 0]
-    /\ UNCHANGED <<connectionState, network, inputBuffer, checksums, frame, desynced, partitioned, iceRestarting>>
-
-\* Connection flap (immediate disconnect after connect)
-\* Models unstable network conditions
-ConnectionFlap(p) ==
-    /\ connectionState[p] = "connected"
-    /\ flapCount[p] < MaxFlaps  \* Still within tolerance
-    /\ connectionState' = [connectionState EXCEPT ![p] = "disconnected"]
-    /\ flapCount' = [flapCount EXCEPT ![p] = flapCount[p] + 1]
-    /\ network' = {m \in network : m[2] # p /\ m[3] # p}
-    /\ UNCHANGED <<inputBuffer, checksums, frame, desynced, partitioned, iceRestarting>>
+\* Message is lost (unreliable network)
+\* Implementation: UDP-like DataChannel (ordered: false, maxRetransmits: 0)
+LoseMessage(m) ==
+    /\ m \in network
+    /\ network' = network \ {m}
+    /\ UNCHANGED protocolVars
+    /\ UNCHANGED <<connected, partitioned>>
 
 ----
-\* State Machine
+\* ============================================================================
+\* FRAME SYNCHRONIZATION (Lockstep)
+\* ============================================================================
+
+\* Submit input for current frame
+\* Implementation: LockstepNetcode.ts - tick() -> storeInput() -> broadcastInput()
+SubmitInput(p) ==
+    /\ connected[p]
+    /\ p \notin inputsReceived
+    /\ frame[p] = MinFrame
+    /\ inputsReceived' = inputsReceived \union {p}
+    \* Broadcast input message to all connected peers
+    /\ LET newMsgs == {<<"input", p, q, frame[p]>> : q \in ConnectedPeers \ {p}}
+       IN network' = network \union newMsgs
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   heartbeatReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Receive input message
+\* Implementation: LockstepNetcode.ts - receiveInput()
+ReceiveInput(m) ==
+    /\ m \in network
+    /\ MsgType(m) = "input"
+    /\ LET sender == MsgFrom(m)
+           receiver == MsgTo(m)
+           msgFrame == m[4]
+       IN /\ connected[receiver]
+          /\ CanCommunicate(sender, receiver)
+          \* Input is useful if it's for our current frame
+          /\ msgFrame = frame[receiver]
+          /\ sender \notin inputsReceived
+          /\ inputsReceived' = inputsReceived \union {sender}
+    /\ network' = network \ {m}
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   heartbeatReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Advance to next frame when all inputs received
+\* Implementation: LockstepNetcode.ts - tryAdvanceFrame()
+AdvanceFrame(p) ==
+    /\ connected[p]
+    /\ inputsReceived = ConnectedPeers  \* All connected peers submitted
+    /\ frame[p] < MaxFrame
+    /\ frame[p] = MinFrame
+    /\ frame' = [frame EXCEPT ![p] = frame[p] + 1]
+    \* Reset inputsReceived when all peers have advanced
+    /\ inputsReceived' = IF \A q \in ConnectedPeers : frame'[q] > MinFrame
+                         THEN {}
+                         ELSE inputsReceived
+    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived,
+                   heartbeatReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED networkVars
+
+----
+\* ============================================================================
+\* OWNER-AUTHORITATIVE EVENTS
+\* ============================================================================
+
+\* Generate a local event
+\* Implementation: LockstepNetcode.ts - tick() with events
+GenerateEvent(p) ==
+    /\ connected[p]
+    /\ Cardinality(pendingEvents[p]) < MaxEvents
+    /\ pendingEvents' = [pendingEvents EXCEPT ![p] = pendingEvents[p] \union {<<p, frame[p]>>}]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   inputsReceived, heartbeatReceived, syncTerm, inSync>>
+    /\ UNCHANGED networkVars
+
+----
+\* ============================================================================
+\* STATE SYNC (Async with Term Validation)
+\* ============================================================================
+
+\* Leader sends state sync
+\* Implementation: LockstepNetcode.ts - broadcastStateSync()
+SendStateSync(leader) ==
+    /\ IsLeader(leader)
+    /\ connected[leader]
+    /\ Cardinality(network) < MaxMessages
+    \* Send sync message to all connected followers
+    /\ LET newMsgs == {<<"state_sync", leader, q, currentTerm[leader], frame[leader]>>
+                       : q \in ConnectedPeers \ {leader}}
+       IN network' = network \union newMsgs
+    /\ UNCHANGED protocolVars
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Follower receives state sync
+\* Implementation: StateSyncManager.ts - receiveSyncMessage()
+\* Key behavior: remote events cleared, LOCAL events preserved
+ReceiveStateSync(m) ==
+    /\ m \in network
+    /\ MsgType(m) = "state_sync"
+    /\ LET sender == MsgFrom(m)
+           receiver == MsgTo(m)
+           msgTerm == m[4]
+           msgFrame == m[5]
+       IN /\ connected[receiver]
+          /\ ~IsLeader(receiver)  \* Leaders don't accept syncs
+          /\ CanCommunicate(sender, receiver)
+          \* Term validation: only accept from current or higher term
+          /\ msgTerm >= syncTerm[receiver]
+          /\ syncTerm' = [syncTerm EXCEPT ![receiver] = msgTerm]
+          \* KEY: Filter to keep only events owned by receiver
+          /\ pendingEvents' = [pendingEvents EXCEPT
+               ![receiver] = {e \in pendingEvents[receiver] : e[1] = receiver}]
+          /\ inSync' = [inSync EXCEPT ![receiver] = TRUE]
+    /\ network' = network \ {m}
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   inputsReceived, heartbeatReceived>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Non-deterministic desync (models state divergence)
+\* Implementation: InputBuffer.ts - checkDesync() detects via checksums
+Desync(p) ==
+    /\ connected[p]
+    /\ ~IsLeader(p)
+    /\ inSync[p] = TRUE
+    /\ inSync' = [inSync EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED networkVars
+
+----
+\* ============================================================================
+\* LEADER ELECTION (Raft-inspired)
+\* ============================================================================
+
+\* Leader broadcasts heartbeat
+\* Implementation: LeaderElection.ts - broadcastHeartbeat()
+BroadcastHeartbeat(leader) ==
+    /\ IsLeader(leader)
+    /\ connected[leader]
+    /\ Cardinality(network) < MaxMessages
+    \* Send heartbeat to all connected peers
+    /\ LET newMsgs == {<<"heartbeat", leader, q, currentTerm[leader]>>
+                       : q \in ConnectedPeers \ {leader}}
+       IN network' = network \union newMsgs
+    \* Leader's own heartbeat is always "received"
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![leader] = TRUE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   inputsReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Receive heartbeat
+\* Implementation: LeaderElection.ts - handleHeartbeat()
+ReceiveHeartbeat(m) ==
+    /\ m \in network
+    /\ MsgType(m) = "heartbeat"
+    /\ LET sender == MsgFrom(m)
+           receiver == MsgTo(m)
+           msgTerm == m[4]
+       IN /\ connected[receiver]
+          /\ CanCommunicate(sender, receiver)
+          /\ msgTerm >= currentTerm[receiver]
+          \* Accept heartbeat: become follower, update term
+          /\ state' = [state EXCEPT ![receiver] = "Follower"]
+          /\ currentTerm' = [currentTerm EXCEPT ![receiver] = msgTerm]
+          /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![receiver] = TRUE]
+    /\ network' = network \ {m}
+    /\ UNCHANGED <<frame, votedFor, votesReceived, inputsReceived,
+                   syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Heartbeat expires (timeout)
+\* Implementation: LeaderElection.ts - election timer
+ExpireHeartbeat(p) ==
+    /\ connected[p]
+    /\ heartbeatReceived[p] = TRUE
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+                   inputsReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED networkVars
+
+\* Start election (become candidate)
+\* Implementation: LeaderElection.ts - startElection()
+StartElection(p) ==
+    /\ connected[p]
+    /\ state[p] = "Follower"
+    /\ heartbeatReceived[p] = FALSE
+    /\ currentTerm[p] < MaxTerm
+    /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
+    /\ state' = [state EXCEPT ![p] = "Candidate"]
+    /\ votedFor' = [votedFor EXCEPT ![p] = p]
+    /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = TRUE]
+    \* Send vote requests
+    /\ LET newMsgs == {<<"vote_req", p, q, currentTerm'[p], frame[p]>>
+                       : q \in ConnectedPeers \ {p}}
+       IN network' = network \union newMsgs
+    /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Receive vote request and respond
+\* Implementation: LeaderElection.ts - handleVoteRequest()
+ReceiveVoteRequest(m) ==
+    /\ m \in network
+    /\ MsgType(m) = "vote_req"
+    /\ LET candidate == MsgFrom(m)
+           voter == MsgTo(m)
+           msgTerm == m[4]
+           lastFrame == m[5]
+       IN /\ connected[voter]
+          /\ CanCommunicate(candidate, voter)
+          /\ msgTerm >= currentTerm[voter]
+          /\ lastFrame >= frame[voter]  \* Log comparison
+          /\ \/ votedFor[voter] = 0
+             \/ msgTerm > currentTerm[voter]
+          \* Grant vote
+          /\ votedFor' = [votedFor EXCEPT ![voter] = candidate]
+          /\ currentTerm' = [currentTerm EXCEPT ![voter] = msgTerm]
+          /\ state' = [state EXCEPT ![voter] = "Follower"]
+          /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![voter] = TRUE]
+          \* Send vote response
+          /\ network' = (network \ {m}) \union
+               {<<"vote_resp", voter, candidate, msgTerm, TRUE>>}
+    /\ UNCHANGED <<frame, votesReceived, inputsReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Receive vote response
+\* Implementation: LeaderElection.ts - handleVoteResponse()
+ReceiveVoteResponse(m) ==
+    /\ m \in network
+    /\ MsgType(m) = "vote_resp"
+    /\ LET voter == MsgFrom(m)
+           candidate == MsgTo(m)
+           msgTerm == m[4]
+           granted == m[5]
+       IN /\ connected[candidate]
+          /\ CanCommunicate(voter, candidate)
+          /\ state[candidate] = "Candidate"
+          /\ msgTerm = currentTerm[candidate]
+          /\ granted = TRUE
+          /\ votesReceived' = [votesReceived EXCEPT
+               ![candidate] = votesReceived[candidate] \union {voter}]
+    /\ network' = network \ {m}
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, inputsReceived,
+                   heartbeatReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+\* Become leader with majority
+\* Implementation: LeaderElection.ts - becomeLeader()
+BecomeLeader(p) ==
+    /\ connected[p]
+    /\ state[p] = "Candidate"
+    /\ IsMajority(votesReceived[p])
+    /\ state' = [state EXCEPT ![p] = "Leader"]
+    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived,
+                   heartbeatReceived, syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED networkVars
+
+\* Step down on higher term
+\* Implementation: LeaderElection.ts - stepDown()
+StepDown(p) ==
+    /\ connected[p]
+    /\ IsLeader(p)
+    /\ \E q \in Peer : currentTerm[q] > currentTerm[p]
+    /\ state' = [state EXCEPT ![p] = "Follower"]
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived,
+                   syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED networkVars
+
+\* Retry election (candidate timeout)
+\* Implementation: LeaderElection.ts - election timer retry
+RetryElection(p) ==
+    /\ connected[p]
+    /\ state[p] = "Candidate"
+    /\ currentTerm[p] < MaxTerm
+    /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
+    /\ votedFor' = [votedFor EXCEPT ![p] = p]
+    /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
+    \* Send new vote requests
+    /\ LET newMsgs == {<<"vote_req", p, q, currentTerm'[p], frame[p]>>
+                       : q \in ConnectedPeers \ {p}}
+       IN network' = network \union newMsgs
+    /\ UNCHANGED <<frame, state, inputsReceived, heartbeatReceived,
+                   syncTerm, pendingEvents, inSync>>
+    /\ UNCHANGED <<connected, partitioned>>
+
+----
+\* ============================================================================
+\* STATE MACHINE
+\* ============================================================================
 
 Next ==
-    \* Connection management
-    \/ \E p \in Peer : StartConnecting(p)
-    \/ \E p \in Peer : ConnectionEstablished(p)
+    \* Network layer
     \/ \E p \in Peer : Disconnect(p)
     \/ \E p \in Peer : Reconnect(p)
-    \* Message network
-    \/ \E p \in Peer : SendInput(p)
-    \/ \E m \in network : DeliverMessage(m)
-    \/ \E m \in network : LoseMessage(m)
-    \* Input buffer
-    \/ \E p \in Peer : StoreLocalInput(p)
-    \/ \E p \in Peer : AdvanceFrame(p)
-    \* Desync
-    \/ \E p \in Peer : DetectDesync(p)
-    \/ \E p \in Peer : ClearDesync(p)
-    \* ICE restart
-    \/ \E p \in Peer : StartIceRestart(p)
-    \/ \E p \in Peer : IceRestartSuccess(p)
-    \/ \E p \in Peer : IceRestartFailed(p)
-    \* Network partitions
-    \/ \E p, q \in Peer : CreateAsymmetricPartition(p, q)
-    \/ \E p, q \in Peer : CreateSymmetricPartition(p, q)
+    \/ \E p, q \in Peer : CreatePartition(p, q)
     \/ \E p, q \in Peer : HealPartition(p, q)
-    \/ HealAllPartitions
-    \* Connection flapping
-    \/ \E p \in Peer : ResetFlapCount(p)
-    \/ \E p \in Peer : ConnectionFlap(p)
+    \/ \E m \in network : LoseMessage(m)
+    \* Lockstep
+    \/ \E p \in Peer : SubmitInput(p)
+    \/ \E m \in network : ReceiveInput(m)
+    \/ \E p \in Peer : AdvanceFrame(p)
+    \* Events
+    \/ \E p \in Peer : GenerateEvent(p)
+    \* State Sync
+    \/ \E p \in Peer : SendStateSync(p)
+    \/ \E m \in network : ReceiveStateSync(m)
+    \/ \E p \in Peer : Desync(p)
+    \* Election
+    \/ \E p \in Peer : BroadcastHeartbeat(p)
+    \/ \E m \in network : ReceiveHeartbeat(m)
+    \/ \E p \in Peer : ExpireHeartbeat(p)
+    \/ \E p \in Peer : StartElection(p)
+    \/ \E m \in network : ReceiveVoteRequest(m)
+    \/ \E m \in network : ReceiveVoteResponse(m)
+    \/ \E p \in Peer : BecomeLeader(p)
+    \/ \E p \in Peer : StepDown(p)
+    \/ \E p \in Peer : RetryElection(p)
 
 Fairness ==
-    /\ WF_vars(\E p \in Peer : ConnectionEstablished(p))
-    /\ WF_vars(\E m \in network : DeliverMessage(m))
+    \* Progress guarantees
+    /\ WF_vars(\E p \in Peer : SubmitInput(p))
+    /\ WF_vars(\E m \in network : ReceiveInput(m))
     /\ WF_vars(\E p \in Peer : AdvanceFrame(p))
-    /\ WF_vars(\E p \in Peer : ClearDesync(p))
-    /\ WF_vars(\E p \in Peer : IceRestartSuccess(p))  \* ICE restart eventually resolves
-    /\ WF_vars(\E p, q \in Peer : HealPartition(p, q))  \* Partitions eventually heal
-    /\ WF_vars(\E p \in Peer : ResetFlapCount(p))  \* Flapping eventually stabilizes
+    /\ WF_vars(\E p \in Peer : BroadcastHeartbeat(p))
+    /\ WF_vars(\E m \in network : ReceiveHeartbeat(m))
+    /\ WF_vars(\E p \in Peer : BecomeLeader(p))
+    /\ WF_vars(\E m \in network : ReceiveStateSync(m))
+    /\ WF_vars(\E p, q \in Peer : HealPartition(p, q))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
 ----
-\* Safety Properties
+\* ============================================================================
+\* SAFETY PROPERTIES
+\* ============================================================================
+
+\* No two leaders in same term (election safety)
+NoTwoLeadersInSameTerm ==
+    \A i, j \in Peer :
+        (i # j /\ IsLeader(i) /\ IsLeader(j)) => currentTerm[i] # currentTerm[j]
+
+\* Frames stay within 1 of each other among connected peers
+FrameBoundedDrift ==
+    \A i, j \in ConnectedPeers :
+        frame[i] - frame[j] <= 1 /\ frame[j] - frame[i] <= 1
 
 \* Type invariant
 TypeInvariant ==
-    /\ \A p \in Peer : connectionState[p] \in {"disconnected", "connecting", "connected", "ice_restarting"}
     /\ \A p \in Peer : frame[p] >= 0 /\ frame[p] <= MaxFrame
-    /\ \A p \in Peer : desynced[p] \in BOOLEAN
-    /\ \A p \in Peer : iceRestarting[p] \in BOOLEAN
-    /\ \A p \in Peer : flapCount[p] >= 0 /\ flapCount[p] <= MaxFlaps + 1
-    /\ \A p, q \in Peer : partitioned[p][q] \in BOOLEAN
+    /\ \A p \in Peer : currentTerm[p] >= 0 /\ currentTerm[p] <= MaxTerm
+    /\ \A p \in Peer : syncTerm[p] >= 0 /\ syncTerm[p] <= MaxTerm
+    /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
+    /\ \A p \in Peer : Cardinality(pendingEvents[p]) <= MaxEvents
+    /\ \A p \in Peer : inSync[p] \in BOOLEAN
+    /\ \A p \in Peer : connected[p] \in BOOLEAN
     /\ Cardinality(network) <= MaxMessages
 
-\* Frames stay bounded (within 1 of each other among connected peers)
-ConnectedFrameBoundedDrift ==
-    \A p, q \in ConnectedPeers :
-        frame[p] - frame[q] <= 1 /\ frame[q] - frame[p] <= 1
+\* Leader is at least as up-to-date as connected peers
+LeaderUpToDate ==
+    \A leader, p \in ConnectedPeers :
+        IsLeader(leader) => frame[leader] >= frame[p] - 1
 
-\* A peer can only advance if it has all inputs
-NoAdvanceWithoutInputs ==
-    \A p \in ConnectedPeers :
-        frame[p] > 0 => HasAllInputs(p, frame[p] - 1)
+\* After state sync, follower's pending events contain ONLY local events
+\* This is THE key correctness property for owner-authoritative events
+LocalEventsPreserved ==
+    \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
-\* Desync detection is possible (checksums are comparable)
-DesyncDetectable ==
-    \A p \in ConnectedPeers :
-        desynced[p] =>
-            \E q \in ConnectedPeers \ {p} :
-                checksums[p][frame[p]-1] # checksums[q][frame[p]-1]
+\* Sync term never exceeds current term
+SyncTermBounded ==
+    \A p \in Peer : syncTerm[p] <= currentTerm[p]
 
-\* ICE restarting peer is not considered "connected" for message delivery
-IceRestartingNotConnected ==
-    \A p \in Peer : iceRestarting[p] => connectionState[p] = "ice_restarting"
-
-\* Flapping peers eventually stop reconnecting (backoff works)
-FlappingPeersBackedOff ==
-    \A p \in Peer : flapCount[p] >= MaxFlaps =>
-        connectionState[p] \in {"disconnected", "connected", "ice_restarting"}
-
-\* Partitions are reflexively false (peer can always reach itself)
+\* No self-partition (sanity check)
 NoSelfPartition ==
-    \A p \in Peer : ~partitioned[p][p]
+    \A p \in Peer : ~partitioned[{p, p}]
 
 ----
-\* Liveness Properties
+\* ============================================================================
+\* LIVENESS PROPERTIES
+\* ============================================================================
 
-\* If messages keep being delivered, frames eventually advance
-EventualProgress ==
-    (\A p \in ConnectedPeers : frame[p] < MaxFrame) ~>
-    (\E p \in ConnectedPeers : frame[p] > 0)
+\* Eventually there is a leader (among connected peers)
+EventuallyLeader ==
+    <>(\E p \in ConnectedPeers : IsLeader(p))
 
-\* Desync is eventually cleared (by state sync)
-DesyncEventuallyCleared ==
-    \A p \in Peer : desynced[p] ~> ~desynced[p]
+\* Desync is eventually corrected via state sync
+DesyncEventuallyCorrected ==
+    (\E p \in Peer : IsLeader(p)) =>
+        <>(\A p \in ConnectedPeers : inSync[p])
 
-\* ICE restart eventually completes (success or failure)
-IceRestartEventuallyCompletes ==
-    \A p \in Peer : iceRestarting[p] ~> ~iceRestarting[p]
-
-\* Partitions eventually heal (network recovers)
+\* Partitions eventually heal
 PartitionsEventuallyHeal ==
-    (\E p, q \in Peer : partitioned[p][q]) ~> (\A p, q \in Peer : ~partitioned[p][q])
+    <>(\A pair \in PartitionPairs : ~partitioned[pair])
 
 ----
 \* State constraint for bounded model checking
 
 StateConstraint ==
     /\ \A p \in Peer : frame[p] <= MaxFrame
-    /\ \A p \in Peer : flapCount[p] <= MaxFlaps + 1
+    /\ \A p \in Peer : currentTerm[p] <= MaxTerm
     /\ Cardinality(network) <= MaxMessages
 
 ===============================================================================
