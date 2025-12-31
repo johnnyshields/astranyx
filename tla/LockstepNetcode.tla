@@ -1,39 +1,27 @@
 --------------------------------- MODULE LockstepNetcode ---------------------------------
-\* Formal specification for P2P Lockstep Netcode with Leader Election
+\* P2P Lockstep Netcode with Leader Election
 \*
-\* This specification models:
-\* 1. Deterministic lockstep simulation across peers
-\* 2. Raft-inspired leader election for state sync authority
-\* 3. Owner-authoritative events (damage, pickup, etc.)
-\* 4. State synchronization from leader to followers
+\* Models a deterministic lockstep simulation where:
+\* 1. All peers must submit input before any peer advances
+\* 2. Each peer advances independently (deterministic simulation ensures sync)
+\* 3. Leader election uses Raft-inspired consensus
+\* 4. Leader sends heartbeats to maintain authority
 \*
-\* Safety Properties:
-\* - No two leaders in same term (election safety)
-\* - Committed events are never lost (event durability)
-\* - State sync only from leader (authority)
-\* - All peers converge to same state (consistency)
+\* This model matches the TypeScript implementation in client/src/network/
 \*
-\* To run: ./model-check.sh LockstepNetcode
+\* Properties verified:
+\* - Election Safety: No two leaders in same term
+\* - Lockstep Safety: Frames advance together (via input collection)
+\* - Liveness: Leader eventually elected, frames eventually advance
 
-EXTENDS Integers, FiniteSets, Sequences
+EXTENDS Integers, FiniteSets
 
-\* The set of peer IDs (players in the game)
 CONSTANT Peer
-
-\* Maximum simulation frame to explore
 CONSTANT MaxFrame
-
-\* Maximum election term to explore
 CONSTANT MaxTerm
 
-\* Maximum events that can be generated
-CONSTANT MaxEvents
-
-\* Maximum pending events in buffer
-CONSTANT MaxPendingEvents
-
 ----
-\* Per-peer state variables (functions with domain Peer)
+\* Variables
 
 \* Current simulation frame for each peer
 VARIABLE frame
@@ -44,337 +32,226 @@ VARIABLE currentTerm
 \* Peer state: "Follower", "Candidate", "Leader"
 VARIABLE state
 
-\* Who this peer voted for in current term (Peer ID or 0 for none)
+\* Who this peer voted for in current term (0 = none)
 VARIABLE votedFor
 
-\* Current leader known to each peer (0 if unknown)
-VARIABLE currentLeader
-
-\* Vote count received (only meaningful for candidates)
+\* Votes received by each peer (set of voters)
 VARIABLE votesReceived
 
-\* Event log: sequence of events confirmed by all peers
-\* Each event is [term |-> t, frame |-> f, owner |-> p, type |-> "event"]
-VARIABLE eventLog
+\* Set of peers who have submitted input for current frame
+\* (models InputBuffer.hasAllInputs check)
+VARIABLE inputsReceived
 
-\* Pending local events not yet confirmed
-\* Map from peer -> sequence of events
-VARIABLE pendingEvents
+\* Whether each peer has received a heartbeat this "round"
+\* (models leader liveness detection)
+VARIABLE heartbeatReceived
 
-\* Last state sync frame received from leader
-VARIABLE lastSyncFrame
-
-\* Checksum of game state at current frame (abstracted as frame number for simplicity)
-\* In real impl, this is a hash of game state
-VARIABLE stateChecksum
-
-\* Network connectivity: which peers can communicate
-\* partitioned[i][j] = TRUE means i cannot receive from j
-VARIABLE partitioned
-
-----
-\* Variable groupings for stuttering
-
-electionVars == <<currentTerm, state, votedFor, currentLeader, votesReceived>>
-frameVars == <<frame, lastSyncFrame, stateChecksum>>
-eventVars == <<eventLog, pendingEvents>>
-networkVars == <<partitioned>>
-
-vars == <<electionVars, frameVars, eventVars, networkVars>>
+vars == <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived>>
 
 ----
 \* Helpers
 
-\* Check if peer set forms a majority
-IsMajority(peers) == Cardinality(peers) * 2 > Cardinality(Peer)
+IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
 
-\* Get all leaders
-Leaders == {p \in Peer : state[p] = "Leader"}
-
-\* Get minimum peer ID (initial leader)
 MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 
-\* Check if peer i can receive messages from peer j
-CanReceive(i, j) == ~partitioned[i][j]
+\* Minimum frame across all peers (for lockstep check)
+MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 
-\* Get the highest term seen among a set of peers
-HighestTerm(peers) ==
-    IF peers = {} THEN 0
-    ELSE CHOOSE t \in {currentTerm[p] : p \in peers} :
-         \A p \in peers : currentTerm[p] <= t
-
-\* Range of a function
-Range(f) == {f[x] : x \in DOMAIN f}
-
-\* Last element of sequence
-Last(s) == s[Len(s)]
-
-\* Get confirmed events up to a frame
-EventsUpToFrame(f) ==
-    {e \in Range(eventLog) : e.frame <= f}
+\* Maximum frame across all peers
+MaxFrameReached == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] <= f
 
 ----
 \* Initial state
 
-InitElectionVars ==
+Init ==
+    /\ frame = [p \in Peer |-> 0]
     /\ currentTerm = [p \in Peer |-> 0]
     /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
     /\ votedFor = [p \in Peer |-> 0]
-    /\ currentLeader = [p \in Peer |-> MinPeer]
     /\ votesReceived = [p \in Peer |-> {}]
-
-InitFrameVars ==
-    /\ frame = [p \in Peer |-> 0]
-    /\ lastSyncFrame = [p \in Peer |-> 0]
-    /\ stateChecksum = [p \in Peer |-> 0]
-
-InitEventVars ==
-    /\ eventLog = << >>
-    /\ pendingEvents = [p \in Peer |-> << >>]
-
-InitNetworkVars ==
-    /\ partitioned = [i \in Peer |-> [j \in Peer |-> FALSE]]
-
-Init ==
-    /\ InitElectionVars
-    /\ InitFrameVars
-    /\ InitEventVars
-    /\ InitNetworkVars
+    /\ inputsReceived = {}
+    /\ heartbeatReceived = [p \in Peer |-> TRUE]  \* Start with heartbeat
 
 ----
-\* Actions
+\* Frame Advance Actions (matches LockstepNetcode.ts)
 
-\* ACTION: Advance simulation frame (all peers must have same frame for lockstep)
-\* In pure lockstep, frame only advances when all inputs received
+\* Peer submits input for current frame
+\* Implementation: tick() -> inputBuffer.storeInput() -> broadcastInput()
+\* Note: No leader required - inputs can be submitted anytime
+SubmitInput(p) ==
+    /\ p \notin inputsReceived
+    /\ frame[p] = MinFrame                           \* Only submit for current frame
+    /\ inputsReceived' = inputsReceived \union {p}
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, heartbeatReceived>>
+
+\* Peer advances frame when all inputs received
+\* Implementation: tryAdvanceFrame() - each peer advances independently
+\* Lockstep guarantee: deterministic simulation + same inputs = same state
 AdvanceFrame(p) ==
-    /\ frame[p] < MaxFrame
-    \* All peers must be at same frame (lockstep constraint)
-    /\ \A q \in Peer : CanReceive(p, q) => frame[q] >= frame[p]
-    /\ frame' = [frame EXCEPT ![p] = frame[p] + 1]
-    \* Update checksum (simplified: just the frame number)
-    /\ stateChecksum' = [stateChecksum EXCEPT ![p] = frame[p] + 1]
-    /\ UNCHANGED <<electionVars, eventVars, lastSyncFrame, networkVars>>
-
-\* ACTION: Generate a local event (owner-authoritative)
-GenerateEvent(p) ==
-    /\ Len(pendingEvents[p]) < MaxPendingEvents
-    /\ Len(eventLog) < MaxEvents
-    /\ LET newEvent == [
-           term |-> currentTerm[p],
-           frame |-> frame[p],
-           owner |-> p,
-           type |-> "event"
-       ]
-       IN pendingEvents' = [pendingEvents EXCEPT ![p] = Append(pendingEvents[p], newEvent)]
-    /\ UNCHANGED <<electionVars, frameVars, eventLog, networkVars>>
-
-\* ACTION: Leader confirms pending events (adds to global log)
-ConfirmEvents(leader) ==
-    /\ state[leader] = "Leader"
-    /\ \E p \in Peer :
-        /\ Len(pendingEvents[p]) > 0
-        /\ CanReceive(leader, p)
-        /\ LET event == pendingEvents[p][1]
-           IN /\ eventLog' = Append(eventLog, event)
-              /\ pendingEvents' = [pendingEvents EXCEPT ![p] = Tail(pendingEvents[p])]
-    /\ UNCHANGED <<electionVars, frameVars, networkVars>>
-
-\* ACTION: Leader sends state sync to follower
-\* Non-leader applies state from leader
-SendStateSync(leader, follower) ==
-    /\ state[leader] = "Leader"
-    /\ leader # follower
-    /\ CanReceive(follower, leader)
-    /\ currentLeader[follower] = leader
-    \* Follower updates to leader's frame if behind
-    /\ frame[follower] <= frame[leader]
-    /\ frame' = [frame EXCEPT ![follower] = frame[leader]]
-    /\ lastSyncFrame' = [lastSyncFrame EXCEPT ![follower] = frame[leader]]
-    /\ stateChecksum' = [stateChecksum EXCEPT ![follower] = stateChecksum[leader]]
-    /\ UNCHANGED <<electionVars, eventVars, networkVars>>
+    /\ inputsReceived = Peer                         \* All peers submitted (hasAllInputs)
+    /\ frame[p] < MaxFrame                           \* Not at max frame
+    /\ frame[p] = MinFrame                           \* Peer at minimum frame
+    /\ frame' = [frame EXCEPT ![p] = frame[p] + 1]   \* This peer advances
+    \* Reset inputs when ALL peers have advanced
+    /\ inputsReceived' = IF \A q \in Peer : frame'[q] > MinFrame
+                         THEN {}
+                         ELSE inputsReceived
+    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, heartbeatReceived>>
 
 ----
-\* Election Actions (Raft-inspired)
+\* Leader Heartbeat Actions (matches LeaderElection.ts)
 
-\* ACTION: Follower times out and becomes candidate
+\* Leader broadcasts heartbeat
+\* Implementation: broadcastHeartbeat() every 500ms
+BroadcastHeartbeat(leader) ==
+    /\ state[leader] = "Leader"
+    /\ heartbeatReceived' = [p \in Peer |-> TRUE]    \* All peers receive heartbeat
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived>>
+
+\* Follower's heartbeat times out (triggers election)
+\* Implementation: startElectionTimer() with timeout check
+HeartbeatTimeout(p) ==
+    /\ state[p] = "Follower"
+    /\ heartbeatReceived[p] = FALSE                  \* No heartbeat received
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived>>
+
+\* Reset heartbeat flag (models time passing)
+ExpireHeartbeat(p) ==
+    /\ heartbeatReceived[p] = TRUE
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived>>
+
+----
+\* Election Actions (matches LeaderElection.ts)
+
+\* Follower starts election (timeout with no heartbeat)
+\* Implementation: startElection()
 StartElection(p) ==
-    /\ state[p] # "Leader"
+    /\ state[p] = "Follower"
+    /\ heartbeatReceived[p] = FALSE                  \* Heartbeat timed out
     /\ currentTerm[p] < MaxTerm
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
     /\ state' = [state EXCEPT ![p] = "Candidate"]
-    /\ votedFor' = [votedFor EXCEPT ![p] = p]  \* Vote for self
-    /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]  \* Count own vote
-    /\ currentLeader' = [currentLeader EXCEPT ![p] = 0]
-    /\ UNCHANGED <<frameVars, eventVars, networkVars>>
+    /\ votedFor' = [votedFor EXCEPT ![p] = p]
+    /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = TRUE]  \* Reset timer
+    /\ UNCHANGED <<frame, inputsReceived>>
 
-\* ACTION: Candidate requests vote from peer
-\* Peer grants vote if: higher term, hasn't voted, or voted for same candidate
-RequestVote(candidate, voter) ==
+\* Vote for candidate (grant vote if valid)
+\* Implementation: handleRequestVote()
+Vote(voter, candidate) ==
     /\ state[candidate] = "Candidate"
-    /\ candidate # voter
-    /\ CanReceive(voter, candidate)
+    /\ voter # candidate
     /\ currentTerm[candidate] >= currentTerm[voter]
-    /\ \/ votedFor[voter] = 0
-       \/ votedFor[voter] = candidate
-       \/ currentTerm[candidate] > currentTerm[voter]
-    \* Grant vote
+    /\ frame[candidate] >= frame[voter]              \* Log comparison: candidate at least as up-to-date
+    /\ \/ votedFor[voter] = 0                        \* Haven't voted
+       \/ currentTerm[candidate] > currentTerm[voter] \* Higher term resets
     /\ votedFor' = [votedFor EXCEPT ![voter] = candidate]
     /\ currentTerm' = [currentTerm EXCEPT ![voter] = currentTerm[candidate]]
     /\ votesReceived' = [votesReceived EXCEPT ![candidate] = votesReceived[candidate] \union {voter}]
     /\ state' = [state EXCEPT ![voter] = "Follower"]
-    /\ UNCHANGED <<currentLeader, frameVars, eventVars, networkVars>>
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![voter] = TRUE]  \* Reset timer
+    /\ UNCHANGED <<frame, inputsReceived>>
 
-\* ACTION: Candidate wins election with majority
+\* Candidate becomes leader with majority
+\* Implementation: checkElectionResult() -> becomeLeader()
 BecomeLeader(p) ==
     /\ state[p] = "Candidate"
     /\ IsMajority(votesReceived[p])
     /\ state' = [state EXCEPT ![p] = "Leader"]
-    /\ currentLeader' = [currentLeader EXCEPT ![p] = p]
-    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, eventVars, networkVars>>
+    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived, heartbeatReceived>>
 
-\* ACTION: Leader steps down (discovers higher term or loses connectivity)
-Stepdown(leader) ==
-    /\ state[leader] = "Leader"
-    /\ \E p \in Peer :
-        /\ p # leader
-        /\ currentTerm[p] > currentTerm[leader]
-    /\ state' = [state EXCEPT ![leader] = "Follower"]
-    /\ UNCHANGED <<currentTerm, votedFor, currentLeader, votesReceived, frameVars, eventVars, networkVars>>
+\* Leader steps down on seeing higher term
+\* Implementation: stepDown()
+Stepdown(p) ==
+    /\ state[p] = "Leader"
+    /\ \E q \in Peer : currentTerm[q] > currentTerm[p]
+    /\ state' = [state EXCEPT ![p] = "Follower"]
+    /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived>>
 
-\* ACTION: Peer learns about new term from another peer
-UpdateTerm(i, j) ==
-    /\ i # j
-    /\ CanReceive(i, j)
-    /\ currentTerm[j] > currentTerm[i]
-    /\ currentTerm' = [currentTerm EXCEPT ![i] = currentTerm[j]]
-    /\ state' = [state EXCEPT ![i] = "Follower"]
-    /\ votedFor' = [votedFor EXCEPT ![i] = 0]
-    /\ currentLeader' = [currentLeader EXCEPT ![i] =
-           IF state[j] = "Leader" THEN j ELSE currentLeader[i]]
-    /\ UNCHANGED <<votesReceived, frameVars, eventVars, networkVars>>
-
-\* ACTION: Follower learns new leader
-LearnLeader(follower, leader) ==
-    /\ follower # leader
-    /\ state[leader] = "Leader"
-    /\ CanReceive(follower, leader)
-    /\ currentTerm[leader] >= currentTerm[follower]
-    /\ currentLeader' = [currentLeader EXCEPT ![follower] = leader]
-    /\ currentTerm' = [currentTerm EXCEPT ![follower] = currentTerm[leader]]
-    /\ state' = [state EXCEPT ![follower] = "Follower"]
-    /\ UNCHANGED <<votedFor, votesReceived, frameVars, eventVars, networkVars>>
+\* Candidate retries election (timeout)
+\* Implementation: election timer fires -> startElection()
+RetryElection(p) ==
+    /\ state[p] = "Candidate"
+    /\ currentTerm[p] < MaxTerm
+    /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
+    /\ votedFor' = [votedFor EXCEPT ![p] = p]
+    /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
+    /\ UNCHANGED <<frame, state, inputsReceived, heartbeatReceived>>
 
 ----
-\* Network partition actions (for testing)
-
-\* ACTION: Create network partition between two peers
-CreatePartition(i, j) ==
-    /\ i # j
-    /\ ~partitioned[i][j]
-    /\ partitioned' = [partitioned EXCEPT ![i][j] = TRUE, ![j][i] = TRUE]
-    /\ UNCHANGED <<electionVars, frameVars, eventVars>>
-
-\* ACTION: Heal network partition
-HealPartition(i, j) ==
-    /\ i # j
-    /\ partitioned[i][j]
-    /\ partitioned' = [partitioned EXCEPT ![i][j] = FALSE, ![j][i] = FALSE]
-    /\ UNCHANGED <<electionVars, frameVars, eventVars>>
-
-----
-\* State machine
+\* State Machine
 
 Next ==
-    \* Frame advancement (lockstep)
+    \* Frame advance (lockstep)
+    \/ \E p \in Peer : SubmitInput(p)
     \/ \E p \in Peer : AdvanceFrame(p)
-    \* Event handling
-    \/ \E p \in Peer : GenerateEvent(p)
-    \/ \E leader \in Peer : ConfirmEvents(leader)
-    \/ \E leader, follower \in Peer : SendStateSync(leader, follower)
-    \* Election protocol
+    \* Heartbeat (leader liveness)
+    \/ \E p \in Peer : BroadcastHeartbeat(p)
+    \/ \E p \in Peer : ExpireHeartbeat(p)
+    \* Elections
     \/ \E p \in Peer : StartElection(p)
-    \/ \E c, v \in Peer : RequestVote(c, v)
+    \/ \E v, c \in Peer : Vote(v, c)
     \/ \E p \in Peer : BecomeLeader(p)
     \/ \E p \in Peer : Stepdown(p)
-    \/ \E i, j \in Peer : UpdateTerm(i, j)
-    \/ \E f, l \in Peer : LearnLeader(f, l)
-    \* Network faults
-    \/ \E i, j \in Peer : CreatePartition(i, j)
-    \/ \E i, j \in Peer : HealPartition(i, j)
+    \/ \E p \in Peer : RetryElection(p)
 
-\* Fairness: eventually advance frames, heal partitions
 Fairness ==
+    /\ WF_vars(\E p \in Peer : SubmitInput(p))
     /\ WF_vars(\E p \in Peer : AdvanceFrame(p))
-    /\ WF_vars(\E leader \in Peer : ConfirmEvents(leader))
-    /\ SF_vars(\E i, j \in Peer : HealPartition(i, j))
+    /\ WF_vars(\E p \in Peer : BroadcastHeartbeat(p))
     /\ WF_vars(\E p \in Peer : BecomeLeader(p))
+    /\ WF_vars(\E p \in Peer : RetryElection(p))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
 ----
-\* Safety Properties (INVARIANTS)
+\* Safety Properties
 
 \* No two leaders in the same term
+\* Implementation guarantee: majority voting ensures uniqueness
 NoTwoLeadersInSameTerm ==
     \A i, j \in Peer :
         (i # j /\ state[i] = "Leader" /\ state[j] = "Leader")
         => currentTerm[i] # currentTerm[j]
 
-\* Leader is always the peer that others believe is leader
-LeaderConsistency ==
-    \A p \in Peer :
-        state[p] = "Leader" =>
-            \A q \in Peer : (currentLeader[q] = p \/ currentLeader[q] = 0 \/ ~CanReceive(q, p))
+\* Frames stay within one of each other (lockstep with bounded drift)
+\* Implementation: peers advance independently but same inputs = same timing
+FrameBoundedDrift ==
+    \A i, j \in Peer : frame[i] - frame[j] <= 1 /\ frame[j] - frame[i] <= 1
 
-\* Events in log are from valid terms
-EventTermValidity ==
-    \A i \in 1..Len(eventLog) :
-        eventLog[i].term >= 0
+\* Frames are non-negative and bounded
+TypeInvariant ==
+    /\ \A p \in Peer : frame[p] >= 0 /\ frame[p] <= MaxFrame
+    /\ \A p \in Peer : currentTerm[p] >= 0 /\ currentTerm[p] <= MaxTerm
+    /\ inputsReceived \subseteq Peer
+    /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
 
-\* Committed events are never lost (monotonic log)
-\* Once an event is in the log, it stays there
-EventDurability ==
-    [][Len(eventLog') >= Len(eventLog)]_eventLog
-
-\* Frames are monotonically increasing
-FrameMonotonicity ==
-    \A p \in Peer : frame[p] >= 0
-
-\* State sync only comes from leader
-StateSyncAuthority ==
-    \A p \in Peer :
-        lastSyncFrame[p] > 0 =>
-            \E leader \in Peer :
-                /\ state[leader] = "Leader" \/ currentTerm[leader] > 0
-                /\ currentLeader[p] # 0
+\* Leader is at least as up-to-date as any other peer
+\* (consequence of log comparison in Vote action)
+LeaderUpToDate ==
+    \A leader, p \in Peer :
+        state[leader] = "Leader" => frame[leader] >= frame[p] - 1
 
 ----
-\* Liveness Properties (checked as temporal properties)
+\* Liveness Properties
 
-\* Eventually all connected peers have same frame (convergence)
-\* When network heals, peers converge
-EventualFrameConvergence ==
-    <>[](\A i, j \in Peer :
-        (\A k \in Peer : ~partitioned[i][k] /\ ~partitioned[j][k])
-        => frame[i] = frame[j])
-
-\* Eventually there is a leader (progress)
+\* Eventually there is a leader
 EventuallyLeader ==
     <>(\E p \in Peer : state[p] = "Leader")
 
-\* If a peer generates an event and network is connected, it eventually gets confirmed
-EventualEventConfirmation ==
-    \A p \in Peer :
-        (Len(pendingEvents[p]) > 0 /\ \A i, j \in Peer : ~partitioned[i][j])
-        ~> (Len(pendingEvents[p]) = 0)
+\* Frames eventually advance (given fairness)
+EventuallyProgress ==
+    [](MinFrame < MaxFrame => <>(MinFrame > 0))
 
 ----
-\* State space constraints for model checking
+\* State constraint for finite model checking
 
 StateConstraint ==
     /\ \A p \in Peer : frame[p] <= MaxFrame
     /\ \A p \in Peer : currentTerm[p] <= MaxTerm
-    /\ Len(eventLog) <= MaxEvents
-    /\ \A p \in Peer : Len(pendingEvents[p]) <= MaxPendingEvents
 
 ===============================================================================

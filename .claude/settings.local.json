@@ -64,7 +64,8 @@
       "Bash(grep:*)",
       "Bash(java -version:*)",
       "Bash(curl:*)",
-      "Bash(./run-tlc.sh)"
+      "Bash(./run-tlc.sh)",
+      "Bash(wc:*)"
     ],
     "deny": [],
     "ask": []
