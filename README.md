@@ -47,7 +47,9 @@ cd client
 bun run dev           # Start Vite dev server
 bun run build         # Production build
 bun run typecheck     # TypeScript type check
+bun run lint          # ESLint
 bun run test          # Run tests
+bun run test:coverage # Tests with coverage
 ```
 
 ### Server
@@ -56,8 +58,17 @@ bun run test          # Run tests
 cd server
 mix deps.get          # Install dependencies
 mix phx.server        # Start Phoenix server
+mix format            # Format code
+mix credo --strict    # Static analysis
 mix test              # Run tests
 iex -S mix phx.server # Interactive mode
+```
+
+### TLA+ Model Checking
+
+```bash
+cd tla
+./run-tlc.sh          # Run TLC model checker
 ```
 
 ## Architecture
@@ -93,9 +104,23 @@ astranyx/
 │   └── lib/
 │       ├── astranyx/         # Lobby management
 │       └── astranyx_web/     # WebSocket channels
+├── tla/              # TLA+ specifications
 ├── legacy/           # Reference implementations
 └── lore/             # Implementation docs
 ```
+
+## CI
+
+GitHub Actions runs on every PR and push to main:
+
+| Job | Description |
+|-----|-------------|
+| `client_lint` | ESLint + TypeScript type check |
+| `client_test` | Vitest with coverage |
+| `client_build` | Production build |
+| `server_lint` | `mix format --check-formatted` + Credo |
+| `server_test` | `mix test` |
+| `tla_check` | TLC model checker for LockstepNetcode.tla |
 
 ## TURN Server (Development)
 
