@@ -38,7 +38,7 @@
 \* Target: ~20-50M states with 3 peers
 \* ============================================================================
 
-EXTENDS Integers, FiniteSets, Sequences
+EXTENDS Integers, FiniteSets
 
 CONSTANT Peer
 CONSTANT MaxFrame
@@ -97,9 +97,6 @@ IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
 MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 IsLeader(p) == state[p] = "Leader"
-CurrentLeader == IF \E p \in Peer : IsLeader(p)
-                 THEN CHOOSE p \in Peer : IsLeader(p)
-                 ELSE 0
 
 \* Connected peers only
 ConnectedPeers == {p \in Peer : connected[p]}
@@ -121,7 +118,7 @@ Init ==
     /\ frame = [p \in Peer |-> 0]
     /\ currentTerm = [p \in Peer |-> 0]
     /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> 0]
+    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
     /\ votesReceived = [p \in Peer |-> {}]
     /\ inputsReceived = {}
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
@@ -279,6 +276,7 @@ SendStateSync(leader) ==
 \* Follower receives state sync
 \* Implementation: StateSyncManager.ts - receiveSyncMessage()
 \* Key behavior: remote events cleared, LOCAL events preserved
+\* Note: Follower also updates currentTerm to leader's term
 ReceiveStateSync(m) ==
     /\ m \in network
     /\ MsgType(m) = "state_sync"
@@ -291,13 +289,14 @@ ReceiveStateSync(m) ==
           /\ CanCommunicate(sender, receiver)
           \* Term validation: only accept from current or higher term
           /\ msgTerm >= syncTerm[receiver]
+          /\ currentTerm' = [currentTerm EXCEPT ![receiver] = IF msgTerm > currentTerm[receiver] THEN msgTerm ELSE currentTerm[receiver]]
           /\ syncTerm' = [syncTerm EXCEPT ![receiver] = msgTerm]
           \* KEY: Filter to keep only events owned by receiver
           /\ pendingEvents' = [pendingEvents EXCEPT
                ![receiver] = {e \in pendingEvents[receiver] : e[1] = receiver}]
           /\ inSync' = [inSync EXCEPT ![receiver] = TRUE]
     /\ network' = network \ {m}
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived,
+    /\ UNCHANGED <<frame, state, votedFor, votesReceived,
                    inputsReceived, heartbeatReceived>>
     /\ UNCHANGED <<connected, partitioned>>
 
@@ -555,7 +554,8 @@ LocalEventsPreserved ==
 EventOwnerValid ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] \in Peer
 
-\* Sync term never exceeds current term
+\* Sync term never exceeds current term (no time travel)
+\* Maintained because ReceiveStateSync updates currentTerm to msgTerm
 SyncTermBounded ==
     \A p \in Peer : syncTerm[p] <= currentTerm[p]
 

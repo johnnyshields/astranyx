@@ -76,7 +76,7 @@ Init ==
     /\ inputsReceived = {}
     /\ currentTerm = [p \in Peer |-> 0]
     /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> 0]
+    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
     /\ votesReceived = [p \in Peer |-> {}]
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
     /\ hasPendingEvent = [p \in Peer |-> FALSE]
@@ -216,6 +216,18 @@ TypeInvariant ==
 
 LeaderUpToDate ==
     \A leader, p \in Peer : IsLeader(leader) => frame[leader] >= frame[p] - 1
+
+\* Candidate must have voted for self
+CandidateVotedForSelf ==
+    \A p \in Peer : state[p] = "Candidate" => votedFor[p] = p
+
+\* Leader must have voted for self
+LeaderVotedForSelf ==
+    \A p \in Peer : IsLeader(p) => votedFor[p] = p
+
+\* votedFor is either 0 (none) or a valid peer
+VotedForValid ==
+    \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
 
 ----
 \* State constraint

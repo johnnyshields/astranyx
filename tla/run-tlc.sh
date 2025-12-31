@@ -8,11 +8,11 @@
 #   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
 #
 # Usage:
-#   ./run-tlc.sh              # Run all models (default)
-#   ./run-tlc.sh --quick      # Run LeaderElection + LockstepSimple (skip State)
-#   ./run-tlc.sh --state      # Run only LockstepState
-#   ./run-tlc.sh --network    # Run only LockstepNetwork
-#   ./run-tlc.sh --force      # Force re-run ignoring cache
+#   ./run-tlc.sh                              # Run all models (default)
+#   ./run-tlc.sh -f LeaderElection            # Run single model
+#   ./run-tlc.sh -f LeaderElection,LockstepSimple  # Run specific models
+#   ./run-tlc.sh --force                      # Force re-run ignoring cache
+#   ./run-tlc.sh --max                        # Use maximum resources (48GB heap, 28 workers)
 #
 # Environment:
 #   TLC_JAR - Path to tla2tools.jar (default: ~/tla2tools.jar)
@@ -26,21 +26,35 @@ TMP_DIR="$SCRIPT_DIR/tmp"
 
 mkdir -p "$TMP_DIR"
 
+# All available models
+ALL_MODELS="LeaderElection,LockstepSimple,LockstepState,LockstepNetwork"
+
 # Parse arguments
 FORCE=false
-MODE="all"  # all, quick, full
+MAX_RESOURCES=false
+FILE_LIST=""
 ARGS=()
 
-for arg in "$@"; do
-    case "$arg" in
-        --force) FORCE=true ;;
-        --quick) MODE="quick" ;;
-        --state) MODE="state" ;;
-        --network) MODE="network" ;;
-        --all) MODE="all" ;;
-        *) ARGS+=("$arg") ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force) FORCE=true; shift ;;
+        --max) MAX_RESOURCES=true; shift ;;
+        -f|--file)
+            FILE_LIST="$2"
+            shift 2
+            ;;
+        -f=*|--file=*)
+            FILE_LIST="${1#*=}"
+            shift
+            ;;
+        *) ARGS+=("$1"); shift ;;
     esac
 done
+
+# Default to all models if none specified
+if [[ -z "$FILE_LIST" ]]; then
+    FILE_LIST="$ALL_MODELS"
+fi
 
 if [[ ! -f "$TLC_JAR" ]]; then
     echo "Error: TLA+ tools not found at $TLC_JAR"
@@ -74,12 +88,24 @@ run_model() {
     echo "[$SPEC_NAME] Running TLC model checker..."
     echo ""
 
+    # Resource configuration
+    if [[ "$MAX_RESOURCES" == "true" ]]; then
+        # --max: Use most cores and lots of RAM (32 cores, 63GB RAM machine)
+        HEAP="-Xmx48g"
+        WORKERS="-workers 28"
+        echo "[$SPEC_NAME] Using MAX resources: 48GB heap, 28 workers"
+    else
+        # Default: Conservative settings
+        HEAP="-Xmx4g"
+        WORKERS="-workers auto"
+    fi
+
     java -XX:+UseParallelGC \
-         -Xmx4g \
+         $HEAP \
          -jar "$TLC_JAR" \
          -config "MC${SPEC_NAME}.cfg" \
          -metadir "$TMP_DIR" \
-         -workers auto \
+         $WORKERS \
          "${ARGS[@]}" \
          "${SPEC_NAME}.tla"
 
@@ -90,24 +116,13 @@ run_model() {
     echo "$HASH  $SPEC_NAME  $(date -Iseconds)" >> "$PASSED_FILE"
 }
 
-case "$MODE" in
-    all)
-        run_model "LeaderElection"
-        run_model "LockstepSimple"
-        run_model "LockstepState"
-        run_model "LockstepNetwork"
-        ;;
-    quick)
-        run_model "LeaderElection"
-        run_model "LockstepSimple"
-        ;;
-    state)
-        run_model "LockstepState"
-        ;;
-    network)
-        run_model "LockstepNetwork"
-        ;;
-esac
+# Parse comma-separated file list and run each model
+IFS=',' read -ra MODELS <<< "$FILE_LIST"
+for model in "${MODELS[@]}"; do
+    # Trim whitespace
+    model=$(echo "$model" | xargs)
+    run_model "$model"
+done
 
 echo ""
 echo "All model checks passed."

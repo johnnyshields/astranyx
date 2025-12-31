@@ -1,2 +1,3 @@
 .tlc-passed
 tmp/
+*_TTrace_*

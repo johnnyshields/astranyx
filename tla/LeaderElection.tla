@@ -42,7 +42,7 @@ IsLeader(p) == state[p] = "Leader"
 Init ==
     /\ currentTerm = [p \in Peer |-> 0]
     /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> 0]
+    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
     /\ votesReceived = [p \in Peer |-> {}]
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
     /\ frame = [p \in Peer |-> 0]

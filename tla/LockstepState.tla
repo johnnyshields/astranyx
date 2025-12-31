@@ -57,9 +57,6 @@ IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
 MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 IsLeader(p) == state[p] = "Leader"
-CurrentLeader == IF \E p \in Peer : IsLeader(p)
-                 THEN CHOOSE p \in Peer : IsLeader(p)
-                 ELSE 0
 
 ----
 \* Initial state
@@ -68,7 +65,7 @@ Init ==
     /\ frame = [p \in Peer |-> 0]
     /\ currentTerm = [p \in Peer |-> 0]
     /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> 0]
+    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
     /\ votesReceived = [p \in Peer |-> {}]
     /\ inputsReceived = {}
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
@@ -121,11 +118,10 @@ GenerateEvent(p) ==
 
 \* Implementation: broadcastStateSync() - only leader can send
 \* Key property: syncTerm tracks last accepted sync to prevent stale syncs
-\* Note: This atomically sets syncTerm for all peers (simplification).
-\* Real implementation sends messages that arrive asynchronously.
+\* Leader updates its own syncTerm; followers update theirs in ReceiveStateSync
 SendStateSync(leader) ==
     /\ IsLeader(leader)
-    /\ syncTerm' = [p \in Peer |-> currentTerm[leader]]
+    /\ syncTerm' = [syncTerm EXCEPT ![leader] = currentTerm[leader]]
     /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, pendingEvents, inSync>>
 
 \* Implementation: receiveSyncMessage() -> eventQueue.onStateSync()
@@ -137,16 +133,20 @@ SendStateSync(leader) ==
 \* - Term validation ensures only current/higher term syncs accepted
 \* - Multiple concurrent syncs from same term are idempotent
 \* - Stale syncs (lower term) are silently rejected
+\*
+\* Note: Follower also updates currentTerm to leader's term (as in real impl,
+\* receiving any message from a higher term updates your term)
 ReceiveStateSync(follower, leader) ==
     /\ ~IsLeader(follower)
     /\ IsLeader(leader)
     /\ currentTerm[leader] >= syncTerm[follower]  \* Term validation!
+    /\ currentTerm' = [currentTerm EXCEPT ![follower] = IF currentTerm[leader] > currentTerm[follower] THEN currentTerm[leader] ELSE currentTerm[follower]]
     /\ syncTerm' = [syncTerm EXCEPT ![follower] = currentTerm[leader]]
     \* KEY: Filter to keep only events owned by follower (local events preserved)
     /\ pendingEvents' = [pendingEvents EXCEPT
          ![follower] = {e \in pendingEvents[follower] : e[1] = follower}]
     /\ inSync' = [inSync EXCEPT ![follower] = TRUE]  \* Sync restores consistency
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived>>
+    /\ UNCHANGED <<frame, state, votedFor, votesReceived, inputsReceived, heartbeatReceived>>
 
 \* Implementation: checkForDesync() detects checksum mismatch
 \* Models non-deterministic state divergence (floating point drift, race conditions, etc.)
@@ -321,8 +321,11 @@ EventOwnerValid ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] \in Peer
 
 \* Sync term never exceeds current term (no time travel)
-\* Note: This is always true in Init (both are 0), and maintained by ReceiveStateSync
-\* which only accepts syncs where currentTerm[leader] >= syncTerm[follower]
+\* This holds because:
+\* - Leader sets syncTerm[leader] = currentTerm[leader] in SendStateSync
+\* - Follower sets syncTerm[follower] = currentTerm[leader] in ReceiveStateSync
+\*   only when currentTerm[leader] >= syncTerm[follower], and voting ensures
+\*   followers update currentTerm to leader's term before accepting sync
 SyncTermBounded ==
     \A p \in Peer : syncTerm[p] <= currentTerm[p]
 
