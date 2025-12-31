@@ -8,7 +8,9 @@
  * stripped in production for performance.
  */
 
-const isDev = import.meta.env.DEV
+import { isDevBuild } from './env'
+
+const isDev = isDevBuild()
 
 /**
  * Log message (dev only)
