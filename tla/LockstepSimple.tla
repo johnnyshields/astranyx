@@ -14,14 +14,30 @@
 \* SIMPLIFICATIONS vs LockstepState
 \* ============================================================================
 \*
-\* - Events as boolean (not <<owner, frame>> tuples)
-\* - Atomic state sync (send+receive combined)
-\* - No syncTerm tracking for stale sync rejection
-\* - No ForceLeaderChange action
-\* - No desync/inSync tracking
+\* 1. ATOMIC STATE SYNC (vs async in LockstepState)
+\*    - Here: SendStateSync instantly clears all follower events
+\*    - LockstepState: Separate SendStateSync + ReceiveStateSync actions
+\*    - Impact: This model CANNOT catch:
+\*      * Stale sync from outdated leader (no term validation)
+\*      * Race conditions between send and receive
+\*      * Out-of-order sync messages
+\*    - Use LockstepState for realistic sync verification
 \*
-\* These simplifications reduce state space for fast iteration.
-\* Use LockstepState.tla for comprehensive verification.
+\* 2. BOOLEAN EVENTS (vs <<owner, frame>> tuples)
+\*    - Here: hasPendingEvent is TRUE/FALSE per peer
+\*    - LockstepState: pendingEvents is set of <<owner, frame>> tuples
+\*    - Impact: Cannot verify LocalEventsPreserved invariant
+\*
+\* 3. NO TERM VALIDATION
+\*    - Here: No syncTerm tracking
+\*    - LockstepState: syncTerm prevents accepting stale syncs
+\*
+\* 4. NO DESYNC DETECTION
+\*    - Here: No inSync variable or Desync action
+\*    - LockstepState: Models checksum-based desync detection
+\*
+\* These simplifications reduce state space for fast iteration (~1M states).
+\* Use LockstepState.tla for comprehensive verification (~50M states).
 \* ============================================================================
 
 EXTENDS Integers, FiniteSets

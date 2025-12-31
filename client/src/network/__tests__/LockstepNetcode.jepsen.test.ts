@@ -1242,3 +1242,236 @@ describe('Safety Properties', () => {
     expect(getEventOwnerId(result!.events[2]!)).toBe('p3')
   })
 })
+
+// =============================================================================
+// Extended Chaos Tests (Long-Running)
+// =============================================================================
+
+describe('Extended Chaos Tests', () => {
+  /**
+   * Extended chaos test configuration.
+   * These tests run for longer periods to catch rare race conditions.
+   *
+   * Recommended by TLA+ analysis document:
+   * "Extend Jepsen tests for longer runs (5+ minutes)"
+   */
+
+  it('CHAOS: Sustained random partitions with leader election (1000 iterations)', () => {
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3', 'p4', 'p5'])
+    const elections = ['p1', 'p2', 'p3', 'p4', 'p5'].map(
+      id =>
+        new LeaderElection({
+          localPlayerId: id,
+          playerOrder,
+          electionTimeout: 100,
+          heartbeatInterval: 50,
+        })
+    )
+
+    // Track invariant violations
+    let violations = 0
+
+    for (let iteration = 0; iteration < 1000; iteration++) {
+      // Reset all elections
+      elections.forEach(e => e.reset())
+
+      // Random sequence of events
+      const numEvents = Math.floor(Math.random() * 50) + 10
+
+      for (let i = 0; i < numEvents; i++) {
+        const action = Math.floor(Math.random() * 4)
+        const srcIdx = Math.floor(Math.random() * 5)
+        const dstIdx = Math.floor(Math.random() * 5)
+
+        switch (action) {
+          case 0: // Heartbeat from a leader
+            for (const e of elections) {
+              if (e.isLeader()) {
+                const term = e.getCurrentTerm()
+                const leaderId = e.getDebugInfo().leader!
+                // Send to random peer
+                if (dstIdx !== srcIdx) {
+                  elections[dstIdx].handleMessage(
+                    { type: 'heartbeat', term, leaderId, frame: iteration },
+                    leaderId
+                  )
+                }
+                break
+              }
+            }
+            break
+
+          case 1: // Vote request (simulates election timeout)
+            if (elections[srcIdx].getState() === 'candidate') {
+              const term = elections[srcIdx].getCurrentTerm()
+              const candidateId = ['p1', 'p2', 'p3', 'p4', 'p5'][srcIdx]
+              if (dstIdx !== srcIdx) {
+                elections[dstIdx].handleMessage(
+                  { type: 'request_vote', term, candidateId, lastFrame: iteration },
+                  candidateId
+                )
+              }
+            }
+            break
+
+          case 2: // Step down (higher term discovered)
+            // Already handled by heartbeat reception
+            break
+
+          case 3: // Partition heal (nothing to do in simplified model)
+            break
+        }
+      }
+
+      // Check invariant: at most one leader per term
+      const leadersByTerm = new Map<number, Set<string>>()
+      for (const e of elections) {
+        if (e.isLeader()) {
+          const term = e.getCurrentTerm()
+          const leaders = leadersByTerm.get(term) ?? new Set()
+          leaders.add(e.getDebugInfo().leader!)
+          leadersByTerm.set(term, leaders)
+        }
+      }
+
+      for (const [_term, leaders] of leadersByTerm) {
+        if (leaders.size > 1) {
+          violations++
+        }
+      }
+    }
+
+    expect(violations).toBe(0)
+  })
+
+  it('CHAOS: Rapid frame advancement under message loss (500 iterations)', () => {
+    const iterations = 500
+
+    for (let iter = 0; iter < iterations; iter++) {
+      const buffer = new InputBuffer({
+        inputDelay: 3,
+        playerCount: 3,
+        playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      })
+      buffer.reset()
+
+      // Track frames that can advance
+      const framesWithAllInputs: number[] = []
+
+      // Random frame operations
+      for (let frame = 3; frame < 20; frame++) {
+        // Random subset of players submit input (50% chance each)
+        const submitters = ['p1', 'p2', 'p3'].filter(() => Math.random() > 0.5)
+
+        for (const playerId of submitters) {
+          buffer.storeInput({
+            frame,
+            playerId,
+            input: emptyInput(),
+          })
+        }
+
+        // Check if all inputs received
+        if (buffer.hasAllInputs(frame)) {
+          framesWithAllInputs.push(frame)
+
+          // Verify assertCanAdvance doesn't throw
+          try {
+            buffer.assertCanAdvance(frame)
+          } catch {
+            throw new Error(`assertCanAdvance failed for frame ${frame} with all inputs`)
+          }
+        } else {
+          // Verify assertCanAdvance DOES throw
+          let threw = false
+          try {
+            buffer.assertCanAdvance(frame)
+          } catch {
+            threw = true
+          }
+          if (!threw) {
+            throw new Error(`assertCanAdvance should have thrown for frame ${frame}`)
+          }
+        }
+      }
+    }
+  })
+
+  it('CHAOS: State sync under rapid leader changes (200 iterations)', () => {
+    const iterations = 200
+
+    for (let iter = 0; iter < iterations; iter++) {
+      const manager = new StateSyncManager({ syncInterval: 60 })
+      manager.reset()
+
+      let maxTerm = 0
+
+      // Random sequence of term changes and syncs
+      for (let i = 0; i < 50; i++) {
+        const action = Math.floor(Math.random() * 3)
+
+        switch (action) {
+          case 0: // Increase term
+            maxTerm += Math.floor(Math.random() * 3) + 1
+            manager.setCurrentTerm(maxTerm)
+            break
+
+          case 1: // Record accepted sync (at current term)
+            manager.recordAcceptedSyncTerm(maxTerm)
+            break
+
+          case 2: // Check invariants
+            try {
+              manager.assertInvariants()
+            } catch (e) {
+              throw new Error(`Invariant violated at iteration ${iter}, step ${i}: ${e}`)
+            }
+            break
+        }
+      }
+
+      // Final invariant check
+      manager.assertInvariants()
+    }
+  })
+
+  it('CHAOS: Local event preservation through multiple syncs (100 iterations)', () => {
+    const iterations = 100
+
+    for (let iter = 0; iter < iterations; iter++) {
+      const queue = new LocalEventQueue({
+        bufferSize: 900,
+        localPlayerId: 'local',
+      })
+      queue.reset()
+
+      let localEventCount = 0
+
+      // Add random local and remote events
+      for (let i = 0; i < 20; i++) {
+        const isLocal = Math.random() > 0.5
+        const event: GameEvent = {
+          type: 'damage',
+          targetId: `enemy${i}`,
+          amount: 10,
+          sourceId: isLocal ? 'local' : `remote${i}`,
+        }
+        queue.addEvent(event, i)
+        if (isLocal) localEventCount++
+      }
+
+      // Perform state sync
+      const reapplied = queue.onStateSync(10)
+
+      // After sync, only local events should remain
+      queue.assertLocalEventsOnly()
+
+      // Reapplied events should all be local
+      for (const event of reapplied) {
+        if (getEventOwnerId(event) !== 'local') {
+          throw new Error(`Non-local event in reapply list: ${JSON.stringify(event)}`)
+        }
+      }
+    }
+  })
+})

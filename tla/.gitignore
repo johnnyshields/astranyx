@@ -1,5 +1,2 @@
 .tlc-passed
-states/
-*.trace
-*.bin
-*_TTrace_*
+tmp/

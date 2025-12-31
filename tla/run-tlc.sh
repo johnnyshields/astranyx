@@ -22,6 +22,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TLC_JAR="${TLC_JAR:-$HOME/tla2tools.jar}"
 PASSED_FILE="$SCRIPT_DIR/.tlc-passed"
+TMP_DIR="$SCRIPT_DIR/tmp"
+
+mkdir -p "$TMP_DIR"
 
 # Parse arguments
 FORCE=false
@@ -75,6 +78,7 @@ run_model() {
          -Xmx4g \
          -jar "$TLC_JAR" \
          -config "MC${SPEC_NAME}.cfg" \
+         -metadir "$TMP_DIR" \
          -workers auto \
          "${ARGS[@]}" \
          "${SPEC_NAME}.tla"

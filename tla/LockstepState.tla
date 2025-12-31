@@ -107,9 +107,22 @@ GenerateEvent(p) ==
 
 ----
 \* State Sync (Leader Authority)
+\*
+\* CONCURRENT SYNC HANDLING:
+\* - SendStateSync broadcasts to all peers (marks sync pending)
+\* - ReceiveStateSync processes per-follower (validates term)
+\* - Term validation (syncTerm) handles:
+\*   * Stale syncs from old leaders (rejected)
+\*   * Out-of-order sync messages (older term rejected)
+\*   * Concurrent syncs from same leader (idempotent)
+\*
+\* The syncTerm variable acts as a logical clock ensuring
+\* followers only accept syncs from current or higher terms.
 
 \* Implementation: broadcastStateSync() - only leader can send
 \* Key property: syncTerm tracks last accepted sync to prevent stale syncs
+\* Note: This atomically sets syncTerm for all peers (simplification).
+\* Real implementation sends messages that arrive asynchronously.
 SendStateSync(leader) ==
     /\ IsLeader(leader)
     /\ syncTerm' = [p \in Peer |-> currentTerm[leader]]
@@ -119,6 +132,11 @@ SendStateSync(leader) ==
 \* Key behavior: remote events cleared, LOCAL events preserved for re-apply
 \* This is the core of LocalEventQueue - getEventsForReapply() returns local events only
 \* Also resets inSync to TRUE (follower now matches leader state)
+\*
+\* CONCURRENT SYNC SAFETY:
+\* - Term validation ensures only current/higher term syncs accepted
+\* - Multiple concurrent syncs from same term are idempotent
+\* - Stale syncs (lower term) are silently rejected
 ReceiveStateSync(follower, leader) ==
     /\ ~IsLeader(follower)
     /\ IsLeader(leader)
