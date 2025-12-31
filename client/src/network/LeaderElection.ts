@@ -382,7 +382,7 @@ export class LeaderElection {
 
   /**
    * Step down to follower (discovered higher term).
-   * TLA+ model: Stepdown(p) action - leader steps down on seeing higher term.
+   * TLA+ model: StepDown(p) action - leader steps down on seeing higher term.
    */
   private stepDown(newTerm: number): void {
     SafeConsole.log(`LeaderElection: Stepping down, term ${this.currentTerm} -> ${newTerm}`)
