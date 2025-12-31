@@ -395,7 +395,6 @@ export class LeaderElection {
       term: this.currentTerm,
       leaderId: this.config.localPlayerId,
       frame: this.currentFrame,
-      checksum: 0, // Could include state checksum
     }
 
     for (const peerId of this.connectedPeers) {

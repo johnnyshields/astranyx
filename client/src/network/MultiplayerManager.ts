@@ -309,7 +309,6 @@ export class MultiplayerManager {
 
     this.netcode = new LockstepNetcode({
       inputDelay: 3,
-      maxRollbackFrames: 0,
       playerCount: this.expectedPlayers.length,
       localPlayerId: localPlayerId,
       playerOrder: playerOrder,

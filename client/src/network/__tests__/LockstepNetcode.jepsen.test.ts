@@ -146,6 +146,154 @@ describe('InputBuffer', () => {
     expect(buffer.hasInput(4, 'p1')).toBe(false)
     expect(buffer.hasInput(5, 'p1')).toBe(true)
   })
+
+  it('pre-seeds initial frames with empty inputs on reset', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    // Frames 0, 1, 2 should be pre-seeded (inputDelay = 3)
+    expect(buffer.hasAllInputs(0)).toBe(true)
+    expect(buffer.hasAllInputs(1)).toBe(true)
+    expect(buffer.hasAllInputs(2)).toBe(true)
+    expect(buffer.hasAllInputs(3)).toBe(false)
+
+    // Verify inputs are empty
+    const frame0 = buffer.getOrderedInputs(0)
+    expect(frame0).not.toBeNull()
+    const p1Input = frame0!.inputs.get('p1')
+    expect(p1Input?.up).toBe(false)
+    expect(p1Input?.fire).toBe(false)
+  })
+
+  it('returns null for getOrderedInputs on partially filled frame', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 3,
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+    })
+    buffer.reset()
+
+    // Only add 2 of 3 players' inputs for frame 10
+    buffer.storeInput({ frame: 10, playerId: 'p1', input: createTestInput() })
+    buffer.storeInput({ frame: 10, playerId: 'p2', input: createTestInput() })
+
+    // Should return null since p3 is missing
+    expect(buffer.getOrderedInputs(10)).toBeNull()
+    expect(buffer.hasAllInputs(10)).toBe(false)
+    expect(buffer.getInputCount(10)).toBe(2)
+
+    // Now add p3
+    buffer.storeInput({ frame: 10, playerId: 'p3', input: createTestInput() })
+    expect(buffer.getOrderedInputs(10)).not.toBeNull()
+    expect(buffer.hasAllInputs(10)).toBe(true)
+  })
+
+  it('handles high frame numbers correctly', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+      retentionFrames: 60,
+    })
+    buffer.reset()
+
+    // Simulate a long game session with high frame numbers
+    const highFrame = 100000
+    buffer.storeInput({ frame: highFrame, playerId: 'p1', input: createTestInput({ up: true }) })
+    buffer.storeInput({ frame: highFrame, playerId: 'p2', input: createTestInput({ down: true }) })
+
+    expect(buffer.hasAllInputs(highFrame)).toBe(true)
+    const result = buffer.getOrderedInputs(highFrame)
+    expect(result).not.toBeNull()
+    expect(result!.inputs.get('p1')?.up).toBe(true)
+    expect(result!.inputs.get('p2')?.down).toBe(true)
+
+    // Cleanup should work at high frames
+    buffer.cleanup(highFrame)
+    // Pre-seeded frames 0-2 should be cleaned up
+    expect(buffer.hasInput(0, 'p1')).toBe(false)
+    // Only highFrame should remain (within retention window)
+    expect(buffer.hasInput(highFrame, 'p1')).toBe(true)
+  })
+
+  it('collects events from all players in deterministic order', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    const event1: GameEvent = { type: 'damage', playerId: 'p1', amount: 10, newShields: 90, newLives: 3 }
+    const event2: GameEvent = { type: 'pickup', playerId: 'p2', pickupId: 5 }
+    const event3: GameEvent = { type: 'death', playerId: 'p1' }
+
+    // Add inputs with events (p2 first, then p1 to test ordering)
+    buffer.storeInput({ frame: 5, playerId: 'p2', input: createTestInput(), events: [event2] })
+    buffer.storeInput({ frame: 5, playerId: 'p1', input: createTestInput(), events: [event1, event3] })
+
+    const result = buffer.getOrderedInputs(5)
+    expect(result).not.toBeNull()
+
+    // Events should be ordered by player order: p1's events first, then p2's
+    expect(result!.events.length).toBe(3)
+    expect(result!.events[0]).toEqual(event1) // p1's first event
+    expect(result!.events[1]).toEqual(event3) // p1's second event
+    expect(result!.events[2]).toEqual(event2) // p2's event
+  })
+
+  it('handles checksum comparison with missing checksums', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    // p1 provides checksum, p2 doesn't
+    buffer.storeInput({ frame: 5, playerId: 'p1', input: createTestInput(), checksum: 12345 })
+    buffer.storeInput({ frame: 5, playerId: 'p2', input: createTestInput() })
+
+    // Should not report mismatch for missing checksum
+    const mismatches = buffer.checkDesync(5, 'p1')
+    expect(mismatches.length).toBe(0)
+  })
+
+  it('returns empty array when checking desync on non-existent frame', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    const mismatches = buffer.checkDesync(9999, 'p1')
+    expect(mismatches.length).toBe(0)
+  })
+
+  it('overwrites duplicate inputs for same frame/player', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    // Send input twice (simulating duplicate packet)
+    buffer.storeInput({ frame: 5, playerId: 'p1', input: createTestInput({ up: true }) })
+    buffer.storeInput({ frame: 5, playerId: 'p1', input: createTestInput({ down: true }) })
+    buffer.storeInput({ frame: 5, playerId: 'p2', input: createTestInput() })
+
+    const result = buffer.getOrderedInputs(5)
+    expect(result).not.toBeNull()
+    // Should have the second (overwritten) input
+    expect(result!.inputs.get('p1')?.up).toBe(false)
+    expect(result!.inputs.get('p1')?.down).toBe(true)
+  })
 })
 
 // =============================================================================
@@ -357,7 +505,7 @@ describe('LeaderElection', () => {
 
     // Manually set term higher
     election.handleMessage(
-      { type: 'heartbeat', term: 5, leaderId: 'p1', frame: 0, checksum: 0 },
+      { type: 'heartbeat', term: 5, leaderId: 'p1', frame: 0 },
       'p1'
     )
 
@@ -375,6 +523,308 @@ describe('LeaderElection', () => {
     )
 
     expect(voteResponse.voteGranted).toBe(false)
+  })
+
+  it('leader steps down when higher term discovered via heartbeat', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p1',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    expect(election.isLeader()).toBe(true)
+    expect(election.getState()).toBe('leader')
+
+    // Receive heartbeat with higher term from another leader
+    election.handleMessage(
+      { type: 'heartbeat', term: 5, leaderId: 'p2', frame: 0 },
+      'p2'
+    )
+
+    // Should step down
+    expect(election.isLeader()).toBe(false)
+    expect(election.getState()).toBe('follower')
+    expect(election.getCurrentLeader()).toBe('p2')
+    expect(election.getCurrentTerm()).toBe(5)
+  })
+
+  it('candidate steps down when higher term vote response received', () => {
+    const e1 = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e1.addPeer('p1')
+    e1.addPeer('p3')
+
+    // Simulate p2 starting election
+    // First, force into candidate state by simulating leader disconnect
+    e1.removePeer('p1') // p1 was initial leader, triggers election
+
+    // Now simulate receiving vote response with higher term
+    e1.handleMessage(
+      { type: 'vote_response', term: 10, voteGranted: false, voterId: 'p3' },
+      'p3'
+    )
+
+    // Should step down to follower
+    expect(e1.getState()).toBe('follower')
+  })
+
+  it('rejects vote when already voted for different candidate in same term', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p3',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    let voteResponses: any[] = []
+    election.setSendMessage((peerId, msg) => {
+      if (msg.type === 'vote_response') {
+        voteResponses.push({ peerId, msg })
+      }
+    })
+
+    // p1 requests vote for term 1
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 0 },
+      'p1'
+    )
+
+    expect(voteResponses.length).toBe(1)
+    expect(voteResponses[0].msg.voteGranted).toBe(true)
+
+    // p2 also requests vote for same term - should be rejected
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p2', lastFrame: 0 },
+      'p2'
+    )
+
+    expect(voteResponses.length).toBe(2)
+    expect(voteResponses[1].msg.voteGranted).toBe(false)
+  })
+
+  it('allows vote for same candidate multiple times in same term', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    let voteResponses: any[] = []
+    election.setSendMessage((peerId, msg) => {
+      if (msg.type === 'vote_response') {
+        voteResponses.push(msg)
+      }
+    })
+
+    // p1 requests vote twice (retransmission)
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 0 },
+      'p1'
+    )
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 0 },
+      'p1'
+    )
+
+    expect(voteResponses.length).toBe(2)
+    expect(voteResponses[0].voteGranted).toBe(true)
+    expect(voteResponses[1].voteGranted).toBe(true) // Same candidate, still granted
+  })
+
+  it('candidate wins with majority votes', () => {
+    const e1 = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e1.addPeer('p1')
+    e1.addPeer('p3')
+    e1.start() // Must start to enable elections
+
+    let leaderChanged = false
+    e1.setLeaderChangeHandler((leaderId, term) => {
+      if (leaderId === 'p2') leaderChanged = true
+    })
+
+    // Simulate leader (p1) disconnect to trigger election
+    e1.removePeer('p1')
+
+    // p2 is now candidate and voted for self. Needs 2 of 3 votes (majority).
+    // p2 already has 1 vote (self). Needs 1 more.
+
+    expect(e1.getState()).toBe('candidate')
+
+    // Receive vote from p3
+    e1.handleMessage(
+      { type: 'vote_response', term: e1.getCurrentTerm(), voteGranted: true, voterId: 'p3' },
+      'p3'
+    )
+
+    // Should become leader with 2 votes
+    expect(e1.isLeader()).toBe(true)
+    expect(leaderChanged).toBe(true)
+
+    e1.stop() // Clean up timers
+  })
+
+  it('candidate does not win without majority', () => {
+    const e1 = new LeaderElection({
+      localPlayerId: 'p3',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3', 'p4', 'p5']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e1.addPeer('p1')
+    e1.addPeer('p2')
+    e1.addPeer('p4')
+    e1.addPeer('p5')
+    e1.start() // Must start to enable elections
+
+    // Remove leader to trigger election
+    e1.removePeer('p1')
+
+    // p3 voted for self, needs 3 votes total (majority of 5)
+    expect(e1.getState()).toBe('candidate')
+
+    // Only receive 1 additional vote (2 total) - not enough
+    e1.handleMessage(
+      { type: 'vote_response', term: e1.getCurrentTerm(), voteGranted: true, voterId: 'p2' },
+      'p2'
+    )
+
+    // Should still be candidate
+    expect(e1.isLeader()).toBe(false)
+    expect(e1.getState()).toBe('candidate')
+
+    // Receive one more (3 total = majority)
+    e1.handleMessage(
+      { type: 'vote_response', term: e1.getCurrentTerm(), voteGranted: true, voterId: 'p4' },
+      'p4'
+    )
+
+    expect(e1.isLeader()).toBe(true)
+
+    e1.stop() // Clean up timers
+  })
+
+  it('ignores vote response from wrong term', () => {
+    const e1 = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e1.addPeer('p1')
+    e1.addPeer('p3')
+    e1.start() // Must start to enable elections
+
+    // Trigger election
+    e1.removePeer('p1')
+
+    const currentTerm = e1.getCurrentTerm()
+
+    // Receive stale vote from old term
+    e1.handleMessage(
+      { type: 'vote_response', term: currentTerm - 1, voteGranted: true, voterId: 'p3' },
+      'p3'
+    )
+
+    // Should still be candidate (stale vote ignored)
+    expect(e1.getState()).toBe('candidate')
+
+    e1.stop() // Clean up timers
+  })
+
+  it('resets votedFor on term change', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p3',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    let voteResponses: any[] = []
+    election.setSendMessage((peerId, msg) => {
+      if (msg.type === 'vote_response') {
+        voteResponses.push({ peerId, msg })
+      }
+    })
+
+    // Vote for p1 in term 1
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 0 },
+      'p1'
+    )
+    expect(voteResponses[0].msg.voteGranted).toBe(true)
+
+    // New term 2 - should be able to vote for different candidate
+    election.handleMessage(
+      { type: 'request_vote', term: 2, candidateId: 'p2', lastFrame: 0 },
+      'p2'
+    )
+    expect(voteResponses[1].msg.voteGranted).toBe(true)
+  })
+
+  it('rejects vote for candidate with lower lastFrame', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    // Advance local frame
+    election.setCurrentFrame(100)
+
+    let voteResponse: any = null
+    election.setSendMessage((peerId, msg) => {
+      if (msg.type === 'vote_response') {
+        voteResponse = msg
+      }
+    })
+
+    // Candidate has lower lastFrame
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 50 },
+      'p1'
+    )
+
+    // Should reject - candidate's log is behind
+    expect(voteResponse.voteGranted).toBe(false)
+  })
+
+  it('notifies leader change via callback', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    let leaderChanges: Array<{ leaderId: string; term: number }> = []
+    election.setLeaderChangeHandler((leaderId, term) => {
+      leaderChanges.push({ leaderId, term })
+    })
+
+    // Receive heartbeat from new leader
+    election.handleMessage(
+      { type: 'heartbeat', term: 3, leaderId: 'p3', frame: 0 },
+      'p3'
+    )
+
+    expect(leaderChanges.length).toBe(1)
+    expect(leaderChanges[0]).toEqual({ leaderId: 'p3', term: 3 })
   })
 })
 
@@ -580,7 +1030,7 @@ describe('Jepsen Failure Scenarios', () => {
       // p2 receives message from new leader with higher term
       // This simulates election happening in partition
       e2.handleMessage(
-        { type: 'heartbeat', term: 5, leaderId: 'p3', frame: 10, checksum: 0 },
+        { type: 'heartbeat', term: 5, leaderId: 'p3', frame: 10 },
         'p3'
       )
 
@@ -589,7 +1039,7 @@ describe('Jepsen Failure Scenarios', () => {
 
       // When p1 reconnects and receives higher term, it steps down
       e1.handleMessage(
-        { type: 'heartbeat', term: 5, leaderId: 'p3', frame: 10, checksum: 0 },
+        { type: 'heartbeat', term: 5, leaderId: 'p3', frame: 10 },
         'p3'
       )
 
@@ -654,7 +1104,6 @@ describe('Integration: Full Lockstep with Faults', () => {
 
     const netcode = new LockstepNetcode({
       inputDelay: 2,
-      maxRollbackFrames: 0,
       playerCount: 2,
       localPlayerId: 'p1',
       playerOrder,
@@ -685,7 +1134,6 @@ describe('Integration: Full Lockstep with Faults', () => {
 
     const netcode = new LockstepNetcode({
       inputDelay: 2,
-      maxRollbackFrames: 0,
       playerCount: 2,
       localPlayerId: 'p2', // Not initial leader
       playerOrder,
@@ -758,7 +1206,7 @@ describe('Safety Properties', () => {
 
     // Receive message with higher term
     election.handleMessage(
-      { type: 'heartbeat', term: 5, leaderId: 'p2', frame: 0, checksum: 0 },
+      { type: 'heartbeat', term: 5, leaderId: 'p2', frame: 0 },
       'p2'
     )
 
@@ -766,7 +1214,7 @@ describe('Safety Properties', () => {
 
     // Try to decrease term (should not work)
     election.handleMessage(
-      { type: 'heartbeat', term: 3, leaderId: 'p2', frame: 0, checksum: 0 },
+      { type: 'heartbeat', term: 3, leaderId: 'p2', frame: 0 },
       'p2'
     )
 

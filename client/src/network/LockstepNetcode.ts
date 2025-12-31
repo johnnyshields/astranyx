@@ -31,6 +31,7 @@ import type {
 } from './types.ts'
 import {
   emptyInput,
+  inputsEqual,
   isStateSyncMessage,
   isElectionMessage,
   isHeartbeatMessage,
@@ -44,21 +45,7 @@ import { LeaderElection } from './LeaderElection.ts'
 
 // Re-export types for backwards compatibility
 export type { PlayerInput, GameEvent, FrameInput, LockstepConfig, StateSyncMessage }
-export { emptyInput }
-
-/**
- * Compare two inputs for equality
- */
-export function inputsEqual(a: PlayerInput, b: PlayerInput): boolean {
-  return (
-    a.up === b.up &&
-    a.down === b.down &&
-    a.left === b.left &&
-    a.right === b.right &&
-    a.fire === b.fire &&
-    a.special === b.special
-  )
-}
+export { emptyInput, inputsEqual }
 
 export class LockstepNetcode {
   private config: LockstepConfig
@@ -90,7 +77,6 @@ export class LockstepNetcode {
   constructor(config: LockstepConfig) {
     this.config = {
       inputDelay: config.inputDelay ?? DEFAULT_CONFIG.inputDelay,
-      maxRollbackFrames: config.maxRollbackFrames ?? DEFAULT_CONFIG.maxRollbackFrames,
       playerCount: config.playerCount,
       localPlayerId: config.localPlayerId,
       playerOrder: config.playerOrder,

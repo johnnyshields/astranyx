@@ -18,7 +18,6 @@ function createMockDataChannel(): RTCDataChannel {
 function createConfig(overrides?: Partial<LockstepConfig>): LockstepConfig {
   return {
     inputDelay: 3,
-    maxRollbackFrames: 0,
     playerCount: 2,
     localPlayerId: 'player1',
     playerOrder: new Map([['player1', 0], ['player2', 1]]),
@@ -400,11 +399,11 @@ describe('inputsEqual', () => {
     expect(inputsEqual(emptyInput(), emptyInput())).toBe(true)
   })
 
-  it('should ignore secondary/swap/pickup fields', () => {
-    // Note: inputsEqual only checks core movement/action inputs
+  it('should compare secondary/swap/pickup fields', () => {
+    // inputsEqual checks ALL input fields
     const input1 = createInput({ secondary: true })
     const input2 = createInput({ secondary: false })
-    expect(inputsEqual(input1, input2)).toBe(true)
+    expect(inputsEqual(input1, input2)).toBe(false)
   })
 })
 

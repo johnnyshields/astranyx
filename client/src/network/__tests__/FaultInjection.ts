@@ -31,11 +31,6 @@ export interface FaultConfig {
   partitioned?: boolean
 }
 
-export interface LinkFaults {
-  /** Faults from peer A to peer B */
-  faults: Map<string, Map<string, FaultConfig>>
-}
-
 export type MessageInterceptor = (
   from: string,
   to: string,
@@ -53,7 +48,6 @@ export class MockDataChannel {
   readonly label: string
   readyState: RTCDataChannelState = 'open'
 
-  private messageQueue: Array<{ data: string; scheduledTime: number }> = []
   private reorderBuffer: Array<{ data: string; scheduledTime: number }> = []
 
   onmessage: ((event: { data: string }) => void) | null = null

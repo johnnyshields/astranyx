@@ -179,7 +179,6 @@ export interface HeartbeatMessage {
   term: number
   leaderId: string
   frame: number
-  checksum: number
 }
 
 export interface HeartbeatAckMessage {
@@ -237,7 +236,6 @@ export function isFrameInput(msg: NetMessage): msg is FrameInput {
  */
 export interface LockstepConfig {
   inputDelay: number           // Frames of input delay (default: 3)
-  maxRollbackFrames: number    // Not used in pure lockstep
   playerCount: number
   localPlayerId: string
   playerOrder: Map<string, number>  // player_id -> index
@@ -252,7 +250,6 @@ export interface LockstepConfig {
  */
 export const DEFAULT_CONFIG = {
   inputDelay: 3,
-  maxRollbackFrames: 0,
   stateSyncInterval: 300,      // 5 seconds at 60fps
   eventBufferSize: 900,        // 15 seconds at 60fps
   electionTimeout: 1500,       // 1.5 seconds
@@ -267,18 +264,6 @@ export const DEFAULT_CONFIG = {
  * Election state for a peer
  */
 export type PeerState = 'follower' | 'candidate' | 'leader'
-
-/**
- * Information about a connected peer
- */
-export interface PeerInfo {
-  id: string
-  index: number                 // Player index for determinism
-  dataChannel: RTCDataChannel
-  lastHeartbeat: number         // Timestamp of last heartbeat received
-  lastFrame: number             // Last known frame from this peer
-  state: PeerState
-}
 
 // =============================================================================
 // Callback Types
