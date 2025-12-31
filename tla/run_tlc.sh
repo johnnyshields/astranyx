@@ -3,7 +3,7 @@
 #
 # Models:
 #   LeaderElection  - Raft election, term safety, majority voting (~114M states)
-#   LockstepSimple  - Frame sync, basic events, leader authority (~1M states)
+#   LockstepSimple  - Frame sync, basic events, leader authority (~159M states)
 #   LockstepState   - Event ownership, syncTerm validation, desync recovery (~50M states)
 #   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
 #

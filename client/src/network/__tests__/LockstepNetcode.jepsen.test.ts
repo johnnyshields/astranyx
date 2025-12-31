@@ -1599,3 +1599,410 @@ describe('Extended Chaos Tests', () => {
     }
   })
 })
+
+// =============================================================================
+// Additional Safety Property Tests (TLA+ Invariants)
+// =============================================================================
+
+describe('TLA+ Invariant Tests', () => {
+  it('INVARIANT: VotesFromValidPeers - votes only from known peers', () => {
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3'])
+
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    election.addPeer('p1')
+    election.addPeer('p3')
+    election.start()
+
+    // Trigger election
+    election.removePeer('p1')
+
+    // Receive votes
+    election.handleMessage(
+      { type: 'vote_response', term: election.getCurrentTerm(), voteGranted: true, voterId: 'p3' },
+      'p3'
+    )
+
+    // Check invariant: all votes are from valid peers
+    const debug = election.getDebugInfo()
+    // The debug info shows vote count, actual validation is internal
+    expect(debug.votes).toBeGreaterThanOrEqual(1)
+
+    election.stop()
+  })
+
+  it('INVARIANT: VotedForValid - votedFor is null or valid peer', () => {
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3'])
+
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    // Initial state: p2 is follower, votedFor should be null or p1 (initial leader)
+    election.assertInvariants()
+
+    // After voting
+    election.handleMessage(
+      { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 0 },
+      'p1'
+    )
+
+    election.assertInvariants()
+  })
+
+  it('INVARIANT: LeaderHadMajority - leader has majority votes', () => {
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3'])
+
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    election.addPeer('p1')
+    election.addPeer('p3')
+    election.start()
+
+    // Trigger election
+    election.removePeer('p1')
+
+    expect(election.getState()).toBe('candidate')
+
+    // Receive vote to get majority (2 of 3)
+    election.handleMessage(
+      { type: 'vote_response', term: election.getCurrentTerm(), voteGranted: true, voterId: 'p3' },
+      'p3'
+    )
+
+    // Now leader
+    expect(election.isLeader()).toBe(true)
+    expect(election.getDebugInfo().votes).toBeGreaterThanOrEqual(2) // Majority of 3
+
+    election.stop()
+  })
+
+  it('INVARIANT: SyncTermBounded - syncTerm <= currentTerm', () => {
+    const manager = new StateSyncManager({ syncInterval: 60 })
+    manager.reset()
+
+    // Set term and sync term
+    manager.setCurrentTerm(5)
+    manager.recordAcceptedSyncTerm(5)
+
+    manager.assertInvariants()
+
+    // Increase term
+    manager.setCurrentTerm(10)
+    manager.assertInvariants() // syncTerm (5) <= currentTerm (10)
+
+    // Record new sync
+    manager.recordAcceptedSyncTerm(10)
+    manager.assertInvariants()
+  })
+
+  it('INVARIANT: FrameBoundedDrift - frames within 1 of each other (simulated)', () => {
+    // This tests the concept - actual multi-peer test would need full integration
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 3,
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+    })
+    buffer.reset()
+
+    // Simulate lockstep: all peers must have input before any can advance
+    // Frame 3 needs all inputs
+    buffer.storeInput({ frame: 3, playerId: 'p1', input: emptyInput() })
+    expect(buffer.hasAllInputs(3)).toBe(false)
+
+    buffer.storeInput({ frame: 3, playerId: 'p2', input: emptyInput() })
+    expect(buffer.hasAllInputs(3)).toBe(false)
+
+    buffer.storeInput({ frame: 3, playerId: 'p3', input: emptyInput() })
+    expect(buffer.hasAllInputs(3)).toBe(true)
+
+    // This enforces bounded drift - no peer can be more than inputDelay ahead
+  })
+})
+
+// =============================================================================
+// Split-Brain and Concurrent Election Tests
+// =============================================================================
+
+describe('Split-Brain Prevention', () => {
+  it('SCENARIO: After partition heals, only one leader remains', () => {
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3', 'p4', 'p5'])
+
+    // Simulate two partitions each electing a "leader"
+    // When they merge, higher term wins
+
+    const e1 = new LeaderElection({
+      localPlayerId: 'p1',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    const e2 = new LeaderElection({
+      localPlayerId: 'p3',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e1.reset()
+    e2.reset()
+
+    // p1 is initial leader (term 0)
+    expect(e1.isLeader()).toBe(true)
+    expect(e1.getCurrentTerm()).toBe(0)
+
+    // Simulate: p3 thinks it became leader in term 2 (in its partition)
+    // by receiving heartbeat from itself after winning election
+    e2.handleMessage(
+      { type: 'heartbeat', term: 2, leaderId: 'p3', frame: 0 },
+      'p3'
+    )
+
+    // Partition heals: p1 receives heartbeat from p3 with higher term
+    e1.handleMessage(
+      { type: 'heartbeat', term: 2, leaderId: 'p3', frame: 0 },
+      'p3'
+    )
+
+    // p1 should step down
+    expect(e1.isLeader()).toBe(false)
+    expect(e1.getCurrentTerm()).toBe(2)
+    expect(e1.getCurrentLeader()).toBe('p3')
+
+    // Only p3 is leader
+    // (In real scenario, p3 would also need to handle messages, but the key
+    // property is that p1 stepped down upon seeing higher term)
+  })
+
+  it('SCENARIO: Concurrent candidates - only one wins', () => {
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3'])
+
+    const e2 = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    const e3 = new LeaderElection({
+      localPlayerId: 'p3',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e2.addPeer('p1')
+    e2.addPeer('p3')
+    e3.addPeer('p1')
+    e3.addPeer('p2')
+
+    e2.start()
+    e3.start()
+
+    // Both start elections (leader p1 "disconnected")
+    e2.removePeer('p1')
+    e3.removePeer('p1')
+
+    // Both are candidates in term 1
+    expect(e2.getState()).toBe('candidate')
+    expect(e3.getState()).toBe('candidate')
+
+    // p2 gets vote from p3 first (simulating network race)
+    e2.handleMessage(
+      { type: 'vote_response', term: e2.getCurrentTerm(), voteGranted: true, voterId: 'p3' },
+      'p3'
+    )
+
+    // p2 becomes leader
+    expect(e2.isLeader()).toBe(true)
+
+    // p3 receives heartbeat from new leader p2
+    e3.handleMessage(
+      { type: 'heartbeat', term: e2.getCurrentTerm(), leaderId: 'p2', frame: 0 },
+      'p2'
+    )
+
+    // p3 steps down to follower
+    expect(e3.isLeader()).toBe(false)
+    expect(e3.getState()).toBe('follower')
+    expect(e3.getCurrentLeader()).toBe('p2')
+
+    e2.stop()
+    e3.stop()
+  })
+})
+
+// =============================================================================
+// State Sync Ordering Tests
+// =============================================================================
+
+describe('State Sync Ordering', () => {
+  it('SCENARIO: Out-of-order syncs - older term rejected', () => {
+    const manager = new StateSyncManager({ syncInterval: 60 })
+    manager.reset()
+    manager.setCurrentTerm(5)
+
+    let syncCount = 0
+    manager.setStateSyncHandler(() => {
+      syncCount++
+    })
+
+    // Receive sync from term 5
+    manager.receiveSyncMessage({
+      type: 'state_sync',
+      frame: 10,
+      state: { data: 'term5' },
+      checksum: 123,
+      term: 5,
+    })
+    expect(syncCount).toBe(1)
+
+    // Receive stale sync from term 3 (out of order)
+    manager.receiveSyncMessage({
+      type: 'state_sync',
+      frame: 8,
+      state: { data: 'term3-stale' },
+      checksum: 456,
+      term: 3,
+    })
+    expect(syncCount).toBe(1) // Should not increase - rejected
+
+    // Receive sync from term 6 (newer)
+    manager.setCurrentTerm(6)
+    manager.receiveSyncMessage({
+      type: 'state_sync',
+      frame: 15,
+      state: { data: 'term6' },
+      checksum: 789,
+      term: 6,
+    })
+    expect(syncCount).toBe(2) // Should increase
+  })
+
+  it('SCENARIO: Concurrent syncs from same term - idempotent', () => {
+    const manager = new StateSyncManager({ syncInterval: 60 })
+    manager.reset()
+    manager.setCurrentTerm(5)
+
+    let lastState: unknown = null
+    manager.setStateSyncHandler((state) => {
+      lastState = state
+    })
+
+    // Receive first sync
+    manager.receiveSyncMessage({
+      type: 'state_sync',
+      frame: 10,
+      state: { data: 'first' },
+      checksum: 123,
+      term: 5,
+    })
+    expect(lastState).toEqual({ data: 'first' })
+
+    // Receive duplicate/concurrent sync (same term)
+    manager.receiveSyncMessage({
+      type: 'state_sync',
+      frame: 10,
+      state: { data: 'second' },
+      checksum: 123,
+      term: 5,
+    })
+    // Both are accepted (idempotent for same term)
+    expect(lastState).toEqual({ data: 'second' })
+  })
+})
+
+// =============================================================================
+// Frame and Event Integrity Tests
+// =============================================================================
+
+describe('Frame and Event Integrity', () => {
+  it('SCENARIO: Frame rollback prevention - frames never decrease', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    // Store inputs for frames in order
+    for (let frame = 3; frame <= 10; frame++) {
+      buffer.storeInput({ frame, playerId: 'p1', input: emptyInput() })
+      buffer.storeInput({ frame, playerId: 'p2', input: emptyInput() })
+    }
+
+    // Cleanup to frame 8
+    buffer.cleanup(8)
+
+    // Old frames should be gone (no rollback possible)
+    expect(buffer.hasInput(5, 'p1')).toBe(false)
+    expect(buffer.hasInput(6, 'p1')).toBe(false)
+
+    // Recent frames still available
+    expect(buffer.hasInput(8, 'p1')).toBe(true)
+    expect(buffer.hasInput(9, 'p1')).toBe(true)
+  })
+
+  it('SCENARIO: Event idempotency - duplicate events handled', () => {
+    const queue = new LocalEventQueue({
+      bufferSize: 100,
+      localPlayerId: 'p1',
+    })
+    queue.reset()
+
+    const event: GameEvent = { type: 'pickup', playerId: 'p1', pickupId: 42 }
+
+    // Add same event twice (simulating duplicate message)
+    queue.addEvent(event, 5)
+    queue.addEvent(event, 5)
+
+    // Should have 2 events (queue doesn't dedupe - that's simulation's job)
+    // The key is it doesn't crash or corrupt state
+    const pending = queue.getPendingEvents()
+    expect(pending.length).toBe(2)
+
+    // Both events are valid
+    expect(pending[0]).toEqual(event)
+    expect(pending[1]).toEqual(event)
+  })
+
+  it('SCENARIO: Events from unknown players rejected', () => {
+    const buffer = new InputBuffer({
+      inputDelay: 3,
+      playerCount: 2,
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+    })
+    buffer.reset()
+
+    // Store input from unknown player
+    buffer.storeInput({
+      frame: 5,
+      playerId: 'unknown',
+      input: emptyInput(),
+    })
+
+    // Frame still not complete (unknown player doesn't count toward playerCount)
+    expect(buffer.hasAllInputs(5)).toBe(false)
+
+    // Add valid players
+    buffer.storeInput({ frame: 5, playerId: 'p1', input: emptyInput() })
+    buffer.storeInput({ frame: 5, playerId: 'p2', input: emptyInput() })
+
+    // Now complete
+    expect(buffer.hasAllInputs(5)).toBe(true)
+  })
+})

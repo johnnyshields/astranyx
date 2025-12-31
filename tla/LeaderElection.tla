@@ -174,6 +174,14 @@ LeaderVotedForSelf ==
 VotedForValid ==
     \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
 
+\* Votes received must be from valid peers
+VotesFromValidPeers ==
+    \A p \in Peer : votesReceived[p] \subseteq Peer
+
+\* Leader had majority when elected
+LeaderHadMajority ==
+    \A p \in Peer : IsLeader(p) => IsMajority(votesReceived[p])
+
 ----
 \* Liveness
 

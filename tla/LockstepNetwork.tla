@@ -550,9 +550,7 @@ LeaderUpToDate ==
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
-\* Event owners must be valid peers
-EventOwnerValid ==
-    \A p \in Peer : \A e \in pendingEvents[p] : e[1] \in Peer
+\* Note: EventOwnerValid removed - implied by LocalEventsPreserved (e[1] = p means e[1] \in Peer)
 
 \* Sync term never exceeds current term (no time travel)
 \* Maintained because ReceiveStateSync updates currentTerm to msgTerm
@@ -574,6 +572,22 @@ MessagesValid ==
 \* No self-partition (sanity check)
 NoSelfPartition ==
     \A p \in Peer : ~partitioned[{p, p}]
+
+\* votedFor is either 0 (none) or a valid peer
+VotedForValid ==
+    \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
+
+\* Votes received must be from valid peers
+VotesFromValidPeers ==
+    \A p \in Peer : votesReceived[p] \subseteq Peer
+
+\* Leader had majority when elected
+LeaderHadMajority ==
+    \A p \in Peer : IsLeader(p) => IsMajority(votesReceived[p])
+
+\* inputsReceived is a subset of connected peers
+InputsFromValidPeers ==
+    inputsReceived \subseteq Peer
 
 ----
 \* ============================================================================

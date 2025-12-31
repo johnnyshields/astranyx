@@ -323,10 +323,7 @@ LeaderUpToDate ==
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
-\* Event owners must be valid peers
-\* Implementation: GameEvent always has playerId from known player set
-EventOwnerValid ==
-    \A p \in Peer : \A e \in pendingEvents[p] : e[1] \in Peer
+\* Note: EventOwnerValid removed - implied by LocalEventsPreserved (e[1] = p means e[1] \in Peer)
 
 \* Sync term never exceeds current term (no time travel)
 \* This holds because:
@@ -344,6 +341,27 @@ CandidateVotedForSelf ==
 \* Leader must have voted for self
 LeaderVotedForSelf ==
     \A p \in Peer : IsLeader(p) => votedFor[p] = p
+
+\* Leader had majority when elected (votes are from peers in current config)
+\* Note: Leader keeps votes after becoming leader, so we check the set is valid
+LeaderHadMajority ==
+    \A p \in Peer : IsLeader(p) =>
+        \/ IsMajority(votesReceived[p])  \* Normal election
+        \/ votesReceived[p] = Peer       \* ForceLeaderChange gives all votes
+
+\* Votes received must be from valid peers
+VotesFromValidPeers ==
+    \A p \in Peer : votesReceived[p] \subseteq Peer
+
+\* votedFor must be 0 (none) or a valid peer
+VotedForValid ==
+    \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
+
+\* inputsReceived is a subset of Peer (only valid peers submit inputs)
+InputsFromValidPeers ==
+    inputsReceived \subseteq Peer
+
+\* Note: FrameNonNegative removed - redundant with TypeInvariant (frame[p] >= 0)
 
 ----
 \* Liveness Properties
