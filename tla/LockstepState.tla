@@ -315,11 +315,24 @@ LeaderUpToDate ==
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
+\* Event owners must be valid peers
+\* Implementation: GameEvent always has playerId from known player set
+EventOwnerValid ==
+    \A p \in Peer : \A e \in pendingEvents[p] : e[1] \in Peer
+
 \* Sync term never exceeds current term (no time travel)
 \* Note: This is always true in Init (both are 0), and maintained by ReceiveStateSync
 \* which only accepts syncs where currentTerm[leader] >= syncTerm[follower]
 SyncTermBounded ==
     \A p \in Peer : syncTerm[p] <= currentTerm[p]
+
+\* Candidate must have voted for self
+CandidateVotedForSelf ==
+    \A p \in Peer : state[p] = "Candidate" => votedFor[p] = p
+
+\* Leader must have voted for self
+LeaderVotedForSelf ==
+    \A p \in Peer : IsLeader(p) => votedFor[p] = p
 
 ----
 \* Liveness Properties

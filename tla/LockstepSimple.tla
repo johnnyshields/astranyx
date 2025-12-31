@@ -47,7 +47,7 @@ CONSTANT MaxFrame
 CONSTANT MaxTerm
 
 ----
-\* Variables (8 total - simplified from LockstepFinal's 9)
+\* Variables (8 total - simplified from LockstepState's 10)
 
 VARIABLE frame             \* Current frame per peer
 VARIABLE inputsReceived    \* Peers who submitted input

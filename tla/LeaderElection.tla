@@ -159,6 +159,21 @@ TypeInvariant ==
     /\ \A p \in Peer : frame[p] >= 0 /\ frame[p] <= MaxFrame
     /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
 
+\* If candidate, must have voted for self
+\* Implementation: LeaderElection.ts - startElection() sets votedFor = localPlayerId
+CandidateVotedForSelf ==
+    \A p \in Peer : state[p] = "Candidate" => votedFor[p] = p
+
+\* If leader, must have voted for self (became leader via candidacy)
+\* Implementation: Leader was candidate who won election after voting for self
+LeaderVotedForSelf ==
+    \A p \in Peer : IsLeader(p) => votedFor[p] = p
+
+\* votedFor is either 0 (none) or a valid peer
+\* Implementation: votedFor is string | null in TypeScript
+VotedForValid ==
+    \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
+
 ----
 \* Liveness
 

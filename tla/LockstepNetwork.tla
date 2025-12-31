@@ -551,9 +551,25 @@ LeaderUpToDate ==
 LocalEventsPreserved ==
     \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
 
+\* Event owners must be valid peers
+EventOwnerValid ==
+    \A p \in Peer : \A e \in pendingEvents[p] : e[1] \in Peer
+
 \* Sync term never exceeds current term
 SyncTermBounded ==
     \A p \in Peer : syncTerm[p] <= currentTerm[p]
+
+\* Candidate must have voted for self
+CandidateVotedForSelf ==
+    \A p \in Peer : state[p] = "Candidate" => votedFor[p] = p
+
+\* Leader must have voted for self
+LeaderVotedForSelf ==
+    \A p \in Peer : IsLeader(p) => votedFor[p] = p
+
+\* All messages are between valid peers
+MessagesValid ==
+    \A m \in network : MsgFrom(m) \in Peer /\ MsgTo(m) \in Peer
 
 \* No self-partition (sanity check)
 NoSelfPartition ==

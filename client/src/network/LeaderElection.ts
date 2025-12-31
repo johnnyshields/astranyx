@@ -628,10 +628,24 @@ export class LeaderElection {
       )
     }
 
-    // Candidate must have voted for self
+    // TLA+ CandidateVotedForSelf: Candidate must have voted for self
     if (this.state === 'candidate' && this.votedFor !== this.config.localPlayerId) {
       throw new Error(
-        `TLA+ Consistency violated: candidate must vote for self, but votedFor is ${this.votedFor}`
+        `TLA+ CandidateVotedForSelf violated: candidate must vote for self, but votedFor is ${this.votedFor}`
+      )
+    }
+
+    // TLA+ LeaderVotedForSelf: Leader must have voted for self
+    if (this.state === 'leader' && this.votedFor !== this.config.localPlayerId) {
+      throw new Error(
+        `TLA+ LeaderVotedForSelf violated: leader must have voted for self, but votedFor is ${this.votedFor}`
+      )
+    }
+
+    // TLA+ VotedForValid: votedFor is null or a valid peer
+    if (this.votedFor !== null && !this.config.playerOrder.has(this.votedFor)) {
+      throw new Error(
+        `TLA+ VotedForValid violated: votedFor "${this.votedFor}" is not a valid peer`
       )
     }
   }
