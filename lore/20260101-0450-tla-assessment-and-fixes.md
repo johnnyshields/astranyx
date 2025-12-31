@@ -143,7 +143,7 @@ LeaderElection.tla
 │                    Verification Layers                       │
 ├─────────────────────────────────────────────────────────────┤
 │  TLC Model Checker        │  Exhaustive state exploration   │
-│  (run-tlc.sh)             │  ~50M states, safety invariants │
+│  (run_tlc.sh)             │  ~50M states, safety invariants │
 ├───────────────────────────┼─────────────────────────────────┤
 │  Property-Based Tests     │  Random action sequences        │
 │  (TLAProperties.test.ts)  │  fast-check, 100+ iterations    │
@@ -180,7 +180,7 @@ client/src/network/
 
 ```bash
 # TLC model checker (requires tla2tools.jar)
-cd tla && ./run-tlc.sh
+cd tla && ./run_tlc.sh
 
 # TypeScript property tests
 cd client && bun test TLAProperties.test.ts

@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(*)",
-      "Bash(./run-tlc.sh)",
+      "Bash(./run_tlc.sh)",
       "Bash(apt list:*)",
       "Bash(asdf:*)",
       "Bash(bun add:*)",

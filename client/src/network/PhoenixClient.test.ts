@@ -13,12 +13,10 @@ describe('PhoenixClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.useFakeTimers()
     client = new PhoenixClient(config)
   })
 
   afterEach(() => {
-    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -30,29 +28,18 @@ describe('PhoenixClient', () => {
 
   describe('connect', () => {
     it('should connect to socket and return player ID', async () => {
-      const connectPromise = client.connect()
-
-      // Advance timers to trigger onOpen callback
-      await vi.runAllTimersAsync()
-
-      const playerId = await connectPromise
+      const playerId = await client.connect()
       expect(playerId).toBe('test-player-123')
     })
 
     it('should use provided player ID', async () => {
-      const connectPromise = client.connect()
-      await vi.runAllTimersAsync()
-      const playerId = await connectPromise
-
+      const playerId = await client.connect()
       expect(playerId).toBe('test-player-123')
     })
 
     it('should generate player ID if not provided', async () => {
       const clientNoId = new PhoenixClient({ url: 'ws://test' })
-      const connectPromise = clientNoId.connect()
-      await vi.runAllTimersAsync()
-      const playerId = await connectPromise
-
+      const playerId = await clientNoId.connect()
       expect(playerId).toMatch(/^player_\d+_/)
     })
   })
@@ -168,17 +155,13 @@ describe('PhoenixClient', () => {
   describe('disconnect', () => {
     it('should not throw when called', async () => {
       // Connect first
-      const connectPromise = client.connect()
-      await vi.runAllTimersAsync()
-      await connectPromise
+      await client.connect()
 
       expect(() => client.disconnect()).not.toThrow()
     })
 
     it('should leave rooms before disconnecting', async () => {
-      const connectPromise = client.connect()
-      await vi.runAllTimersAsync()
-      await connectPromise
+      await client.connect()
 
       // Should not throw
       client.disconnect()

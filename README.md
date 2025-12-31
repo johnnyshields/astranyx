@@ -68,7 +68,7 @@ iex -S mix phx.server # Interactive mode
 
 ```bash
 cd tla
-./run-tlc.sh          # Run TLC model checker
+./run_tlc.sh          # Run TLC model checker
 ```
 
 ## Architecture

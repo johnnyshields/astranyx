@@ -50,7 +50,7 @@ Refactored the monolithic `LockstepNetcode` class into modular, testable compone
 |------|-------|---------|
 | `LockstepNetcode.tla` | ~330 | TLA+ specification with safety/liveness properties |
 | `MCLockstepNetcode.cfg` | ~25 | Model checker configuration |
-| `run-tlc.sh` | ~30 | Script to run TLC |
+| `run_tlc.sh` | ~30 | Script to run TLC |
 
 ## Key Design Decisions
 
@@ -149,7 +149,7 @@ bun test src/network/__tests__/LockstepNetcode.jepsen.test.ts
 ### Running TLA+ Model Checker
 ```bash
 cd tla
-./run-tlc.sh
+./run_tlc.sh
 ```
 
 Requires TLA+ tools (tla2tools.jar) from https://github.com/tlaplus/tlaplus/releases

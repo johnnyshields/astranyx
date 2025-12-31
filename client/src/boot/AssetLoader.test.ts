@@ -195,10 +195,11 @@ describe('AssetLoader', () => {
         src: '',
       }
 
-      vi.spyOn(global, 'Image').mockImplementation(() => {
+      const MockImage = vi.fn().mockImplementation(function(this: HTMLImageElement) {
         setTimeout(() => mockImage.onload?.(), 0)
         return mockImage as unknown as HTMLImageElement
       })
+      vi.stubGlobal('Image', MockImage)
 
       const progressCallback = vi.fn()
       const loader = new AssetLoader({ images: ['test.png'] })
@@ -213,7 +214,7 @@ describe('AssetLoader', () => {
         currentAsset: 'test.png',
       })
 
-      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
     })
 
     it('should handle failed loads gracefully', async () => {
@@ -223,10 +224,11 @@ describe('AssetLoader', () => {
         src: '',
       }
 
-      vi.spyOn(global, 'Image').mockImplementation(() => {
+      const MockImage = vi.fn().mockImplementation(function(this: HTMLImageElement) {
         setTimeout(() => mockImage.onerror?.(), 0)
         return mockImage as unknown as HTMLImageElement
       })
+      vi.stubGlobal('Image', MockImage)
 
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -236,6 +238,7 @@ describe('AssetLoader', () => {
       expect(result).toBe(assetCache)
       expect(warnSpy).toHaveBeenCalled()
 
+      vi.unstubAllGlobals()
       vi.restoreAllMocks()
     })
   })
@@ -248,16 +251,16 @@ describe('AssetLoader', () => {
     })
 
     it('should load with concurrency limit', async () => {
-      const mockImage = {
-        onload: null as (() => void) | null,
-        onerror: null as (() => void) | null,
-        src: '',
-      }
-
-      vi.spyOn(global, 'Image').mockImplementation(() => {
-        setTimeout(() => mockImage.onload?.(), 0)
-        return mockImage as unknown as HTMLImageElement
+      const MockImage = vi.fn().mockImplementation(function(this: HTMLImageElement) {
+        const instance = {
+          onload: null as (() => void) | null,
+          onerror: null as (() => void) | null,
+          src: '',
+        }
+        queueMicrotask(() => instance.onload?.())
+        return instance as unknown as HTMLImageElement
       })
+      vi.stubGlobal('Image', MockImage)
 
       const progressCallback = vi.fn()
       const loader = new AssetLoader({ images: ['a.png', 'b.png'] })
@@ -267,7 +270,7 @@ describe('AssetLoader', () => {
 
       expect(progressCallback).toHaveBeenCalledTimes(2)
 
-      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
     })
   })
 })

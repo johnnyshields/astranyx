@@ -139,7 +139,7 @@ assertInvariants(): void {
 }
 ```
 
-## Updated run-tlc.sh
+## Updated run_tlc.sh
 
 ```bash
 # Models:
@@ -149,10 +149,10 @@ assertInvariants(): void {
 #   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
 
 # Usage:
-./run-tlc.sh              # Run all models
-./run-tlc.sh --quick      # Run LeaderElection + LockstepSimple
-./run-tlc.sh --state      # Run only LockstepState
-./run-tlc.sh --network    # Run only LockstepNetwork
+./run_tlc.sh              # Run all models
+./run_tlc.sh --quick      # Run LeaderElection + LockstepSimple
+./run_tlc.sh --state      # Run only LockstepState
+./run_tlc.sh --network    # Run only LockstepNetwork
 ```
 
 ## Model Coverage Matrix
@@ -175,7 +175,7 @@ assertInvariants(): void {
 - `tla/LockstepSimple.tla` - Renamed, added docs
 - `tla/LockstepState.tla` - Renamed, added inSync/Desync
 - `tla/LockstepNetwork.tla` - New file
-- `tla/run-tlc.sh` - Updated for new names
+- `tla/run_tlc.sh` - Updated for new names
 
 **TypeScript:**
 - `src/network/LeaderElection.ts` - TLA+ header, assertInvariants()

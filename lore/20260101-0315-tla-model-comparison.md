@@ -83,10 +83,10 @@ LockstepFull additionally verifies:
 ## Usage
 
 ```bash
-./run-tlc.sh              # Run all models (default)
-./run-tlc.sh --quick      # LeaderElection + LockstepCore (~6 min)
-./run-tlc.sh --full       # LockstepFull only (~10+ min)
-./run-tlc.sh --force      # Ignore cache, re-run
+./run_tlc.sh              # Run all models (default)
+./run_tlc.sh --quick      # LeaderElection + LockstepCore (~6 min)
+./run_tlc.sh --full       # LockstepFull only (~10+ min)
+./run_tlc.sh --force      # Ignore cache, re-run
 ```
 
 ## TypeScript Mapping
@@ -114,6 +114,6 @@ tla/
 ├── MCLockstepCore.cfg
 ├── LockstepFull.tla      # Complete model (3 peers)
 ├── MCLockstepFull.cfg
-├── run-tlc.sh
+├── run_tlc.sh
 └── .gitignore
 ```

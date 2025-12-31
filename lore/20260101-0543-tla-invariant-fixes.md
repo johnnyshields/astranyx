@@ -48,14 +48,14 @@ ReceiveStateSync(follower, leader) ==
 
 **Fix**: Increased to `MaxMessages = 20` in MCLockstepNetwork.cfg.
 
-### 4. run-tlc.sh Improvements
+### 4. run_tlc.sh Improvements
 
 Replaced `--quick`, `--state`, `--network` flags with flexible `-f`/`--file` option:
 ```bash
-./run-tlc.sh                              # Run all models
-./run-tlc.sh -f LeaderElection            # Single model
-./run-tlc.sh -f LeaderElection,LockstepSimple  # Multiple models
-./run-tlc.sh -f LockstepState --max       # With max resources
+./run_tlc.sh                              # Run all models
+./run_tlc.sh -f LeaderElection            # Single model
+./run_tlc.sh -f LeaderElection,LockstepSimple  # Multiple models
+./run_tlc.sh -f LockstepState --max       # With max resources
 ```
 
 ## TypeScript Alignment

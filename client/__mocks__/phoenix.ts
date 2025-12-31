@@ -4,12 +4,30 @@
 import { vi } from 'vitest'
 
 // Create mock channel that can be customized per test
-const createMockChannel = () => ({
-  on: vi.fn(),
-  join: vi.fn().mockReturnValue({ receive: vi.fn().mockReturnThis() }),
-  push: vi.fn().mockReturnValue({ receive: vi.fn().mockReturnThis() }),
-  leave: vi.fn(),
-})
+const createMockChannel = () => {
+  const channel = {
+    on: vi.fn().mockReturnThis(),
+    join: vi.fn().mockReturnValue({
+      receive: vi.fn().mockImplementation(function(this: { receive: (event: string, cb: (resp: unknown) => void) => unknown }, event: string, cb: (resp: unknown) => void) {
+        if (event === 'ok') {
+          // Use queueMicrotask for immediate async execution that works with fake timers
+          queueMicrotask(() => cb({}))
+        }
+        return this
+      }),
+    }),
+    push: vi.fn().mockReturnValue({
+      receive: vi.fn().mockImplementation(function(this: { receive: (event: string, cb: (resp: unknown) => void) => unknown }, event: string, cb: (resp: unknown) => void) {
+        if (event === 'ok') {
+          queueMicrotask(() => cb({ latency: 10 }))
+        }
+        return this
+      }),
+    }),
+    leave: vi.fn(),
+  }
+  return channel
+}
 
 // Mock Socket class that works as a constructor
 export class Socket {
@@ -29,13 +47,13 @@ export class Socket {
 
   connect() {
     this._connected = true
-    // Auto-trigger onOpen callback
-    setTimeout(() => this._openCallback?.(), 0)
+    // Use queueMicrotask for immediate async execution that works with fake timers
+    queueMicrotask(() => this._openCallback?.())
   }
 
   disconnect() {
     this._connected = false
-    setTimeout(() => this._closeCallback?.(), 0)
+    queueMicrotask(() => this._closeCallback?.())
   }
 
   onOpen(callback: () => void) {

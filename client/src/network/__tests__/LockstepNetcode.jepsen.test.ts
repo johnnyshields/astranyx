@@ -10,7 +10,7 @@
  * Inspired by Jepsen analyses: https://jepsen.io/analyses
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { LockstepNetcode } from '../LockstepNetcode.ts'
 import { LeaderElection } from '../LeaderElection.ts'
 import { InputBuffer } from '../InputBuffer.ts'

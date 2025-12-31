@@ -12,7 +12,7 @@
  * - Drift between spec and code
  */
 
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 

@@ -8,11 +8,11 @@
 #   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
 #
 # Usage:
-#   ./run-tlc.sh                              # Run all models (default)
-#   ./run-tlc.sh -f LeaderElection            # Run single model
-#   ./run-tlc.sh -f LeaderElection,LockstepSimple  # Run specific models
-#   ./run-tlc.sh --force                      # Force re-run ignoring cache
-#   ./run-tlc.sh --max                        # Use maximum resources (48GB heap, 28 workers)
+#   ./run_tlc.sh                              # Run all models (default)
+#   ./run_tlc.sh -f LeaderElection            # Run single model
+#   ./run_tlc.sh -f LeaderElection,LockstepSimple  # Run specific models
+#   ./run_tlc.sh --force                      # Force re-run ignoring cache
+#   ./run_tlc.sh --max                        # Use maximum resources (48GB heap, 28 workers)
 #
 # Environment:
 #   TLC_JAR - Path to tla2tools.jar (default: ~/tla2tools.jar)
@@ -21,7 +21,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TLC_JAR="${TLC_JAR:-$HOME/tla2tools.jar}"
-PASSED_FILE="$SCRIPT_DIR/.tlc-passed"
+PASSED_FILE="$SCRIPT_DIR/.tlc_passed"
 TMP_DIR="$SCRIPT_DIR/tmp"
 
 mkdir -p "$TMP_DIR"
@@ -109,11 +109,10 @@ run_model() {
          "${ARGS[@]}" \
          "${SPEC_NAME}.tla"
 
-    echo ""
-    echo "[$SPEC_NAME] Model checking complete."
-
-    # Record successful run
+    # Record successful run immediately after TLC passes
     echo "$HASH  $SPEC_NAME  $(date -Iseconds)" >> "$PASSED_FILE"
+    echo "[$SPEC_NAME] PASSED - hash recorded: ${HASH:0:16}..."
+    echo ""
 }
 
 # Parse comma-separated file list and run each model

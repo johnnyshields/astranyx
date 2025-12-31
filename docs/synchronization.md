@@ -40,7 +40,7 @@ The lockstep netcode is formally verified using TLA+ model checking. The model i
 
 ```bash
 cd tla
-./run-tlc.sh
+./run_tlc.sh
 ```
 
 The script uses hash-based caching - it skips if the spec hasn't changed since last successful run.
@@ -310,4 +310,4 @@ interface HeartbeatMessage {
 3. **Log Desync Details**: When checksums mismatch, log full state for comparison
 4. **Adjust Sync Interval**: Lower for action-heavy games, higher for turn-based
 5. **Handle Visual Jumps**: State sync may cause brief visual discontinuity - consider interpolation
-6. **Run TLA+ Model**: After changing sync logic, verify with `./run-tlc.sh`
+6. **Run TLA+ Model**: After changing sync logic, verify with `./run_tlc.sh`

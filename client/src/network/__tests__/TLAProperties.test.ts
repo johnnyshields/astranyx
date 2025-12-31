@@ -10,7 +10,7 @@
  * - LockstepNetwork.tla: ConnectedFrameBoundedDrift, NoAdvanceWithoutInputs
  */
 
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect } from 'vitest'
 import * as fc from 'fast-check'
 import { LeaderElection } from '../LeaderElection.ts'
 import { InputBuffer } from '../InputBuffer.ts'
