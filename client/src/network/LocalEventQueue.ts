@@ -30,9 +30,6 @@ export class LocalEventQueue {
   // All pending events (not yet confirmed)
   private pendingEvents: BufferedEvent[] = []
 
-  // Confirmed events by frame for deterministic replay
-  private confirmedByFrame: Map<number, GameEvent[]> = new Map()
-
   // Current frame tracker
   private currentFrame = 0
 
@@ -48,7 +45,6 @@ export class LocalEventQueue {
    */
   reset(): void {
     this.pendingEvents = []
-    this.confirmedByFrame.clear()
     this.currentFrame = 0
     this.lastSyncedFrame = -1
   }
@@ -94,24 +90,6 @@ export class LocalEventQueue {
   }
 
   /**
-   * Get pending events for a specific frame
-   */
-  getPendingEventsForFrame(frame: number): GameEvent[] {
-    return this.pendingEvents
-      .filter(e => !e.confirmed && e.frame === frame)
-      .map(e => e.event)
-  }
-
-  /**
-   * Get pending events after a specific frame (inclusive)
-   */
-  getPendingEventsAfterFrame(frame: number): GameEvent[] {
-    return this.pendingEvents
-      .filter(e => !e.confirmed && e.frame >= frame)
-      .map(e => e.event)
-  }
-
-  /**
    * Get all local events that should be re-applied after state sync
    * These are events owned by the local player that may not be reflected in the sync
    */
@@ -122,28 +100,6 @@ export class LocalEventQueue {
         return ownerId === this.config.localPlayerId
       })
       .map(e => e.event)
-  }
-
-  /**
-   * Mark events as confirmed up to a frame
-   */
-  confirmEventsUpToFrame(frame: number): void {
-    for (const buffered of this.pendingEvents) {
-      if (buffered.frame <= frame) {
-        buffered.confirmed = true
-
-        // Store in confirmed map for replay
-        let frameEvents = this.confirmedByFrame.get(buffered.frame)
-        if (!frameEvents) {
-          frameEvents = []
-          this.confirmedByFrame.set(buffered.frame, frameEvents)
-        }
-        frameEvents.push(buffered.event)
-      }
-    }
-
-    // Remove confirmed events from pending
-    this.pendingEvents = this.pendingEvents.filter(e => !e.confirmed)
   }
 
   /**
@@ -183,23 +139,6 @@ export class LocalEventQueue {
   }
 
   /**
-   * Filter events by type
-   */
-  filterByType<T extends GameEvent['type']>(
-    events: GameEvent[],
-    type: T
-  ): Array<Extract<GameEvent, { type: T }>> {
-    return events.filter(e => e.type === type) as Array<Extract<GameEvent, { type: T }>>
-  }
-
-  /**
-   * Filter events by owner (for remote events)
-   */
-  filterByOwner(events: GameEvent[], ownerId: string): GameEvent[] {
-    return events.filter(e => getEventOwnerId(e) === ownerId)
-  }
-
-  /**
    * Filter out local events (for applying remote events only)
    */
   filterRemoteEvents(events: GameEvent[]): GameEvent[] {
@@ -225,16 +164,7 @@ export class LocalEventQueue {
    */
   private cleanup(): void {
     const minFrame = this.currentFrame - this.config.bufferSize
-
-    // Remove old pending events
     this.pendingEvents = this.pendingEvents.filter(e => e.frame >= minFrame)
-
-    // Remove old confirmed events
-    for (const frame of this.confirmedByFrame.keys()) {
-      if (frame < minFrame) {
-        this.confirmedByFrame.delete(frame)
-      }
-    }
   }
 
   /**
@@ -242,14 +172,12 @@ export class LocalEventQueue {
    */
   getDebugInfo(): {
     pendingCount: number
-    confirmedFrames: number
     oldestPendingFrame: number | null
     newestPendingFrame: number | null
   } {
     const pending = this.pendingEvents.filter(e => !e.confirmed)
     return {
       pendingCount: pending.length,
-      confirmedFrames: this.confirmedByFrame.size,
       oldestPendingFrame: pending.length > 0 ? Math.min(...pending.map(e => e.frame)) : null,
       newestPendingFrame: pending.length > 0 ? Math.max(...pending.map(e => e.frame)) : null,
     }

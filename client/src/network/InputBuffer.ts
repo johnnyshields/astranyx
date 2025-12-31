@@ -29,9 +29,6 @@ export class InputBuffer {
   // frame -> player_id -> checksum
   private checksumBuffer: Map<number, Map<string, number>> = new Map()
 
-  // Last known checksum for local player
-  private lastLocalChecksum = 0
-
   constructor(config: InputBufferConfig) {
     this.config = {
       ...config,
@@ -45,7 +42,6 @@ export class InputBuffer {
   reset(): void {
     this.buffer.clear()
     this.checksumBuffer.clear()
-    this.lastLocalChecksum = 0
 
     // Pre-seed frames 0 to inputDelay-1 with empty inputs
     const empty = emptyInput()
@@ -161,20 +157,6 @@ export class InputBuffer {
   }
 
   /**
-   * Update local checksum
-   */
-  setLocalChecksum(checksum: number): void {
-    this.lastLocalChecksum = checksum
-  }
-
-  /**
-   * Get last local checksum
-   */
-  getLocalChecksum(): number {
-    return this.lastLocalChecksum
-  }
-
-  /**
    * Cleanup frames older than confirmedFrame - retentionFrames
    */
   cleanup(confirmedFrame: number): void {
@@ -206,20 +188,6 @@ export class InputBuffer {
    */
   getInputCount(frame: number): number {
     return this.buffer.get(frame)?.size ?? 0
-  }
-
-  /**
-   * Get the input delay configuration
-   */
-  getInputDelay(): number {
-    return this.config.inputDelay
-  }
-
-  /**
-   * Get all buffered frame numbers
-   */
-  getBufferedFrames(): number[] {
-    return Array.from(this.buffer.keys()).sort((a, b) => a - b)
   }
 
   /**

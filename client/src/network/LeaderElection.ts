@@ -23,6 +23,7 @@ import type {
   LeaderChangeHandler,
   PeerDisconnectHandler,
 } from './types.ts'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 export interface LeaderElectionConfig {
   localPlayerId: string
@@ -159,7 +160,7 @@ export class LeaderElection {
 
     // If leader disconnected, start election
     if (peerId === this.currentLeader && this.state !== 'leader') {
-      console.log(`LeaderElection: Leader ${peerId} disconnected, starting election`)
+      SafeConsole.log(`LeaderElection: Leader ${peerId} disconnected, starting election`)
       this.startElection()
     }
 
@@ -193,7 +194,7 @@ export class LeaderElection {
       const timeSinceHeartbeat = now - this.lastHeartbeat
 
       if (timeSinceHeartbeat >= this.config.electionTimeout) {
-        console.log(`LeaderElection: Election timeout (${timeSinceHeartbeat}ms since last heartbeat)`)
+        SafeConsole.log(`LeaderElection: Election timeout (${timeSinceHeartbeat}ms since last heartbeat)`)
         this.startElection()
       } else {
         // Restart timer for remaining time
@@ -258,7 +259,7 @@ export class LeaderElection {
     this.votesReceived.add(this.config.localPlayerId) // Vote for self
     this.currentLeader = null
 
-    console.log(`LeaderElection: Starting election for term ${this.currentTerm}`)
+    SafeConsole.log(`LeaderElection: Starting election for term ${this.currentTerm}`)
 
     // Request votes from all peers
     const requestVote: RequestVoteMessage = {
@@ -335,7 +336,7 @@ export class LeaderElection {
 
     if (message.voteGranted) {
       this.votesReceived.add(message.voterId)
-      console.log(`LeaderElection: Received vote from ${message.voterId} (${this.votesReceived.size}/${this.getMajority()} needed)`)
+      SafeConsole.log(`LeaderElection: Received vote from ${message.voterId} (${this.votesReceived.size}/${this.getMajority()} needed)`)
       this.checkElectionResult()
     }
   }
@@ -355,7 +356,7 @@ export class LeaderElection {
    * Become leader after winning election
    */
   private becomeLeader(): void {
-    console.log(`LeaderElection: Became leader for term ${this.currentTerm}`)
+    SafeConsole.log(`LeaderElection: Became leader for term ${this.currentTerm}`)
 
     this.state = 'leader'
     this.currentLeader = this.config.localPlayerId
@@ -369,7 +370,7 @@ export class LeaderElection {
    * Step down to follower (discovered higher term)
    */
   private stepDown(newTerm: number): void {
-    console.log(`LeaderElection: Stepping down, term ${this.currentTerm} -> ${newTerm}`)
+    SafeConsole.log(`LeaderElection: Stepping down, term ${this.currentTerm} -> ${newTerm}`)
 
     this.currentTerm = newTerm
     this.state = 'follower'

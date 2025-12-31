@@ -42,6 +42,7 @@ import { InputBuffer } from './InputBuffer.ts'
 import { LocalEventQueue } from './LocalEventQueue.ts'
 import { StateSyncManager } from './StateSyncManager.ts'
 import { LeaderElection } from './LeaderElection.ts'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 // Re-export types for backwards compatibility
 export type { PlayerInput, GameEvent, FrameInput, LockstepConfig, StateSyncMessage }
@@ -100,7 +101,6 @@ export class LockstepNetcode {
 
     this.syncManager = new StateSyncManager({
       syncInterval: this.config.stateSyncInterval!,
-      localPlayerId: this.config.localPlayerId,
     })
     this.syncManager.setEventQueue(this.eventQueue)
 
@@ -118,13 +118,13 @@ export class LockstepNetcode {
 
     // Wire up election callbacks
     this.election.setLeaderChangeHandler((leaderId, term) => {
-      console.log(`LockstepNetcode: Leader changed to ${leaderId} (term ${term})`)
+      SafeConsole.log(`LockstepNetcode: Leader changed to ${leaderId} (term ${term})`)
       this.syncManager.setCurrentTerm(term)
       this.onLeaderChange?.(leaderId, term)
     })
 
     this.election.setPeerDisconnectHandler((peerId) => {
-      console.log(`LockstepNetcode: Peer ${peerId} disconnected`)
+      SafeConsole.log(`LockstepNetcode: Peer ${peerId} disconnected`)
       this.onPeerDisconnect?.(peerId)
     })
   }
@@ -143,7 +143,7 @@ export class LockstepNetcode {
     // Start election system
     this.election.start()
 
-    console.log('LockstepNetcode: Started', {
+    SafeConsole.log('LockstepNetcode: Started', {
       playerCount: this.config.playerCount,
       inputDelay: this.config.inputDelay,
       localPlayerId: this.config.localPlayerId,
@@ -161,7 +161,7 @@ export class LockstepNetcode {
    * Add a peer connection
    */
   addPeer(playerId: string, dataChannel: RTCDataChannel): void {
-    console.log(`LockstepNetcode: Adding peer ${playerId}`)
+    SafeConsole.log(`LockstepNetcode: Adding peer ${playerId}`)
     this.peers.set(playerId, dataChannel)
     this.election.addPeer(playerId)
 
@@ -182,7 +182,7 @@ export class LockstepNetcode {
   private handleMessage(data: NetMessage, fromPeerId: string): void {
     // Handle state sync messages
     if (isStateSyncMessage(data)) {
-      console.log(`LockstepNetcode: Received state sync for frame ${data.frame}`)
+      SafeConsole.log(`LockstepNetcode: Received state sync for frame ${data.frame}`)
       this.receiveStateSync(data)
       return
     }
@@ -195,7 +195,7 @@ export class LockstepNetcode {
 
     // Handle input messages
     if (isFrameInput(data)) {
-      console.log(`LockstepNetcode: Received input from ${data.playerId} for frame ${data.frame}`)
+      SafeConsole.log(`LockstepNetcode: Received input from ${data.playerId} for frame ${data.frame}`)
       this.receiveInput(data)
       return
     }
@@ -210,11 +210,6 @@ export class LockstepNetcode {
    */
   tick(localInput: PlayerInput, events?: GameEvent[], checksum?: number): boolean {
     if (!this.running) return false
-
-    // Store local checksum
-    if (checksum !== undefined) {
-      this.inputBuffer.setLocalChecksum(checksum)
-    }
 
     // Buffer local events
     if (events && events.length > 0) {
@@ -251,7 +246,7 @@ export class LockstepNetcode {
    */
   private tryAdvanceFrame(): boolean {
     if (!this.inputBuffer.hasAllInputs(this.currentFrame)) {
-      console.log(`LockstepNetcode: Frame ${this.currentFrame} has ${this.inputBuffer.getInputCount(this.currentFrame)}/${this.config.playerCount} inputs`)
+      SafeConsole.log(`LockstepNetcode: Frame ${this.currentFrame} has ${this.inputBuffer.getInputCount(this.currentFrame)}/${this.config.playerCount} inputs`)
       this.waitingForInputs = true
       return false
     }
@@ -336,7 +331,7 @@ export class LockstepNetcode {
    */
   broadcastStateSync(state: unknown, checksum: number): void {
     if (!this.isHost()) {
-      console.warn('LockstepNetcode: Non-leader tried to broadcast state sync')
+      SafeConsole.warn('LockstepNetcode: Non-leader tried to broadcast state sync')
       return
     }
 
@@ -350,7 +345,7 @@ export class LockstepNetcode {
     }
 
     this.syncManager.onSyncSent()
-    console.log(`LockstepNetcode: Broadcast state sync at frame ${this.currentFrame}`)
+    SafeConsole.log(`LockstepNetcode: Broadcast state sync at frame ${this.currentFrame}`)
   }
 
   /**
@@ -359,7 +354,7 @@ export class LockstepNetcode {
   private receiveStateSync(message: StateSyncMessage): void {
     // Only non-leaders should apply state sync
     if (this.isHost()) {
-      console.warn('LockstepNetcode: Leader received state sync (ignoring)')
+      SafeConsole.warn('LockstepNetcode: Leader received state sync (ignoring)')
       return
     }
 

@@ -363,7 +363,6 @@ describe('StateSyncManager', () => {
   it('determines when to send sync', () => {
     const manager = new StateSyncManager({
       syncInterval: 10,
-      localPlayerId: 'p1',
     })
     manager.reset()
 
@@ -383,7 +382,6 @@ describe('StateSyncManager', () => {
   it('triggers immediate sync on desync', () => {
     const manager = new StateSyncManager({
       syncInterval: 100,
-      localPlayerId: 'p1',
     })
     manager.reset()
 
@@ -397,7 +395,6 @@ describe('StateSyncManager', () => {
   it('validates sync term', () => {
     const manager = new StateSyncManager({
       syncInterval: 10,
-      localPlayerId: 'p1',
     })
     manager.reset()
     manager.setCurrentTerm(5)
@@ -1056,7 +1053,6 @@ describe('Jepsen Failure Scenarios', () => {
 
       const manager = new StateSyncManager({
         syncInterval: 10,
-        localPlayerId: 'p1',
       })
       manager.reset()
 
@@ -1078,7 +1074,6 @@ describe('Jepsen Failure Scenarios', () => {
     it('SCENARIO: Desync detected - immediate sync triggered', () => {
       const manager = new StateSyncManager({
         syncInterval: 100, // Long interval
-        localPlayerId: 'p1',
       })
       manager.reset()
 

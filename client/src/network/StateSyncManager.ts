@@ -13,7 +13,6 @@ import type { LocalEventQueue } from './LocalEventQueue.ts'
 
 export interface StateSyncManagerConfig {
   syncInterval: number        // Frames between syncs (default: 300 = 5 seconds)
-  localPlayerId: string
 }
 
 export type StateSyncCallback = (
