@@ -360,7 +360,11 @@ export class Game {
       if (this.state === 'playing') {
         // Apply remote events BEFORE tick (so they're processed in correct frame)
         // Filter out our own events (we already applied them locally)
-        const remoteEvents = events.filter(e => e.playerId !== localPlayerId)
+        const remoteEvents = events.filter(e => {
+          // enemy_damage uses ownerId, other events use playerId
+          const eventOwnerId = e.type === 'enemy_damage' ? e.ownerId : e.playerId
+          return eventOwnerId !== localPlayerId
+        })
         if (remoteEvents.length > 0) {
           this.simulation?.applyEvents(remoteEvents)
         }
@@ -368,6 +372,35 @@ export class Game {
         this.simulation?.tick(inputs)
         this.lastState = this.currentState
         this.currentState = this.simulation?.getState() ?? null
+      }
+    })
+
+    // Set up desync handler for debugging
+    netcode.setDesyncHandler((frame, localChecksum, remoteChecksum) => {
+      console.error('=== DESYNC DETECTED ===')
+      console.error(`Frame: ${frame}`)
+      console.error(`Local checksum: ${localChecksum}`)
+      console.error(`Remote checksum: ${remoteChecksum}`)
+      if (this.simulation) {
+        console.error('Local state:', this.simulation.getDebugState())
+      }
+    })
+
+    // Set up state sync handler (for non-hosts to receive authoritative state)
+    netcode.setStateSyncHandler((state, frame, pendingEvents) => {
+      console.log(`Applying state sync from frame ${frame}`)
+      if (this.simulation) {
+        // Apply authoritative state from host
+        this.simulation.applyState(state as import('./Simulation.ts').SerializedState)
+
+        // Re-apply pending local events (pickups, damage, etc. that occurred locally)
+        if (pendingEvents.length > 0) {
+          console.log(`Re-applying ${pendingEvents.length} pending local events`)
+          this.simulation.applyEvents(pendingEvents)
+        }
+
+        this.currentState = this.simulation.getState()
+        console.log('State sync applied, new frame:', this.simulation.getState().frame)
       }
     })
 
@@ -488,6 +521,15 @@ export class Game {
         ? this.simulation.getChecksum()
         : undefined
       this.netcode?.tick(currentInput, pendingEvents, checksum)
+
+      // Periodic state sync from host to correct any desync
+      // Triggers on: desync detected OR every 5 seconds (300 frames)
+      if (this.netcode?.shouldSendStateSync() && this.simulation) {
+        const serializedState = this.simulation.serializeState()
+        const syncChecksum = this.simulation.getChecksum()
+        this.netcode.broadcastStateSync(serializedState, syncChecksum)
+        this.netcode.clearDesyncFlag()
+      }
     }
 
     // Check game over

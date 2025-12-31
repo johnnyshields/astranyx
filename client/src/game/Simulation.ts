@@ -287,6 +287,31 @@ export interface SimulationState {
   gameOver: boolean
 }
 
+/**
+ * Serializable state for network transmission.
+ * Excludes non-deterministic data (particles) and converts Sets to arrays.
+ */
+export interface SerializedState {
+  frame: number
+  rngSeed: number
+  players: Player[]
+  bullets: Array<Omit<Bullet, 'hitEntities'> & { hitEntities: number[] }>
+  beams: Array<Omit<Beam, 'hitEntities'> & { hitEntities: number[] }>
+  missiles: Missile[]
+  enemies: Enemy[]
+  boss: Boss | null
+  powerups: Powerup[]
+  weaponDrops: WeaponDrop[]
+  nextId: number
+  score: number
+  multiplier: number
+  wave: number
+  waveTimer: number
+  bossActive: boolean
+  screenShake: number
+  gameOver: boolean
+}
+
 // ============================================================================
 // Play Bounds Type (for camera-compensated bounds)
 // ============================================================================
@@ -596,6 +621,20 @@ export class Simulation {
         }
         break
       }
+      case 'enemy_damage': {
+        // Apply damage to enemy (from remote player's bullet/beam/missile/orb)
+        const enemy = this.state.enemies.find(e => e.id === event.enemyId)
+        if (enemy) {
+          enemy.health = event.newHealth
+          if (event.killed) {
+            this.enemyDie(enemy)
+            enemy.health = 0
+          } else {
+            this.spawnExplosion(enemy.x, enemy.y, 2)
+          }
+        }
+        break
+      }
     }
   }
 
@@ -614,6 +653,65 @@ export class Simulation {
   }
 
   /**
+   * Check if the given ownerId belongs to the local player.
+   * In single player, always returns true.
+   */
+  private isLocalOwner(ownerId: string): boolean {
+    return this.localPlayerId === null || ownerId === this.localPlayerId
+  }
+
+  /**
+   * Deal damage to an enemy with owner-authority.
+   * In multiplayer, only the bullet/projectile owner detects hits.
+   * @param enemy The enemy to damage
+   * @param damage Amount of damage to deal
+   * @param ownerId The player who owns the projectile
+   * @param explosionX X position for explosion effect (fixed-point)
+   * @param explosionY Y position for explosion effect (fixed-point)
+   * @param explosionSize Size of explosion
+   * @returns true if the enemy was killed
+   */
+  private damageEnemy(
+    enemy: Enemy,
+    damage: number,
+    ownerId: string,
+    explosionX: number,
+    explosionY: number,
+    explosionSize: number
+  ): boolean {
+    // In multiplayer, only local player detects damage for their projectiles
+    if (this.isMultiplayer() && !this.isLocalOwner(ownerId)) {
+      return false
+    }
+
+    const newHealth = Math.max(0, enemy.health - damage)
+    const killed = newHealth <= 0
+
+    if (this.isMultiplayer()) {
+      // Emit event for remote players
+      this.pendingEvents.push({
+        type: 'enemy_damage',
+        ownerId,
+        enemyId: enemy.id,
+        amount: damage,
+        newHealth,
+        killed,
+      })
+    }
+
+    // Apply locally
+    enemy.health = newHealth
+    if (killed) {
+      this.enemyDie(enemy)
+      enemy.health = 0
+    } else {
+      this.spawnExplosion(explosionX, explosionY, explosionSize)
+    }
+
+    return killed
+  }
+
+  /**
    * Generate a checksum of critical game state for desync detection.
    * This should be compared between clients periodically.
    */
@@ -622,6 +720,9 @@ export class Simulation {
 
     // Hash frame number
     hash = (hash * 31 + this.state.frame) >>> 0
+
+    // Hash RNG state FIRST - most likely source of desync
+    hash = (hash * 31 + this.state.rng.getSeed()) >>> 0
 
     // Hash player states (most important for desync detection)
     for (const player of this.state.players) {
@@ -643,13 +744,117 @@ export class Simulation {
     // Hash bullet count
     hash = (hash * 31 + this.state.bullets.length) >>> 0
 
+    // Hash powerups and weapon drops (likely desync source)
+    hash = (hash * 31 + this.state.powerups.length) >>> 0
+    hash = (hash * 31 + this.state.weaponDrops.length) >>> 0
+
     // Hash score
     hash = (hash * 31 + this.state.score) >>> 0
 
-    // Hash RNG state for determinism verification
-    hash = (hash * 31 + this.state.rng.getSeed()) >>> 0
-
     return hash
+  }
+
+  /**
+   * Get detailed state info for desync debugging.
+   * Call this when checksums mismatch to identify what diverged.
+   */
+  getDebugState(): {
+    frame: number
+    rngSeed: number
+    playerCount: number
+    players: Array<{ id: string; x: number; y: number; shields: number; dead: boolean }>
+    enemyCount: number
+    bulletCount: number
+    powerupCount: number
+    weaponDropCount: number
+    score: number
+  } {
+    return {
+      frame: this.state.frame,
+      rngSeed: this.state.rng.getSeed(),
+      playerCount: this.state.players.length,
+      players: this.state.players.map(p => ({
+        id: p.playerId,
+        x: fromFixed(p.x),
+        y: fromFixed(p.y),
+        shields: p.shields,
+        dead: p.dead,
+      })),
+      enemyCount: this.state.enemies.length,
+      bulletCount: this.state.bullets.length,
+      powerupCount: this.state.powerups.length,
+      weaponDropCount: this.state.weaponDrops.length,
+      score: this.state.score,
+    }
+  }
+
+  // ==========================================================================
+  // State Sync (for periodic desync correction)
+  // ==========================================================================
+
+  /**
+   * Serialize the game state for network transmission.
+   * Called by the host to broadcast authoritative state.
+   */
+  serializeState(): SerializedState {
+    return {
+      frame: this.state.frame,
+      rngSeed: this.state.rng.getSeed(),
+      players: this.state.players,
+      bullets: this.state.bullets.map(b => ({
+        ...b,
+        hitEntities: Array.from(b.hitEntities),
+      })),
+      beams: this.state.beams.map(b => ({
+        ...b,
+        hitEntities: Array.from(b.hitEntities),
+      })),
+      missiles: this.state.missiles,
+      enemies: this.state.enemies,
+      boss: this.state.boss,
+      powerups: this.state.powerups,
+      weaponDrops: this.state.weaponDrops,
+      nextId: this.state.nextId,
+      score: this.state.score,
+      multiplier: this.state.multiplier,
+      wave: this.state.wave,
+      waveTimer: this.state.waveTimer,
+      bossActive: this.state.bossActive,
+      screenShake: this.state.screenShake,
+      gameOver: this.state.gameOver,
+    }
+  }
+
+  /**
+   * Apply authoritative state from host.
+   * Called by non-host players to correct desync.
+   */
+  applyState(serialized: SerializedState): void {
+    this.state.frame = serialized.frame
+    this.state.rng = new SeededRandom(serialized.rngSeed)
+    this.state.players = serialized.players
+    this.state.bullets = serialized.bullets.map(b => ({
+      ...b,
+      hitEntities: new Set(b.hitEntities),
+    }))
+    this.state.beams = serialized.beams.map(b => ({
+      ...b,
+      hitEntities: new Set(b.hitEntities),
+    }))
+    this.state.missiles = serialized.missiles
+    this.state.enemies = serialized.enemies
+    this.state.boss = serialized.boss
+    this.state.powerups = serialized.powerups
+    this.state.weaponDrops = serialized.weaponDrops
+    this.state.nextId = serialized.nextId
+    this.state.score = serialized.score
+    this.state.multiplier = serialized.multiplier
+    this.state.wave = serialized.wave
+    this.state.waveTimer = serialized.waveTimer
+    this.state.bossActive = serialized.bossActive
+    this.state.screenShake = serialized.screenShake
+    this.state.gameOver = serialized.gameOver
+    // Note: particles are not synced (cosmetic only)
   }
 
   // ==========================================================================
@@ -1964,7 +2169,7 @@ export class Simulation {
       const dy = ey - attackY
 
       if (Math.abs(dx) < range && Math.abs(dy) < range * 0.8) {
-        this.damageEnemy(enemy, stats.damage)
+        this.damageEnemy(enemy, stats.damage, player.playerId, enemy.x, enemy.y, 4)
       }
     }
 
@@ -2012,23 +2217,6 @@ export class Simulation {
       false,
       player.playerId
     )
-  }
-
-  private damageEnemy(enemy: Enemy, damage: number): void {
-    if (enemy.hasShield && enemy.shieldHealth && enemy.shieldHealth > 0) {
-      enemy.shieldHealth -= damage
-      if (enemy.shieldHealth <= 0) {
-        enemy.hasShield = false
-        enemy.shieldHealth = 0
-      }
-    } else {
-      enemy.health -= damage
-    }
-
-    if (enemy.health <= 0) {
-      this.enemyDie(enemy)
-      enemy.health = 0
-    }
   }
 
   private damageBoss(damage: number): void {
@@ -2785,6 +2973,9 @@ export class Simulation {
     for (const bullet of this.state.bullets) {
       if (bullet.isEnemy) continue
 
+      // In multiplayer, only check collisions for local player's bullets
+      if (this.isMultiplayer() && !this.isLocalOwner(bullet.ownerId)) continue
+
       // Check enemies
       for (const enemy of this.state.enemies) {
         if (bullet.hitEntities.has(enemy.id)) continue
@@ -2796,27 +2987,21 @@ export class Simulation {
         if (this.bulletHitsEnemy(bullet, enemy)) {
           bullet.hitEntities.add(enemy.id)
 
-          // Handle shield
+          // Handle shield (shields don't use owner-authority, just direct damage)
           if (enemy.hasShield && enemy.shieldHealth && enemy.shieldHealth > 0) {
             enemy.shieldHealth -= bullet.damage
             if (enemy.shieldHealth <= 0) {
               enemy.hasShield = false
             }
           } else {
-            enemy.health -= bullet.damage
+            // Use owner-authoritative damage
+            this.damageEnemy(enemy, bullet.damage, bullet.ownerId, bullet.x, bullet.y, 2)
           }
 
           if (bullet.pierce <= 0) {
             bullet.lifetime = 0
           } else {
             bullet.pierce--
-          }
-
-          if (enemy.health <= 0) {
-            this.enemyDie(enemy)
-            enemy.health = 0 // Mark for removal
-          } else {
-            this.spawnExplosion(bullet.x, bullet.y, 2)
           }
 
           break
@@ -2846,6 +3031,9 @@ export class Simulation {
 
     // Beams vs enemies/boss
     for (const beam of this.state.beams) {
+      // In multiplayer, only check collisions for local player's beams
+      if (this.isMultiplayer() && !this.isLocalOwner(beam.ownerId)) continue
+
       for (const enemy of this.state.enemies) {
         if (beam.hitEntities.has(enemy.id)) continue
 
@@ -2860,12 +3048,7 @@ export class Simulation {
         // Beam hits if enemy is to the right of beam origin and within height
         if (ex > bx && Math.abs(ey - by) < 25) {
           beam.hitEntities.add(enemy.id)
-          enemy.health -= beam.power * 5
-
-          if (enemy.health <= 0) {
-            this.enemyDie(enemy)
-            enemy.health = 0
-          }
+          this.damageEnemy(enemy, beam.power * 5, beam.ownerId, enemy.x, enemy.y, 3)
         }
       }
 
@@ -2888,6 +3071,9 @@ export class Simulation {
 
     // Missiles vs enemies/boss (missile.x/y are fixed-point)
     for (const missile of this.state.missiles) {
+      // In multiplayer, only check collisions for local player's missiles
+      if (this.isMultiplayer() && !this.isLocalOwner(missile.ownerId)) continue
+
       const mx = fromFixed(missile.x)
       const my = fromFixed(missile.y)
 
@@ -2899,14 +3085,8 @@ export class Simulation {
         if (ex > visibleRightX) continue
 
         if (Math.hypot(ex - mx, ey - my) < 25) {
-          enemy.health -= missile.damage
-          this.spawnExplosion(missile.x, missile.y, 8)
+          this.damageEnemy(enemy, missile.damage, missile.ownerId, missile.x, missile.y, 8)
           missile.lifetime = 0
-
-          if (enemy.health <= 0) {
-            this.enemyDie(enemy)
-            enemy.health = 0
-          }
           break
         }
       }
@@ -2931,6 +3111,9 @@ export class Simulation {
     for (const player of this.state.players) {
       if (player.dead) continue
 
+      // In multiplayer, only check orb collisions for local player
+      if (this.isMultiplayer() && !this.isLocalPlayer(player)) continue
+
       for (const orb of player.orbs) {
         const ox = fromFixed(player.x) + Math.cos(orb.angle) * orb.radius
         const oy = fromFixed(player.y) + Math.sin(orb.angle) * orb.radius
@@ -2944,17 +3127,11 @@ export class Simulation {
           if (ex > visibleRightX) continue
 
           if (Math.hypot(ex - ox, ey - oy) < 25) {
-            enemy.health -= 2
-            this.spawnExplosion(toFixed(ox), toFixed(oy), 4)
-
-            if (enemy.health <= 0) {
-              this.enemyDie(enemy)
-              enemy.health = 0
-            }
+            this.damageEnemy(enemy, 2, player.playerId, toFixed(ox), toFixed(oy), 4)
           }
         }
 
-        // Orbs vs enemy bullets
+        // Orbs vs enemy bullets (no owner-authority needed, just destroys bullet)
         for (const bullet of this.state.bullets) {
           if (!bullet.isEnemy) continue
 

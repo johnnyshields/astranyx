@@ -42,6 +42,7 @@ export type GameEvent =
   | { type: 'respawn'; playerId: string }
   | { type: 'pickup'; playerId: string; pickupId: number }
   | { type: 'weapon_pickup'; playerId: string; dropId: number }
+  | { type: 'enemy_damage'; ownerId: string; enemyId: number; amount: number; newHealth: number; killed: boolean }
 
 export interface FrameInput {
   frame: number
@@ -57,10 +58,28 @@ export interface LockstepConfig {
   playerCount: number
   localPlayerId: string
   playerOrder: Map<string, number>  // player_id -> index
+  stateSyncInterval?: number  // Frames between state syncs (default: 300 = 5 seconds)
 }
+
+/**
+ * State sync message sent by host to correct desync
+ */
+export interface StateSyncMessage {
+  type: 'state_sync'
+  frame: number
+  state: unknown  // SerializedState from Simulation
+  checksum: number
+}
+
+/**
+ * Message types that can be sent over the data channel
+ */
+type NetMessage = FrameInput | StateSyncMessage
 
 type InputHandler = (inputs: Map<string, PlayerInput>, events: GameEvent[]) => void
 type DesyncHandler = (frame: number, expected: number, got: number) => void
+// Returns pending local events that should be re-applied after sync
+type StateSyncHandler = (state: unknown, frame: number, pendingEvents: GameEvent[]) => void
 
 export class LockstepNetcode {
   private config: LockstepConfig
@@ -82,10 +101,21 @@ export class LockstepNetcode {
   // Callbacks
   private onInputsReady: InputHandler | null = null
   private onDesync: DesyncHandler | null = null
+  private onStateSync: StateSyncHandler | null = null
 
   // State
   private running = false
   private waitingForInputs = false
+
+  // State sync
+  private lastStateSyncFrame = 0
+  private stateSyncInterval: number
+  private desyncDetected = false  // Flag to trigger immediate sync
+
+  // Pending local events buffer (events we've sent but may not be confirmed yet)
+  // These get re-applied after a state sync to preserve local player's actions
+  private pendingLocalEvents: GameEvent[] = []
+  private lastSyncedFrame = -1  // Frame of last received state sync
 
   constructor(config: LockstepConfig) {
     this.config = {
@@ -94,7 +124,9 @@ export class LockstepNetcode {
       playerCount: config.playerCount,
       localPlayerId: config.localPlayerId,
       playerOrder: config.playerOrder,
+      stateSyncInterval: config.stateSyncInterval ?? 300,
     }
+    this.stateSyncInterval = this.config.stateSyncInterval ?? 300
   }
 
   start(): void {
@@ -103,6 +135,10 @@ export class LockstepNetcode {
     this.confirmedFrame = -1
     this.inputBuffer.clear()
     this.localInputQueue = []
+    this.lastStateSyncFrame = 0
+    this.desyncDetected = false
+    this.pendingLocalEvents = []
+    this.lastSyncedFrame = -1
 
     // Pre-seed frames 0 to inputDelay-1 with empty inputs for all players
     // This is needed because the first real inputs go to frame inputDelay
@@ -152,9 +188,19 @@ export class LockstepNetcode {
     this.peers.set(playerId, dataChannel)
 
     dataChannel.onmessage = (event) => {
-      const data = JSON.parse(event.data as string) as FrameInput
-      console.log(`Lockstep: Received input from ${data.playerId} for frame ${data.frame}`)
-      this.receiveInput(data)
+      const data = JSON.parse(event.data as string) as NetMessage
+
+      // Handle state sync messages
+      if ('type' in data && data.type === 'state_sync') {
+        console.log(`Lockstep: Received state sync for frame ${data.frame}`)
+        this.receiveStateSync(data)
+        return
+      }
+
+      // Handle input messages
+      const input = data as FrameInput
+      console.log(`Lockstep: Received input from ${input.playerId} for frame ${input.frame}`)
+      this.receiveInput(input)
     }
   }
 
@@ -180,6 +226,11 @@ export class LockstepNetcode {
     // Store local checksum for comparison
     if (checksum !== undefined) {
       this.lastLocalChecksum = checksum
+    }
+
+    // Buffer local events for potential re-application after state sync
+    if (events && events.length > 0) {
+      this.pendingLocalEvents.push(...events)
     }
 
     // Create input for future frame (with input delay)
@@ -274,6 +325,7 @@ export class LockstepNetcode {
         console.error(`DESYNC DETECTED at frame ${frame}!`)
         console.error(`  Local checksum: ${localInput.checksum}`)
         console.error(`  Remote (${playerId}) checksum: ${input.checksum}`)
+        this.desyncDetected = true  // Trigger immediate state sync
         this.onDesync?.(frame, localInput.checksum, input.checksum)
       }
     }
@@ -323,6 +375,93 @@ export class LockstepNetcode {
     }
   }
 
+  // ==========================================================================
+  // State Sync (periodic authoritative state from host)
+  // ==========================================================================
+
+  /**
+   * Broadcast state sync to all peers.
+   * Should only be called by the host (player index 0).
+   */
+  broadcastStateSync(state: unknown, checksum: number): void {
+    if (!this.isHost()) {
+      console.warn('Lockstep: Non-host tried to broadcast state sync')
+      return
+    }
+
+    const message: StateSyncMessage = {
+      type: 'state_sync',
+      frame: this.currentFrame,
+      state,
+      checksum,
+    }
+
+    const json = JSON.stringify(message)
+    for (const [, channel] of this.peers) {
+      if (channel.readyState === 'open') {
+        channel.send(json)
+      }
+    }
+
+    this.lastStateSyncFrame = this.currentFrame
+    console.log(`Lockstep: Broadcast state sync at frame ${this.currentFrame}`)
+  }
+
+  /**
+   * Handle received state sync from host.
+   */
+  private receiveStateSync(message: StateSyncMessage): void {
+    // Only non-hosts should apply state sync
+    if (this.isHost()) {
+      console.warn('Lockstep: Host received state sync (ignoring)')
+      return
+    }
+
+    // Get pending events that occurred after the sync frame
+    // These are local events that need to be re-applied after sync
+    const pendingEvents = this.pendingLocalEvents.slice()
+
+    console.log(`Lockstep: Applying state sync from frame ${message.frame}, re-applying ${pendingEvents.length} pending events`)
+
+    // Clear pending events (they'll be re-applied by the handler)
+    this.pendingLocalEvents = []
+    this.lastSyncedFrame = message.frame
+    this.desyncDetected = false  // Clear desync flag after sync
+
+    this.onStateSync?.(message.state, message.frame, pendingEvents)
+  }
+
+  /**
+   * Check if it's time to send a state sync.
+   * Returns true if host and (desync detected OR enough frames have passed).
+   */
+  shouldSendStateSync(): boolean {
+    if (!this.isHost()) return false
+
+    // Immediate sync on desync detection
+    if (this.desyncDetected) {
+      return true
+    }
+
+    // Periodic sync every stateSyncInterval frames
+    return this.currentFrame - this.lastStateSyncFrame >= this.stateSyncInterval
+  }
+
+  /**
+   * Clear desync flag after sending sync (called by Game after broadcast)
+   */
+  clearDesyncFlag(): void {
+    this.desyncDetected = false
+  }
+
+  /**
+   * Check if this client is the host (lowest player index).
+   */
+  isHost(): boolean {
+    const localIndex = this.config.playerOrder.get(this.config.localPlayerId) ?? 0
+    return localIndex === 0
+  }
+
   // Event handlers
   setInputHandler(handler: InputHandler): void {
     this.onInputsReady = handler
@@ -330,6 +469,10 @@ export class LockstepNetcode {
 
   setDesyncHandler(handler: DesyncHandler): void {
     this.onDesync = handler
+  }
+
+  setStateSyncHandler(handler: StateSyncHandler): void {
+    this.onStateSync = handler
   }
 
   // Getters
