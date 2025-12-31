@@ -233,9 +233,11 @@ VotedForValid ==
 VotesFromValidPeers ==
     \A p \in Peer : votesReceived[p] \subseteq Peer
 
-\* Leader had majority when elected
+\* Leader had majority when elected (or is initial leader at term 0)
 LeaderHadMajority ==
-    \A p \in Peer : IsLeader(p) => IsMajority(votesReceived[p])
+    \A p \in Peer : IsLeader(p) =>
+        \/ IsMajority(votesReceived[p])
+        \/ currentTerm[p] = 0  \* Initial leader assigned without election
 
 \* inputsReceived is a subset of Peer
 InputsFromValidPeers ==

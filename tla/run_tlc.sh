@@ -12,12 +12,12 @@
 #   ./run_tlc.sh -m LeaderElection            # Run single model
 #   ./run_tlc.sh -m LeaderElection,LockstepSimple  # Run specific models
 #   ./run_tlc.sh --force                      # Force re-run ignoring cache
-#   ./run_tlc.sh --max                        # Use maximum resources (48GB heap, 28 workers)
+#   ./run_tlc.sh --max                        # Use maximum resources (75% mem, 90% cpu)
 #   ./run_tlc.sh --ci                         # CI mode: fail if any hashes missing (no TLC run)
+#   ./run_tlc.sh -s, --sanity                 # Sanity check: run each model for 30s, report failures
+#   ./run_tlc.sh -f, --fail-fast              # Stop on first failure (default: continue and report all)
 #   ./run_tlc.sh -d, --download-jar           # Auto-download TLC jar to tla/tmp if missing
 #   ./run_tlc.sh --jar ~/tla2tools.jar        # Specify path to tla2tools.jar
-
-set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PASSED_FILE="$SCRIPT_DIR/.tlc_passed"
@@ -32,6 +32,8 @@ ALL_MODELS="LeaderElection,LockstepSimple,LockstepState,LockstepNetwork"
 FORCE=false
 MAX_RESOURCES=false
 CI_MODE=false
+SANITY_MODE=false
+FAIL_FAST=false
 DOWNLOAD_JAR=false
 TLC_JAR=""
 MODEL_LIST=""
@@ -42,6 +44,8 @@ while [[ $# -gt 0 ]]; do
         --force) FORCE=true; shift ;;
         --max) MAX_RESOURCES=true; shift ;;
         --ci) CI_MODE=true; shift ;;
+        -s|--sanity) SANITY_MODE=true; shift ;;
+        -f|--fail-fast) FAIL_FAST=true; shift ;;
         -d|--download-jar) DOWNLOAD_JAR=true; shift ;;
         --jar)
             TLC_JAR="$2"
@@ -138,6 +142,53 @@ if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
     exit 1
 fi
 
+# Track failures for reporting at end
+FAILED_MODELS=()
+
+# Sanity check mode: run each model for limited time
+run_model_sanity() {
+    local SPEC_NAME=$1
+    local TIMEOUT=${2:-30}
+    local SPEC_FILE="$SCRIPT_DIR/${SPEC_NAME}.tla"
+    local CONFIG_FILE="$SCRIPT_DIR/MC${SPEC_NAME}.cfg"
+
+    if [[ ! -f "$SPEC_FILE" ]]; then
+        echo "Error: $SPEC_FILE not found"
+        FAILED_MODELS+=("$SPEC_NAME")
+        return 1
+    fi
+
+    cd "$SCRIPT_DIR"
+
+    echo "[$SPEC_NAME] Sanity check (${TIMEOUT}s timeout)..."
+
+    # Use conservative resources for sanity check
+    local OUTPUT
+    OUTPUT=$(timeout "${TIMEOUT}s" java -XX:+UseParallelGC \
+         -Xmx4g \
+         -jar "$TLC_JAR" \
+         -config "MC${SPEC_NAME}.cfg" \
+         -metadir "$TMP_DIR" \
+         -workers auto \
+         "${SPEC_NAME}.tla" 2>&1) || true
+
+    # Check for errors in output
+    if echo "$OUTPUT" | grep -q "Error:"; then
+        echo "[$SPEC_NAME] FAILED - error found:"
+        echo "$OUTPUT" | grep -A5 "Error:"
+        FAILED_MODELS+=("$SPEC_NAME")
+        return 1
+    elif echo "$OUTPUT" | grep -q "Invariant.*violated"; then
+        echo "[$SPEC_NAME] FAILED - invariant violated:"
+        echo "$OUTPUT" | grep -B2 -A10 "Invariant.*violated"
+        FAILED_MODELS+=("$SPEC_NAME")
+        return 1
+    else
+        echo "[$SPEC_NAME] OK - no errors in ${TIMEOUT}s"
+        return 0
+    fi
+}
+
 run_model() {
     local SPEC_NAME=$1
     local SPEC_FILE="$SCRIPT_DIR/${SPEC_NAME}.tla"
@@ -145,7 +196,11 @@ run_model() {
 
     if [[ ! -f "$SPEC_FILE" ]]; then
         echo "Error: $SPEC_FILE not found"
-        exit 1
+        FAILED_MODELS+=("$SPEC_NAME")
+        if [[ "$FAIL_FAST" == "true" ]]; then
+            exit 1
+        fi
+        return 1
     fi
 
     # Compute hash of spec + config
@@ -198,28 +253,64 @@ run_model() {
         WORKERS="-workers auto"
     fi
 
-    java -XX:+UseParallelGC \
+    if java -XX:+UseParallelGC \
          $HEAP \
          -jar "$TLC_JAR" \
          -config "MC${SPEC_NAME}.cfg" \
          -metadir "$TMP_DIR" \
          $WORKERS \
          "${ARGS[@]}" \
-         "${SPEC_NAME}.tla"
-
-    # Record successful run immediately after TLC passes
-    echo "$HASH  $SPEC_NAME  $(date -Iseconds)" >> "$PASSED_FILE"
-    echo "[$SPEC_NAME] PASSED - hash recorded: ${HASH:0:16}..."
-    echo ""
+         "${SPEC_NAME}.tla"; then
+        # Record successful run immediately after TLC passes
+        echo "$HASH  $SPEC_NAME  $(date -Iseconds)" >> "$PASSED_FILE"
+        echo "[$SPEC_NAME] PASSED - hash recorded: ${HASH:0:16}..."
+        echo ""
+        return 0
+    else
+        echo "[$SPEC_NAME] FAILED"
+        FAILED_MODELS+=("$SPEC_NAME")
+        if [[ "$FAIL_FAST" == "true" ]]; then
+            exit 1
+        fi
+        return 1
+    fi
 }
 
 # Parse comma-separated model list and run each model
 IFS=',' read -ra MODELS <<< "$MODEL_LIST"
-for model in "${MODELS[@]}"; do
-    # Trim whitespace
-    model=$(echo "$model" | xargs)
-    run_model "$model"
-done
+
+if [[ "$SANITY_MODE" == "true" ]]; then
+    echo "Running sanity checks (30s per model)..."
+    echo ""
+    for model in "${MODELS[@]}"; do
+        model=$(echo "$model" | xargs)
+        run_model_sanity "$model" 30
+        if [[ "$FAIL_FAST" == "true" ]] && [[ ${#FAILED_MODELS[@]} -gt 0 ]]; then
+            break
+        fi
+    done
+else
+    for model in "${MODELS[@]}"; do
+        model=$(echo "$model" | xargs)
+        run_model "$model"
+    done
+fi
 
 echo ""
-echo "All model checks passed."
+
+# Report failures
+if [[ ${#FAILED_MODELS[@]} -gt 0 ]]; then
+    echo "========================================="
+    echo "FAILED MODELS (${#FAILED_MODELS[@]}):"
+    for failed in "${FAILED_MODELS[@]}"; do
+        echo "  - $failed"
+    done
+    echo "========================================="
+    exit 1
+fi
+
+if [[ "$SANITY_MODE" == "true" ]]; then
+    echo "All sanity checks passed."
+else
+    echo "All model checks passed."
+fi

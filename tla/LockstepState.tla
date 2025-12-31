@@ -334,11 +334,12 @@ CandidateVotedForSelf ==
 LeaderVotedForSelf ==
     \A p \in Peer : IsLeader(p) => votedFor[p] = p
 
-\* Leader had majority when elected
+\* Leader had majority when elected (or initial/forced leader)
 LeaderHadMajority ==
     \A p \in Peer : IsLeader(p) =>
         \/ IsMajority(votesReceived[p])
-        \/ votesReceived[p] = Peer  \* ForceLeaderChange gives all votes
+        \/ currentTerm[p] = 0         \* Initial leader assigned without election
+        \/ votesReceived[p] = Peer    \* ForceLeaderChange gives all votes
 
 \* Votes received must be from valid peers
 VotesFromValidPeers ==

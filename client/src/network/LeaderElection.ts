@@ -672,8 +672,8 @@ export class LeaderElection {
       }
     }
 
-    // TLA+ LeaderHadMajority: leader must have had majority
-    if (this.state === 'leader' && this.votesReceived.size < this.getMajority()) {
+    // TLA+ LeaderHadMajority: leader must have had majority (or be initial leader at term 0)
+    if (this.state === 'leader' && this.currentTerm > 0 && this.votesReceived.size < this.getMajority()) {
       throw new Error(
         `TLA+ LeaderHadMajority violated: leader has ${this.votesReceived.size} votes, needs ${this.getMajority()}`
       )
