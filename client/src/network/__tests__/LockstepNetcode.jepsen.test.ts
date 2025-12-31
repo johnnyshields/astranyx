@@ -773,6 +773,71 @@ describe('LeaderElection', () => {
     expect(voteResponses[1].msg.voteGranted).toBe(true)
   })
 
+  it('candidate steps down via onHigherTermSeen (TLA+ ReceiveStateSync fix)', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    election.addPeer('p1')
+    election.addPeer('p3')
+    election.start()
+
+    // Trigger election by removing leader
+    election.removePeer('p1')
+
+    // p2 should be candidate
+    expect(election.getState()).toBe('candidate')
+    const candidateTerm = election.getCurrentTerm()
+    expect(election.getDebugInfo().votes).toBeGreaterThanOrEqual(1) // At least self-vote
+
+    // Simulate receiving state sync from leader with higher term
+    // This exercises the new onHigherTermSeen method
+    election.onHigherTermSeen(candidateTerm + 5)
+
+    // Should step down to follower
+    expect(election.getState()).toBe('follower')
+    expect(election.getCurrentTerm()).toBe(candidateTerm + 5)
+    // Votes should be cleared
+    expect(election.getDebugInfo().votes).toBe(0)
+
+    election.stop()
+  })
+
+  it('onHigherTermSeen does nothing for same or lower term', () => {
+    const election = new LeaderElection({
+      localPlayerId: 'p1',
+      playerOrder: createPlayerOrder(['p1', 'p2']),
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    // p1 starts as leader in term 0
+    expect(election.isLeader()).toBe(true)
+    expect(election.getCurrentTerm()).toBe(0)
+
+    // Same term - should not step down
+    election.onHigherTermSeen(0)
+    expect(election.isLeader()).toBe(true)
+
+    // Lower term - should not step down
+    // First bump the term
+    election.handleMessage(
+      { type: 'heartbeat', term: 5, leaderId: 'p2', frame: 0 },
+      'p2'
+    )
+    expect(election.getCurrentTerm()).toBe(5)
+    expect(election.getState()).toBe('follower')
+
+    // Now try lower term
+    const stateBefore = election.getState()
+    election.onHigherTermSeen(3)
+    expect(election.getState()).toBe(stateBefore)
+    expect(election.getCurrentTerm()).toBe(5) // Unchanged
+  })
+
   it('rejects vote for candidate with lower lastFrame', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
@@ -1214,6 +1279,61 @@ describe('Safety Properties', () => {
     )
 
     expect(election.getCurrentTerm()).toBe(5) // Still 5, not decreased
+  })
+
+  it('PROPERTY: Candidate cannot become leader after term bump from state sync (TLA+ NoTwoLeadersInSameTerm)', () => {
+    // This test reproduces the exact bug found by TLA+ model checker:
+    // A candidate with majority votes from term N cannot become leader
+    // after their term is bumped to N+1 by a state sync from an existing leader.
+    //
+    // The fix: onHigherTermSeen clears votesReceived, preventing stale votes
+    // from being used in the new term.
+
+    const playerOrder = createPlayerOrder(['p1', 'p2', 'p3'])
+
+    // p2 is a candidate who has collected majority votes in term 1
+    const e2 = new LeaderElection({
+      localPlayerId: 'p2',
+      playerOrder,
+      electionTimeout: 1500,
+      heartbeatInterval: 500,
+    })
+
+    e2.addPeer('p1')
+    e2.addPeer('p3')
+    e2.start()
+
+    // Simulate: p2 starts election (becomes candidate in term 1)
+    e2.removePeer('p1') // Triggers election
+
+    expect(e2.getState()).toBe('candidate')
+    const term1 = e2.getCurrentTerm()
+
+    // Simulate: p2 receives vote from p1 (would give majority)
+    e2.handleMessage(
+      { type: 'vote_response', term: term1, voteGranted: true, voterId: 'p1' },
+      'p1'
+    )
+
+    // At this point, p2 has majority and would become leader...
+    // BUT before BecomeLeader fires, a state sync arrives from p1 (who is leader in term 2)
+
+    // Simulate receiving state sync with higher term
+    // This is where the bug was: term would update but votes wouldn't clear
+    e2.onHigherTermSeen(term1 + 1)
+
+    // After term bump:
+    // - Should be follower (not candidate or leader)
+    // - Term should be updated
+    // - Votes should be cleared (cannot use term 1 votes in term 2)
+    expect(e2.getState()).toBe('follower')
+    expect(e2.getCurrentTerm()).toBe(term1 + 1)
+    expect(e2.getDebugInfo().votes).toBe(0) // Critical: votes cleared!
+
+    // Now even if something tried to call becomeLeader, it would fail
+    // because p2 is not a candidate and has no votes
+
+    e2.stop()
   })
 
   it('PROPERTY: Events are applied in deterministic order', () => {

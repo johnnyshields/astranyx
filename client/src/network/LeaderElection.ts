@@ -396,6 +396,20 @@ export class LeaderElection {
     this.startElectionTimer()
   }
 
+  /**
+   * Called when a higher term is observed from any source (e.g., state sync).
+   * TLA+ model: ReceiveStateSync updates term and steps down candidates.
+   *
+   * RAFT RULE: Any message from a higher term causes immediate step down.
+   * This is critical for candidates - they must abandon their election
+   * to prevent using stale votes after the term bump.
+   */
+  onHigherTermSeen(term: number): void {
+    if (term > this.currentTerm) {
+      this.stepDown(term)
+    }
+  }
+
   // ===========================================================================
   // Heartbeat Protocol
   // ===========================================================================

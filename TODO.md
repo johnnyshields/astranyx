@@ -264,4 +264,8 @@ Davout
 Ney
 Ashoka
 Murat
+Roc
+Goblin
+Archdemon
+Baelrog
 

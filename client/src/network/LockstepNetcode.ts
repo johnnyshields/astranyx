@@ -400,6 +400,7 @@ export class LockstepNetcode {
 
   /**
    * Handle received state sync from leader
+   * TLA+ model: ReceiveStateSync action
    */
   private receiveStateSync(message: StateSyncMessage): void {
     // Only non-leaders should apply state sync
@@ -407,6 +408,11 @@ export class LockstepNetcode {
       SafeConsole.warn('LockstepNetcode: Leader received state sync (ignoring)')
       return
     }
+
+    // RAFT RULE: Any message from higher term causes step down.
+    // This is critical for candidates - they must abandon their election.
+    // TLA+ model: ReceiveStateSync updates state to "Follower" and clears votes.
+    this.election.onHigherTermSeen(message.term)
 
     const pendingEvents = this.syncManager.receiveSyncMessage(message)
     this.onStateSync?.(message.state, message.frame, pendingEvents)

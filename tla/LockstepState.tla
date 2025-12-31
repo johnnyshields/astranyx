@@ -134,19 +134,27 @@ SendStateSync(leader) ==
 \* - Multiple concurrent syncs from same term are idempotent
 \* - Stale syncs (lower term) are silently rejected
 \*
-\* Note: Follower also updates currentTerm to leader's term (as in real impl,
-\* receiving any message from a higher term updates your term)
+\* RAFT RULE: Any message from higher term causes step down to follower.
+\* This applies to candidates too - if a candidate receives a state sync from
+\* a leader with higher term, they must abandon their election.
+\* This prevents stale candidates from using old votes after term bump.
 ReceiveStateSync(follower, leader) ==
     /\ ~IsLeader(follower)
     /\ IsLeader(leader)
     /\ currentTerm[leader] >= syncTerm[follower]  \* Term validation!
     /\ currentTerm' = [currentTerm EXCEPT ![follower] = IF currentTerm[leader] > currentTerm[follower] THEN currentTerm[leader] ELSE currentTerm[follower]]
     /\ syncTerm' = [syncTerm EXCEPT ![follower] = currentTerm[leader]]
+    \* RAFT: Step down to follower on higher term (critical for candidates!)
+    /\ state' = [state EXCEPT ![follower] = "Follower"]
+    \* Clear votes - cannot use old votes in new term
+    /\ votesReceived' = [votesReceived EXCEPT ![follower] = {}]
+    \* Reset votedFor on term change (can vote again in new term)
+    /\ votedFor' = [votedFor EXCEPT ![follower] = IF currentTerm[leader] > currentTerm[follower] THEN 0 ELSE votedFor[follower]]
     \* KEY: Filter to keep only events owned by follower (local events preserved)
     /\ pendingEvents' = [pendingEvents EXCEPT
          ![follower] = {e \in pendingEvents[follower] : e[1] = follower}]
     /\ inSync' = [inSync EXCEPT ![follower] = TRUE]  \* Sync restores consistency
-    /\ UNCHANGED <<frame, state, votedFor, votesReceived, inputsReceived, heartbeatReceived>>
+    /\ UNCHANGED <<frame, inputsReceived, heartbeatReceived>>
 
 \* Implementation: checkForDesync() detects checksum mismatch
 \* Models non-deterministic state divergence (floating point drift, race conditions, etc.)
