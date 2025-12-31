@@ -1,6 +1,17 @@
 /**
  * LocalEventQueue - Manages pending local events for lockstep netcode
  *
+ * TLA+ Model: LockstepState.tla
+ * - pendingEvents variable: set of <<owner, frame>> tuples
+ * - GenerateEvent action: adds event tuple to pending set
+ * - ReceiveStateSync action: clears remote events, preserves local
+ *
+ * Key TLA+ Invariant:
+ * - LocalEventsPreserved: after sync, only local events remain
+ *   \A p \in Peer : \A e \in pendingEvents[p] : e[1] = p
+ *
+ * Runtime check: assertLocalEventsOnly() verifies this invariant
+ *
  * Responsibilities:
  * - Buffer local events before they're confirmed by the network
  * - Track events by frame for efficient retrieval
@@ -180,6 +191,27 @@ export class LocalEventQueue {
       pendingCount: pending.length,
       oldestPendingFrame: pending.length > 0 ? Math.min(...pending.map(e => e.frame)) : null,
       newestPendingFrame: pending.length > 0 ? Math.max(...pending.map(e => e.frame)) : null,
+    }
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  /**
+   * Check TLA+ LocalEventsPreserved invariant.
+   * Call this after onStateSync() to verify only local events remain.
+   *
+   * TLA+ Invariant: \A e \in pendingEvents[p] : e[1] = p
+   */
+  assertLocalEventsOnly(): void {
+    for (const buffered of this.pendingEvents) {
+      const ownerId = getEventOwnerId(buffered.event)
+      if (ownerId !== this.config.localPlayerId) {
+        throw new Error(
+          `TLA+ LocalEventsPreserved violated: found event owned by ${ownerId}, expected ${this.config.localPlayerId}`
+        )
+      }
     }
   }
 }

@@ -1,6 +1,13 @@
 /**
  * P2P Connection Manager
  *
+ * TLA+ Model: LockstepNetwork.tla
+ * - connectionState variable: "disconnected" | "connecting" | "connected"
+ * - StartConnecting action: initiates WebRTC handshake
+ * - ConnectionEstablished action: DataChannel.onopen
+ * - Disconnect action: connection failure or peer_left
+ * - Reconnect action: peer_joined triggers new connection
+ *
  * Handles WebRTC peer connections between players.
  * Uses Phoenix signaling channel to exchange SDP/ICE.
  */
@@ -129,6 +136,7 @@ export class P2PManager {
 
   /**
    * Create peer connection and initiate handshake
+   * TLA+: StartConnecting action - connectionState[p] = "connecting"
    */
   private async connectToPeer(playerId: string): Promise<void> {
     if (this.peers.has(playerId)) return
@@ -208,6 +216,7 @@ export class P2PManager {
   private setupDataChannel(playerId: string, channel: RTCDataChannel): void {
     channel.binaryType = 'arraybuffer'
 
+    // TLA+: ConnectionEstablished action - connectionState[p] = "connected"
     channel.onopen = () => {
       console.log(`P2P: DataChannel to ${playerId} open`)
 
@@ -287,6 +296,7 @@ export class P2PManager {
     })
   }
 
+  // TLA+: Disconnect action - connectionState[p] = "disconnected"
   private disconnectPeer(playerId: string): void {
     const peer = this.peers.get(playerId)
     if (peer) {
@@ -330,5 +340,25 @@ export class P2PManager {
       this.disconnectPeer(playerId)
     }
     this.signalingChannel = null
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  /**
+   * Check TLA+ TypeInvariant for connection states.
+   *
+   * TLA+ Invariant: connectionState[p] \in {"disconnected", "connecting", "connected"}
+   */
+  assertInvariants(): void {
+    const validStates = ['disconnected', 'connecting', 'connected']
+    for (const [peerId, peer] of this.peers) {
+      if (!validStates.includes(peer.state)) {
+        throw new Error(
+          `TLA+ TypeInvariant violated: peer ${peerId} has invalid state "${peer.state}"`
+        )
+      }
+    }
   }
 }

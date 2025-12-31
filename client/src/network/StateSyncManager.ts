@@ -1,6 +1,15 @@
 /**
  * StateSyncManager - Manages state synchronization for lockstep netcode
  *
+ * TLA+ Model: LockstepState.tla
+ * - syncTerm variable: term of last accepted sync (for validation)
+ * - inSync variable: whether peer matches leader state
+ * - SendStateSync action: leader broadcasts state
+ * - ReceiveStateSync action: follower applies sync, preserves local events
+ * - Desync action: models checksum mismatch detection
+ *
+ * Key invariant: syncTerm[p] <= currentTerm[p] (no time travel)
+ *
  * Responsibilities:
  * - Track when state syncs should be sent (leader only)
  * - Handle incoming state syncs (followers only)
@@ -86,6 +95,7 @@ export class StateSyncManager {
 
   /**
    * Mark that a desync was detected (triggers immediate sync)
+   * TLA+: Desync action sets inSync[p] = FALSE
    */
   markDesync(): void {
     this.desyncDetected = true
@@ -120,6 +130,7 @@ export class StateSyncManager {
 
   /**
    * Create a state sync message
+   * TLA+: SendStateSync action (leader only)
    */
   createSyncMessage(state: unknown, checksum: number): StateSyncMessage {
     return {
@@ -142,6 +153,7 @@ export class StateSyncManager {
   /**
    * Handle incoming state sync (follower only)
    * Returns events that should be re-applied after sync
+   * TLA+: ReceiveStateSync action - validates term, preserves local events
    */
   receiveSyncMessage(message: StateSyncMessage): GameEvent[] {
     // Validate term - only accept syncs from current or higher term
@@ -217,5 +229,40 @@ export class StateSyncManager {
       desyncDetected: this.desyncDetected,
       currentTerm: this.currentTerm,
     }
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  // Track last accepted sync term for validation
+  private lastAcceptedSyncTerm = 0
+
+  /**
+   * Check TLA+ invariants at runtime.
+   *
+   * TLA+ Invariants checked:
+   * - SyncTermBounded: syncTerm[p] <= currentTerm[p] (no time travel)
+   * - TypeInvariant: term >= 0
+   */
+  assertInvariants(): void {
+    // TypeInvariant: term >= 0
+    if (this.currentTerm < 0) {
+      throw new Error(`TLA+ TypeInvariant violated: term ${this.currentTerm} < 0`)
+    }
+
+    // SyncTermBounded: accepted sync term should not exceed current term
+    if (this.lastAcceptedSyncTerm > this.currentTerm) {
+      throw new Error(
+        `TLA+ SyncTermBounded violated: lastAcceptedSyncTerm ${this.lastAcceptedSyncTerm} > currentTerm ${this.currentTerm}`
+      )
+    }
+  }
+
+  /**
+   * Record accepted sync term (for invariant checking)
+   */
+  recordAcceptedSyncTerm(term: number): void {
+    this.lastAcceptedSyncTerm = term
   }
 }

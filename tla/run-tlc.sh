@@ -2,14 +2,16 @@
 # Run TLC model checker on lockstep specifications
 #
 # Models:
-#   LeaderElection - Election only (~21K states, ~2s)
-#   LockstepCore   - Fast (~1M states, ~1 min)
-#   LockstepFull   - Complete (~50M+ states, ~10+ min)
+#   LeaderElection  - Raft election, term safety, majority voting (~21K states)
+#   LockstepSimple  - Frame sync, basic events, leader authority (~1M states)
+#   LockstepState   - Event ownership, syncTerm validation, desync recovery (~50M states)
+#   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
 #
 # Usage:
 #   ./run-tlc.sh              # Run all models (default)
-#   ./run-tlc.sh --quick      # Run LeaderElection + LockstepCore (skip Full)
-#   ./run-tlc.sh --full       # Run only LockstepFull
+#   ./run-tlc.sh --quick      # Run LeaderElection + LockstepSimple (skip State)
+#   ./run-tlc.sh --state      # Run only LockstepState
+#   ./run-tlc.sh --network    # Run only LockstepNetwork
 #   ./run-tlc.sh --force      # Force re-run ignoring cache
 #
 # Environment:
@@ -30,7 +32,8 @@ for arg in "$@"; do
     case "$arg" in
         --force) FORCE=true ;;
         --quick) MODE="quick" ;;
-        --full) MODE="full" ;;
+        --state) MODE="state" ;;
+        --network) MODE="network" ;;
         --all) MODE="all" ;;
         *) ARGS+=("$arg") ;;
     esac
@@ -86,15 +89,19 @@ run_model() {
 case "$MODE" in
     all)
         run_model "LeaderElection"
-        run_model "LockstepCore"
-        run_model "LockstepFull"
+        run_model "LockstepSimple"
+        run_model "LockstepState"
+        run_model "LockstepNetwork"
         ;;
     quick)
         run_model "LeaderElection"
-        run_model "LockstepCore"
+        run_model "LockstepSimple"
         ;;
-    full)
-        run_model "LockstepFull"
+    state)
+        run_model "LockstepState"
+        ;;
+    network)
+        run_model "LockstepNetwork"
         ;;
 esac
 

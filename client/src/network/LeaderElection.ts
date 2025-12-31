@@ -1,17 +1,25 @@
 /**
  * LeaderElection - Raft-inspired leader election for lockstep netcode
  *
- * Key Concepts (from Raft/TLA+ model):
- * - Term: Monotonically increasing election epoch
- * - State: follower | candidate | leader
- * - Voting: Each peer votes once per term, majority wins
- * - Heartbeat: Leader sends periodic heartbeats to maintain authority
- * - Timeout: Follower becomes candidate if no heartbeat received
+ * TLA+ Model: LeaderElection.tla
+ * - currentTerm variable: election epoch (monotonically increasing)
+ * - state variable: "Follower" | "Candidate" | "Leader"
+ * - votedFor variable: who this peer voted for (null = none)
+ * - votesReceived variable: votes received by candidate
+ * - frame variable: current frame (for log comparison)
  *
- * Safety Properties:
- * - At most one leader per term
- * - Leader only changes via election with majority
- * - Term always increases
+ * Key TLA+ Actions:
+ * - StartElection(p): follower -> candidate, term++, vote for self
+ * - Vote(voter, candidate): grant vote if term/frame valid
+ * - BecomeLeader(p): candidate with majority -> leader
+ * - StepDown(p): step down on higher term
+ * - BroadcastHeartbeat(leader): maintain authority
+ *
+ * Safety Invariants (verified by TLC):
+ * - NoTwoLeadersInSameTerm: at most one leader per term
+ * - TypeInvariant: term >= 0, state in valid set
+ *
+ * Runtime checks: See assertInvariants() for dev-mode verification
  */
 
 import type {
@@ -63,6 +71,9 @@ export class LeaderElection {
 
   // Running state
   private running = false
+
+  // Previous term for monotonicity check
+  private previousTerm = 0
 
   constructor(config: LeaderElectionConfig) {
     this.config = config
@@ -575,6 +586,53 @@ export class LeaderElection {
       votes: this.votesReceived.size,
       connectedPeers: this.connectedPeers.size,
       timeSinceHeartbeat: Date.now() - this.lastHeartbeat,
+    }
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  /**
+   * Check TLA+ invariants at runtime (dev mode only).
+   * These correspond to invariants verified by TLC model checker.
+   *
+   * TLA+ Invariants checked:
+   * - TypeInvariant: term >= 0, state in valid set
+   * - Term monotonicity: term never decreases (local check)
+   */
+  assertInvariants(): void {
+    // TypeInvariant: term >= 0
+    if (this.currentTerm < 0) {
+      throw new Error(`TLA+ TypeInvariant violated: term ${this.currentTerm} < 0`)
+    }
+
+    // TypeInvariant: state in valid set
+    const validStates: PeerState[] = ['leader', 'candidate', 'follower']
+    if (!validStates.includes(this.state)) {
+      throw new Error(`TLA+ TypeInvariant violated: invalid state "${this.state}"`)
+    }
+
+    // Term monotonicity (local check - can't check global NoTwoLeadersInSameTerm)
+    if (this.currentTerm < this.previousTerm) {
+      throw new Error(
+        `TLA+ Term monotonicity violated: term decreased from ${this.previousTerm} to ${this.currentTerm}`
+      )
+    }
+    this.previousTerm = this.currentTerm
+
+    // Leader must claim leadership
+    if (this.state === 'leader' && this.currentLeader !== this.config.localPlayerId) {
+      throw new Error(
+        `TLA+ Consistency violated: state is leader but currentLeader is ${this.currentLeader}`
+      )
+    }
+
+    // Candidate must have voted for self
+    if (this.state === 'candidate' && this.votedFor !== this.config.localPlayerId) {
+      throw new Error(
+        `TLA+ Consistency violated: candidate must vote for self, but votedFor is ${this.votedFor}`
+      )
     }
   }
 }

@@ -1,14 +1,28 @@
---------------------------------- MODULE LockstepCore ---------------------------------
+--------------------------------- MODULE LockstepSimple ---------------------------------
 \* Simplified P2P Lockstep Netcode Model
 \*
-\* Fast verification model (~1M states) covering:
+\* Fast verification model (~10M states) covering:
 \* 1. Lockstep frame synchronization
 \* 2. Raft-inspired leader election
 \* 3. State sync with leader authority
 \* 4. Owner-authoritative events (boolean)
 \*
-\* For detailed verification, use LockstepFinal.tla
+\* For detailed verification, use LockstepState.tla
 \* Implementation: client/src/network/
+\*
+\* ============================================================================
+\* SIMPLIFICATIONS vs LockstepState
+\* ============================================================================
+\*
+\* - Events as boolean (not <<owner, frame>> tuples)
+\* - Atomic state sync (send+receive combined)
+\* - No syncTerm tracking for stale sync rejection
+\* - No ForceLeaderChange action
+\* - No desync/inSync tracking
+\*
+\* These simplifications reduce state space for fast iteration.
+\* Use LockstepState.tla for comprehensive verification.
+\* ============================================================================
 
 EXTENDS Integers, FiniteSets
 
@@ -87,6 +101,7 @@ SendStateSync(leader) ==
 ----
 \* Leader Election
 
+\* Note: Sets all peers' heartbeatReceived including leader (simplification - leader never checks its own)
 BroadcastHeartbeat(leader) ==
     /\ IsLeader(leader)
     /\ heartbeatReceived' = [p \in Peer |-> TRUE]

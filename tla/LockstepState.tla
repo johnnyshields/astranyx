@@ -1,15 +1,31 @@
---------------------------------- MODULE LockstepFull ---------------------------------
+--------------------------------- MODULE LockstepState ---------------------------------
 \* Complete P2P Lockstep Netcode Model
 \*
-\* This is the comprehensive model covering ALL features:
+\* This is the comprehensive model covering:
 \* 1. Lockstep frame synchronization
 \* 2. Raft-inspired leader election
 \* 3. Owner-authoritative events with tuple tracking
 \* 4. State sync with term validation
 \* 5. Local events preservation
 \* 6. Arbitrary leader change (network events)
+\* 7. Checksum-based desync detection and recovery
 \*
 \* Implementation: client/src/network/
+\*
+\* ============================================================================
+\* MODELING LIMITATIONS (intentional simplifications)
+\* ============================================================================
+\*
+\* NOT MODELED (covered by Jepsen tests instead):
+\* - Message loss/reordering: Messages are delivered atomically
+\* - Peer connect/disconnect: Peer set is static
+\* - Real timing: Timeouts are boolean, not timestamps
+\* - InputBuffer per-frame storage: Single inputsReceived set
+\* - WebRTC connection states: No connection abstraction
+\*
+\* These simplifications keep state space manageable (~50M states)
+\* while still verifying core safety properties.
+\* ============================================================================
 
 EXTENDS Integers, FiniteSets
 
@@ -30,8 +46,9 @@ VARIABLE inputsReceived  \* Peers who submitted input for current frame
 VARIABLE heartbeatReceived \* Whether heartbeat received this round
 VARIABLE syncTerm        \* Term of last accepted state sync (for validation)
 VARIABLE pendingEvents   \* Pending events per peer: set of <<owner, frame>> tuples
+VARIABLE inSync          \* Whether peer's state matches leader (checksum abstraction)
 
-vars == <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
+vars == <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm, pendingEvents, inSync>>
 
 ----
 \* Helpers
@@ -57,6 +74,7 @@ Init ==
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
     /\ syncTerm = [p \in Peer |-> 0]
     /\ pendingEvents = [p \in Peer |-> {}]
+    /\ inSync = [p \in Peer |-> TRUE]  \* Initially all in sync
 
 ----
 \* Frame Advance (Lockstep)
@@ -66,7 +84,7 @@ SubmitInput(p) ==
     /\ p \notin inputsReceived
     /\ frame[p] = MinFrame
     /\ inputsReceived' = inputsReceived \union {p}
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, heartbeatReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, heartbeatReceived, syncTerm, pendingEvents, inSync>>
 
 \* Implementation: tryAdvanceFrame()
 AdvanceFrame(p) ==
@@ -75,7 +93,7 @@ AdvanceFrame(p) ==
     /\ frame[p] = MinFrame
     /\ frame' = [frame EXCEPT ![p] = frame[p] + 1]
     /\ inputsReceived' = IF \A q \in Peer : frame'[q] > MinFrame THEN {} ELSE inputsReceived
-    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, heartbeatReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, heartbeatReceived, syncTerm, pendingEvents, inSync>>
 
 ----
 \* Owner-Authoritative Events (LocalEventQueue.ts)
@@ -85,7 +103,7 @@ AdvanceFrame(p) ==
 GenerateEvent(p) ==
     /\ Cardinality(pendingEvents[p]) < MaxEvents
     /\ pendingEvents' = [pendingEvents EXCEPT ![p] = pendingEvents[p] \union {<<p, frame[p]>>}]
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm>>
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm, inSync>>
 
 ----
 \* State Sync (Leader Authority)
@@ -95,11 +113,12 @@ GenerateEvent(p) ==
 SendStateSync(leader) ==
     /\ IsLeader(leader)
     /\ syncTerm' = [p \in Peer |-> currentTerm[leader]]
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, pendingEvents>>
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, pendingEvents, inSync>>
 
 \* Implementation: receiveSyncMessage() -> eventQueue.onStateSync()
 \* Key behavior: remote events cleared, LOCAL events preserved for re-apply
 \* This is the core of LocalEventQueue - getEventsForReapply() returns local events only
+\* Also resets inSync to TRUE (follower now matches leader state)
 ReceiveStateSync(follower, leader) ==
     /\ ~IsLeader(follower)
     /\ IsLeader(leader)
@@ -108,22 +127,33 @@ ReceiveStateSync(follower, leader) ==
     \* KEY: Filter to keep only events owned by follower (local events preserved)
     /\ pendingEvents' = [pendingEvents EXCEPT
          ![follower] = {e \in pendingEvents[follower] : e[1] = follower}]
+    /\ inSync' = [inSync EXCEPT ![follower] = TRUE]  \* Sync restores consistency
     /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived>>
+
+\* Implementation: checkForDesync() detects checksum mismatch
+\* Models non-deterministic state divergence (floating point drift, race conditions, etc.)
+\* This triggers the need for state sync
+Desync(p) ==
+    /\ ~IsLeader(p)  \* Only followers can desync from leader
+    /\ inSync[p] = TRUE  \* Can only desync if currently in sync
+    /\ inSync' = [inSync EXCEPT ![p] = FALSE]
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
 
 ----
 \* Leader Heartbeat
 
 \* Implementation: broadcastHeartbeat()
+\* Note: Sets all peers' heartbeatReceived including leader (simplification - leader never checks its own)
 BroadcastHeartbeat(leader) ==
     /\ IsLeader(leader)
     /\ heartbeatReceived' = [p \in Peer |-> TRUE]
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, syncTerm, pendingEvents, inSync>>
 
 \* Implementation: election timer timeout
 ExpireHeartbeat(p) ==
     /\ heartbeatReceived[p] = TRUE
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, currentTerm, state, votedFor, votesReceived, inputsReceived, syncTerm, pendingEvents, inSync>>
 
 ----
 \* Election
@@ -138,7 +168,7 @@ StartElection(p) ==
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = TRUE]
-    /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents, inSync>>
 
 \* Implementation: handleVoteRequest()
 Vote(voter, candidate) ==
@@ -153,14 +183,14 @@ Vote(voter, candidate) ==
     /\ votesReceived' = [votesReceived EXCEPT ![candidate] = votesReceived[candidate] \union {voter}]
     /\ state' = [state EXCEPT ![voter] = "Follower"]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![voter] = TRUE]
-    /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents, inSync>>
 
 \* Implementation: becomeLeader()
 BecomeLeader(p) ==
     /\ state[p] = "Candidate"
     /\ IsMajority(votesReceived[p])
     /\ state' = [state EXCEPT ![p] = "Leader"]
-    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived, heartbeatReceived, syncTerm, pendingEvents, inSync>>
 
 \* Implementation: stepDown()
 StepDown(p) ==
@@ -168,7 +198,7 @@ StepDown(p) ==
     /\ \E q \in Peer : currentTerm[q] > currentTerm[p]
     /\ state' = [state EXCEPT ![p] = "Follower"]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, currentTerm, votedFor, votesReceived, inputsReceived, syncTerm, pendingEvents, inSync>>
 
 \* Implementation: election timer retry
 RetryElection(p) ==
@@ -177,10 +207,10 @@ RetryElection(p) ==
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
-    /\ UNCHANGED <<frame, state, inputsReceived, heartbeatReceived, syncTerm, pendingEvents>>
+    /\ UNCHANGED <<frame, state, inputsReceived, heartbeatReceived, syncTerm, pendingEvents, inSync>>
 
 ----
-\* Network Events (from LockstepSync - models disconnects/reconnects)
+\* Network Events (from LockstepNetwork - models disconnects/reconnects)
 
 \* Models arbitrary leadership change due to network events
 \* (peer disconnect, network partition, manual override)
@@ -198,6 +228,8 @@ ForceLeaderChange(oldLeader, newLeader) ==
     /\ votedFor' = [p \in Peer |-> newLeader]  \* Everyone "voted" for new leader
     /\ votesReceived' = [votesReceived EXCEPT ![newLeader] = Peer]
     /\ heartbeatReceived' = [p \in Peer |-> TRUE]
+    \* After leader change, followers may be out of sync with new leader
+    /\ inSync' = [p \in Peer |-> p = newLeader]  \* Only new leader is "in sync" with itself
     /\ UNCHANGED <<frame, inputsReceived, syncTerm, pendingEvents>>
 
 ----
@@ -212,6 +244,8 @@ Next ==
     \* State Sync
     \/ \E p \in Peer : SendStateSync(p)
     \/ \E f, l \in Peer : ReceiveStateSync(f, l)
+    \* Desync (models checksum mismatch detection)
+    \/ \E p \in Peer : Desync(p)
     \* Heartbeat
     \/ \E p \in Peer : BroadcastHeartbeat(p)
     \/ \E p \in Peer : ExpireHeartbeat(p)
@@ -229,6 +263,7 @@ Fairness ==
     /\ WF_vars(\E p \in Peer : AdvanceFrame(p))
     /\ WF_vars(\E p \in Peer : BroadcastHeartbeat(p))
     /\ WF_vars(\E p \in Peer : BecomeLeader(p))
+    /\ WF_vars(\E f, l \in Peer : ReceiveStateSync(f, l))  \* Desync eventually corrected
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -251,6 +286,7 @@ TypeInvariant ==
     /\ \A p \in Peer : syncTerm[p] >= 0 /\ syncTerm[p] <= MaxTerm
     /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
     /\ \A p \in Peer : Cardinality(pendingEvents[p]) <= MaxEvents
+    /\ \A p \in Peer : inSync[p] \in BOOLEAN
 
 \* Leader is at least as up-to-date as peers (within 1 frame)
 LeaderUpToDate ==
@@ -270,6 +306,11 @@ SyncTermBounded ==
 
 \* Eventually there is a leader
 EventuallyLeader == <>(\E p \in Peer : IsLeader(p))
+
+\* If there's a leader, desync is eventually corrected
+\* (state sync will bring followers back in sync)
+DesyncEventuallyCorrected ==
+    (\E p \in Peer : IsLeader(p)) => <>(\A p \in Peer : inSync[p])
 
 ----
 \* State constraint for bounded model checking

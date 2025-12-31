@@ -7,6 +7,7 @@
 \* 3. Followers become candidates on heartbeat timeout
 \* 4. Candidates request votes, win with majority
 \* 5. Higher terms cause stepdown
+\* 6. Votes require candidate to be at least as up-to-date (frame comparison)
 \*
 \* Implementation: client/src/network/LeaderElection.ts
 
@@ -14,6 +15,7 @@ EXTENDS Integers, FiniteSets
 
 CONSTANT Peer
 CONSTANT MaxTerm
+CONSTANT MaxFrame          \* For frame comparison in voting
 
 ----
 \* Variables
@@ -23,8 +25,9 @@ VARIABLE state             \* "Follower", "Candidate", "Leader"
 VARIABLE votedFor          \* Who voted for whom (0 = none)
 VARIABLE votesReceived     \* Votes received by candidates
 VARIABLE heartbeatReceived \* Whether heartbeat received this round
+VARIABLE frame             \* Current frame per peer (for log comparison)
 
-vars == <<currentTerm, state, votedFor, votesReceived, heartbeatReceived>>
+vars == <<currentTerm, state, votedFor, votesReceived, heartbeatReceived, frame>>
 
 ----
 \* Helpers
@@ -42,21 +45,23 @@ Init ==
     /\ votedFor = [p \in Peer |-> 0]
     /\ votesReceived = [p \in Peer |-> {}]
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
+    /\ frame = [p \in Peer |-> 0]
 
 ----
 \* Heartbeat Actions
 
 \* Implementation: broadcastHeartbeat()
+\* Note: Sets all peers' heartbeatReceived to TRUE (leader included for simplicity)
 BroadcastHeartbeat(leader) ==
     /\ IsLeader(leader)
     /\ heartbeatReceived' = [p \in Peer |-> TRUE]
-    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived>>
+    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, frame>>
 
 \* Implementation: election timer checks timeSinceHeartbeat >= electionTimeout
 ExpireHeartbeat(p) ==
     /\ heartbeatReceived[p] = TRUE
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived>>
+    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, frame>>
 
 ----
 \* Election Actions
@@ -71,12 +76,16 @@ StartElection(p) ==
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = TRUE]
+    /\ UNCHANGED <<frame>>
 
 \* Implementation: handleVoteRequest()
+\* Key: Candidate must be at least as up-to-date as voter (frame comparison)
+\* This matches LeaderElection.ts:303 - message.lastFrame >= this.currentFrame
 Vote(voter, candidate) ==
     /\ state[candidate] = "Candidate"
     /\ voter # candidate
     /\ currentTerm[candidate] >= currentTerm[voter]
+    /\ frame[candidate] >= frame[voter]  \* Log comparison - candidate at least as current
     /\ \/ votedFor[voter] = 0
        \/ currentTerm[candidate] > currentTerm[voter]
     /\ votedFor' = [votedFor EXCEPT ![voter] = candidate]
@@ -84,13 +93,14 @@ Vote(voter, candidate) ==
     /\ votesReceived' = [votesReceived EXCEPT ![candidate] = votesReceived[candidate] \union {voter}]
     /\ state' = [state EXCEPT ![voter] = "Follower"]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![voter] = TRUE]
+    /\ UNCHANGED <<frame>>
 
 \* Implementation: becomeLeader()
 BecomeLeader(p) ==
     /\ state[p] = "Candidate"
     /\ IsMajority(votesReceived[p])
     /\ state' = [state EXCEPT ![p] = "Leader"]
-    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, heartbeatReceived>>
+    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, heartbeatReceived, frame>>
 
 \* Implementation: stepDown()
 StepDown(p) ==
@@ -98,7 +108,7 @@ StepDown(p) ==
     /\ \E q \in Peer : currentTerm[q] > currentTerm[p]
     /\ state' = [state EXCEPT ![p] = "Follower"]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<currentTerm, votedFor, votesReceived>>
+    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frame>>
 
 \* Implementation: election timer retry
 RetryElection(p) ==
@@ -107,7 +117,13 @@ RetryElection(p) ==
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
-    /\ UNCHANGED <<state, heartbeatReceived>>
+    /\ UNCHANGED <<state, heartbeatReceived, frame>>
+
+\* Frame advancement (abstract - just allows frame to increase for voting comparison)
+AdvanceFrame(p) ==
+    /\ frame[p] < MaxFrame
+    /\ frame' = [frame EXCEPT ![p] = frame[p] + 1]
+    /\ UNCHANGED <<currentTerm, state, votedFor, votesReceived, heartbeatReceived>>
 
 ----
 \* State Machine
@@ -120,6 +136,7 @@ Next ==
     \/ \E p \in Peer : BecomeLeader(p)
     \/ \E p \in Peer : StepDown(p)
     \/ \E p \in Peer : RetryElection(p)
+    \/ \E p \in Peer : AdvanceFrame(p)
 
 Fairness ==
     /\ WF_vars(\E p \in Peer : BroadcastHeartbeat(p))
@@ -139,6 +156,7 @@ NoTwoLeadersInSameTerm ==
 \* Type invariant
 TypeInvariant ==
     /\ \A p \in Peer : currentTerm[p] >= 0 /\ currentTerm[p] <= MaxTerm
+    /\ \A p \in Peer : frame[p] >= 0 /\ frame[p] <= MaxFrame
     /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
 
 ----
@@ -150,6 +168,8 @@ EventuallyLeader == <>(\E p \in Peer : IsLeader(p))
 ----
 \* State constraint for finite model checking
 
-StateConstraint == \A p \in Peer : currentTerm[p] <= MaxTerm
+StateConstraint ==
+    /\ \A p \in Peer : currentTerm[p] <= MaxTerm
+    /\ \A p \in Peer : frame[p] <= MaxFrame
 
 ===============================================================================

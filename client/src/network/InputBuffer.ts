@@ -1,6 +1,13 @@
 /**
  * InputBuffer - Manages frame inputs for lockstep netcode
  *
+ * TLA+ Model: LockstepNetwork.tla
+ * - inputBuffer variable: peer -> frame -> has_input
+ * - checksums variable: peer -> frame -> checksum
+ * - StoreLocalInput action: stores input for current frame
+ * - HasAllInputs helper: checks if all peers submitted
+ * - DetectDesync action: compares checksums across peers
+ *
  * Responsibilities:
  * - Store inputs per frame per player
  * - Track which frames have all inputs ready
@@ -60,6 +67,7 @@ export class InputBuffer {
 
   /**
    * Store an input for a specific frame and player
+   * TLA+: StoreLocalInput (local) or DeliverMessage (remote)
    */
   storeInput(frameInput: FrameInput): void {
     let frameInputs = this.buffer.get(frameInput.frame)
@@ -89,6 +97,7 @@ export class InputBuffer {
 
   /**
    * Check if a frame has inputs from all players
+   * TLA+: HasAllInputs helper in LockstepNetwork.tla
    */
   hasAllInputs(frame: number): boolean {
     const frameInputs = this.buffer.get(frame)
@@ -124,6 +133,7 @@ export class InputBuffer {
   /**
    * Check for checksum mismatches at a frame
    * Returns array of mismatches: { playerId, localChecksum, remoteChecksum }
+   * TLA+: DetectDesync action in LockstepNetwork.tla
    */
   checkDesync(frame: number, localPlayerId: string): Array<{
     playerId: string
@@ -195,5 +205,47 @@ export class InputBuffer {
    */
   size(): number {
     return this.buffer.size
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  /**
+   * Check TLA+ invariants at runtime.
+   *
+   * TLA+ Invariants checked:
+   * - TypeInvariant: frame >= 0
+   * - NoAdvanceWithoutInputs: can only advance if all inputs received
+   *
+   * @param currentFrame The current simulation frame
+   */
+  assertInvariants(currentFrame: number): void {
+    // TypeInvariant: frame >= 0
+    if (currentFrame < 0) {
+      throw new Error(`TLA+ TypeInvariant violated: frame ${currentFrame} < 0`)
+    }
+
+    // Verify buffer doesn't contain negative frames
+    for (const frame of this.buffer.keys()) {
+      if (frame < 0) {
+        throw new Error(`TLA+ TypeInvariant violated: buffer contains negative frame ${frame}`)
+      }
+    }
+  }
+
+  /**
+   * Check that advancing frame is safe (all inputs received).
+   * TLA+: NoAdvanceWithoutInputs - precondition for AdvanceFrame action
+   *
+   * @param frame Frame to check before advancing
+   */
+  assertCanAdvance(frame: number): void {
+    if (!this.hasAllInputs(frame)) {
+      const inputCount = this.getInputCount(frame)
+      throw new Error(
+        `TLA+ NoAdvanceWithoutInputs violated: frame ${frame} has ${inputCount}/${this.config.playerCount} inputs`
+      )
+    }
   }
 }
