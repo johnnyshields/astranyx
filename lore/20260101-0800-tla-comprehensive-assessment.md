@@ -180,16 +180,16 @@ This means LockstepSimple can't verify the properties that LockstepState verifie
 | `LockstepNetcode.ts:tryAdvanceFrame()` | `LockstepState.tla:AdvanceFrame` | Frame advance has more conditions in code |
 | `MultiplayerManager.ts` | None | No TLA+ for orchestration layer |
 
-### Missing Code-Side Invariant Checks
+### Code-Side Invariant Checks (All Implemented)
 
-Currently implemented:
 - `LeaderElection.assertInvariants()` - Term monotonicity, state validity
 - `LocalEventQueue.assertLocalEventsOnly()` - Local events preserved
 - `StateSyncManager.assertInvariants()` - SyncTerm bounded
-
-Should add:
-- `InputBuffer.assertFrameBounded()` - `FrameBoundedDrift` from TLA+
-- `LockstepNetcode.assertLeaderUpToDate()` - `LeaderUpToDate` from TLA+
+- `LockstepNetcode.assertFrameBoundedDrift()` - Frame drift within 1
+- `LockstepNetcode.assertLeaderUpToDate()` - Leader not behind peers
+- `LockstepNetcode.assertAllInvariants()` - Runs all invariant checks
+- `InputBuffer.assertInvariants()` - Type invariants
+- `P2PManager.assertInvariants()` - Connection state validity
 
 ---
 

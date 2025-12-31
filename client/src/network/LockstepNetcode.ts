@@ -99,6 +99,10 @@ export class LockstepNetcode {
   private running = false
   private waitingForInputs = false
 
+  // Peer frame tracking (for FrameBoundedDrift invariant)
+  // Maps peer ID -> last known frame based on received inputs
+  private peerFrames: Map<string, number> = new Map()
+
   constructor(config: LockstepConfig) {
     this.config = {
       inputDelay: config.inputDelay ?? DEFAULT_CONFIG.inputDelay,
@@ -157,6 +161,7 @@ export class LockstepNetcode {
     this.running = true
     this.currentFrame = 0
     this.confirmedFrame = -1
+    this.peerFrames.clear()
 
     // Reset all components
     this.inputBuffer.reset()
@@ -335,6 +340,14 @@ export class LockstepNetcode {
     }
 
     this.inputBuffer.storeInput(frameInput)
+
+    // Track peer's frame for FrameBoundedDrift invariant
+    // Peer's currentFrame is approximately frameInput.frame - inputDelay
+    const peerFrame = frameInput.frame - this.config.inputDelay
+    const existingFrame = this.peerFrames.get(frameInput.playerId) ?? 0
+    if (peerFrame > existingFrame) {
+      this.peerFrames.set(frameInput.playerId, peerFrame)
+    }
 
     // Try to advance if we were waiting
     if (this.waitingForInputs) {
@@ -558,6 +571,60 @@ export class LockstepNetcode {
       sync: this.syncManager.getDebugInfo(),
       events: this.eventQueue.getDebugInfo(),
       inputBufferSize: this.inputBuffer.size(),
+    }
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  /**
+   * Check all TLA+ invariants at runtime (dev mode only).
+   * Call this periodically (e.g., every tick) during development.
+   */
+  assertAllInvariants(): void {
+    this.assertFrameBoundedDrift()
+    this.assertLeaderUpToDate()
+    this.election.assertInvariants()
+    this.eventQueue.assertLocalEventsOnly()
+    this.syncManager.assertInvariants()
+    this.inputBuffer.assertInvariants(this.currentFrame)
+  }
+
+  /**
+   * Check TLA+ FrameBoundedDrift invariant.
+   * TLA+: \A i, j \in ConnectedPeers : frame[i] - frame[j] <= 1
+   *
+   * All connected peers should be within 1 frame of each other.
+   */
+  assertFrameBoundedDrift(): void {
+    for (const [peerId, peerFrame] of this.peerFrames) {
+      const drift = Math.abs(this.currentFrame - peerFrame)
+      if (drift > 1) {
+        throw new Error(
+          `TLA+ FrameBoundedDrift violated: local frame ${this.currentFrame}, ` +
+          `peer ${peerId} frame ${peerFrame}, drift ${drift} > 1`
+        )
+      }
+    }
+  }
+
+  /**
+   * Check TLA+ LeaderUpToDate invariant.
+   * TLA+: \A leader, p \in ConnectedPeers : IsLeader(leader) => frame[leader] >= frame[p] - 1
+   *
+   * If we are the leader, we should be at least as up-to-date as any peer (within 1 frame).
+   */
+  assertLeaderUpToDate(): void {
+    if (!this.isLeader()) return
+
+    for (const [peerId, peerFrame] of this.peerFrames) {
+      if (this.currentFrame < peerFrame - 1) {
+        throw new Error(
+          `TLA+ LeaderUpToDate violated: leader frame ${this.currentFrame} < ` +
+          `peer ${peerId} frame ${peerFrame} - 1`
+        )
+      }
     }
   }
 }

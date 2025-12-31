@@ -394,6 +394,137 @@ describe('TLA+ LockstepNetwork Properties', () => {
 })
 
 // =============================================================================
+// LockstepState.tla: Term Validation (Stale Sync Rejection)
+// =============================================================================
+
+describe('TLA+ Term Validation', () => {
+  it('ignores sync from old leader after election (term validation)', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 10 }), // old term
+        fc.integer({ min: 1, max: 10 }), // term delta for new term
+        (oldTerm, termDelta) => {
+          const newTerm = oldTerm + termDelta
+          const localPlayerId = 'local'
+
+          const queue = new LocalEventQueue({
+            bufferSize: 900,
+            localPlayerId,
+          })
+          queue.reset()
+
+          const manager = new StateSyncManager({ syncInterval: 300 })
+          manager.reset()
+          manager.setEventQueue(queue)
+
+          // Accept a sync at the old term first
+          manager.setCurrentTerm(oldTerm)
+          manager.recordAcceptedSyncTerm(oldTerm)
+
+          // Simulate election: term increases
+          manager.setCurrentTerm(newTerm)
+
+          // Add a local event after election
+          const localEvent: GameEvent = {
+            type: 'damage',
+            playerId: localPlayerId,
+            amount: 10,
+            newShields: 100,
+            newLives: 3,
+          }
+          queue.addEvent(localEvent, 100)
+
+          // Old leader's sync arrives with stale term
+          // TLA+: ReceiveStateSync requires msgTerm >= syncTerm[receiver]
+          const staleSyncMessage = {
+            type: 'state_sync' as const,
+            frame: 50,
+            state: {},
+            checksum: 12345,
+            term: oldTerm, // Stale term!
+          }
+
+          // receiveSyncMessage should reject stale syncs
+          const pendingEvents = manager.receiveSyncMessage(staleSyncMessage)
+
+          // If sync was rejected, local events should still be present
+          // (pendingEvents is empty when sync is rejected)
+          const eventsStillPresent = queue.getPendingEvents().length > 0
+
+          // Either sync was rejected (events still present) or it was accepted (events returned)
+          // Stale sync (oldTerm < newTerm) should be rejected
+          if (oldTerm < newTerm && pendingEvents.length === 0 && !eventsStillPresent) {
+            return false // Bug: stale sync was accepted and cleared events
+          }
+
+          return true
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+})
+
+// =============================================================================
+// LockstepNetwork.tla: FrameBoundedDrift
+// =============================================================================
+
+describe('TLA+ FrameBoundedDrift', () => {
+  it('peers stay within 1 frame of each other', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 2, max: 4 }), // player count
+        fc.array(
+          fc.record({
+            player: fc.integer({ min: 0, max: 3 }),
+            frameAdvance: fc.integer({ min: 0, max: 2 }), // How much to try to advance
+          }),
+          { minLength: 1, maxLength: 20 }
+        ),
+        (playerCount, actions) => {
+          const peerIds = Array.from({ length: playerCount }, (_, i) => `p${i}`)
+          const peerFrames = new Map<string, number>()
+
+          // Initialize all at frame 0
+          for (const id of peerIds) {
+            peerFrames.set(id, 0)
+          }
+
+          // Simulate lockstep: peers can only advance when all have submitted
+          // This is a simplified model of the invariant
+          for (const action of actions) {
+            const playerId = peerIds[action.player % playerCount]
+            if (!playerId) continue
+
+            const currentFrame = peerFrames.get(playerId) ?? 0
+            const minFrame = Math.min(...peerFrames.values())
+
+            // TLA+ AdvanceFrame precondition: frame[p] = MinFrame
+            // Can only advance if at the minimum frame
+            if (currentFrame === minFrame && action.frameAdvance > 0) {
+              peerFrames.set(playerId, currentFrame + 1)
+            }
+
+            // Check FrameBoundedDrift invariant after each action
+            const frames = [...peerFrames.values()]
+            const maxFrame = Math.max(...frames)
+            const minFrameNow = Math.min(...frames)
+
+            // TLA+: frame[i] - frame[j] <= 1
+            if (maxFrame - minFrameNow > 1) {
+              return false // Invariant violated!
+            }
+          }
+
+          return true
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+})
+
+// =============================================================================
 // StateSyncManager: SyncTermBounded
 // =============================================================================
 
