@@ -61,7 +61,10 @@
       "Bash(source ~/.asdf/asdf.sh)",
       "WebSearch",
       "Bash(bun install:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(java -version:*)",
+      "Bash(curl:*)",
+      "Bash(./run-tlc.sh)"
     ],
     "deny": [],
     "ask": []

@@ -1,0 +1,4 @@
+.tlc-passed
+states/
+*.trace
+*_TTrace_*.tla

@@ -44,10 +44,10 @@ VARIABLE currentTerm
 \* Peer state: "Follower", "Candidate", "Leader"
 VARIABLE state
 
-\* Who this peer voted for in current term (Peer ID or "None")
+\* Who this peer voted for in current term (Peer ID or 0 for none)
 VARIABLE votedFor
 
-\* Current leader known to each peer ("None" if unknown)
+\* Current leader known to each peer (0 if unknown)
 VARIABLE currentLeader
 
 \* Vote count received (only meaningful for candidates)
@@ -97,8 +97,8 @@ MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 \* Check if peer i can receive messages from peer j
 CanReceive(i, j) == ~partitioned[i][j]
 
-\* Get the highest term seen
-MaxTerm(peers) ==
+\* Get the highest term seen among a set of peers
+HighestTerm(peers) ==
     IF peers = {} THEN 0
     ELSE CHOOSE t \in {currentTerm[p] : p \in peers} :
          \A p \in peers : currentTerm[p] <= t
@@ -119,7 +119,7 @@ EventsUpToFrame(f) ==
 InitElectionVars ==
     /\ currentTerm = [p \in Peer |-> 0]
     /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> "None"]
+    /\ votedFor = [p \in Peer |-> 0]
     /\ currentLeader = [p \in Peer |-> MinPeer]
     /\ votesReceived = [p \in Peer |-> {}]
 
@@ -204,7 +204,7 @@ StartElection(p) ==
     /\ state' = [state EXCEPT ![p] = "Candidate"]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]  \* Vote for self
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]  \* Count own vote
-    /\ currentLeader' = [currentLeader EXCEPT ![p] = "None"]
+    /\ currentLeader' = [currentLeader EXCEPT ![p] = 0]
     /\ UNCHANGED <<frameVars, eventVars, networkVars>>
 
 \* ACTION: Candidate requests vote from peer
@@ -214,7 +214,7 @@ RequestVote(candidate, voter) ==
     /\ candidate # voter
     /\ CanReceive(voter, candidate)
     /\ currentTerm[candidate] >= currentTerm[voter]
-    /\ \/ votedFor[voter] = "None"
+    /\ \/ votedFor[voter] = 0
        \/ votedFor[voter] = candidate
        \/ currentTerm[candidate] > currentTerm[voter]
     \* Grant vote
@@ -248,7 +248,7 @@ UpdateTerm(i, j) ==
     /\ currentTerm[j] > currentTerm[i]
     /\ currentTerm' = [currentTerm EXCEPT ![i] = currentTerm[j]]
     /\ state' = [state EXCEPT ![i] = "Follower"]
-    /\ votedFor' = [votedFor EXCEPT ![i] = "None"]
+    /\ votedFor' = [votedFor EXCEPT ![i] = 0]
     /\ currentLeader' = [currentLeader EXCEPT ![i] =
            IF state[j] = "Leader" THEN j ELSE currentLeader[i]]
     /\ UNCHANGED <<votesReceived, frameVars, eventVars, networkVars>>
@@ -324,7 +324,7 @@ NoTwoLeadersInSameTerm ==
 LeaderConsistency ==
     \A p \in Peer :
         state[p] = "Leader" =>
-            \A q \in Peer : (currentLeader[q] = p \/ currentLeader[q] = "None" \/ ~CanReceive(q, p))
+            \A q \in Peer : (currentLeader[q] = p \/ currentLeader[q] = 0 \/ ~CanReceive(q, p))
 
 \* Events in log are from valid terms
 EventTermValidity ==
@@ -346,7 +346,7 @@ StateSyncAuthority ==
         lastSyncFrame[p] > 0 =>
             \E leader \in Peer :
                 /\ state[leader] = "Leader" \/ currentTerm[leader] > 0
-                /\ currentLeader[p] # "None"
+                /\ currentLeader[p] # 0
 
 ----
 \* Liveness Properties (checked as temporal properties)
