@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   Simulation,
   SeededRandom,
@@ -246,7 +246,7 @@ describe('Simulation', () => {
 
     it('should decrement screen shake', () => {
       // Manually set screen shake for testing
-      const state = simulation.getState()
+      const _state = simulation.getState()
       // We can't directly set state, but we can check the decay behavior
       // after it's set by explosions/damage
     })
@@ -738,7 +738,7 @@ describe('Owner-Authoritative Events', () => {
       const state = sim.getState()
       if (state.powerups.length > 0) {
         const powerup = state.powerups[0]!
-        const player2 = state.players.find(p => p.playerId === 'player_2')!
+        const _player2 = state.players.find(p => p.playerId === 'player_2')!
 
         // Apply pickup event
         sim.applyEvents([{

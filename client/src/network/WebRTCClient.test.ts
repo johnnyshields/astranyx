@@ -22,7 +22,7 @@ class MockWebSocket {
     }, 0)
   }
 
-  send(data: string): void {
+  send(_data: string): void {
     // Mock implementation
   }
 
@@ -41,7 +41,7 @@ class MockRTCPeerConnection {
 
   private dataChannels: MockRTCDataChannel[] = []
 
-  createDataChannel(label: string, options?: RTCDataChannelInit): RTCDataChannel {
+  createDataChannel(label: string, _options?: RTCDataChannelInit): RTCDataChannel {
     const channel = new MockRTCDataChannel(label)
     this.dataChannels.push(channel)
     return channel as unknown as RTCDataChannel
@@ -55,9 +55,9 @@ class MockRTCPeerConnection {
     return { type: 'answer', sdp: 'mock-answer-sdp' }
   }
 
-  async setLocalDescription(desc: RTCSessionDescriptionInit): Promise<void> {}
-  async setRemoteDescription(desc: RTCSessionDescription): Promise<void> {}
-  async addIceCandidate(candidate: RTCIceCandidate): Promise<void> {}
+  async setLocalDescription(_desc: RTCSessionDescriptionInit): Promise<void> {}
+  async setRemoteDescription(_desc: RTCSessionDescription): Promise<void> {}
+  async addIceCandidate(_candidate: RTCIceCandidate): Promise<void> {}
 
   close(): void {
     this.connectionState = 'closed'
@@ -91,7 +91,7 @@ class MockRTCDataChannel {
     this.onclose?.()
   }
 
-  send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
+  send(_data: string | ArrayBuffer | Blob | ArrayBufferView): void {
     // Mock implementation
   }
 

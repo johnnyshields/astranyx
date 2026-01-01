@@ -360,7 +360,7 @@ export class PhoenixClient {
       throw new Error('Not in a room')
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       this.roomChannel!.push('refresh_turn_credentials', {})
         .receive('ok', (response: { turn: TurnCredentials }) => {
           resolve(response.turn)

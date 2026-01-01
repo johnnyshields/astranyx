@@ -121,8 +121,8 @@ describe('Camera', () => {
     })
 
     it('should be different from view or projection alone', () => {
-      const view = camera.getViewMatrix()
-      const proj = camera.getProjectionMatrix()
+      const _view = camera.getViewMatrix()
+      const _proj = camera.getProjectionMatrix()
       const vp = camera.getViewProjectionMatrix()
 
       // VP should be projection * view

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { P2PManager, type PeerConnection } from './P2PManager'
+import { P2PManager } from './P2PManager'
 import type { Channel } from 'phoenix'
 
 // Mock RTCPeerConnection
@@ -12,7 +12,7 @@ class MockRTCPeerConnection {
   private remoteDescription: RTCSessionDescription | null = null
   private localDescription: RTCSessionDescription | null = null
 
-  createDataChannel(label: string, options?: RTCDataChannelInit): RTCDataChannel {
+  createDataChannel(label: string, _options?: RTCDataChannelInit): RTCDataChannel {
     return new MockRTCDataChannel(label) as unknown as RTCDataChannel
   }
 
@@ -32,7 +32,7 @@ class MockRTCPeerConnection {
     this.remoteDescription = desc
   }
 
-  async addIceCandidate(candidate: RTCIceCandidate): Promise<void> {
+  async addIceCandidate(_candidate: RTCIceCandidate): Promise<void> {
     // Mock implementation
   }
 
@@ -58,7 +58,7 @@ class MockRTCDataChannel {
     this.readyState = 'closed'
   }
 
-  send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
+  send(_data: string | ArrayBuffer | Blob | ArrayBufferView): void {
     // Mock implementation
   }
 }
@@ -134,7 +134,7 @@ describe('P2PManager', () => {
       manager.setSignalingChannel(mockChannel)
 
       // 'local-player-id' > 'aaa-player' lexicographically
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('peer_joined', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('peer_joined', {
         player_id: 'aaa-player',
       })
 
@@ -151,7 +151,7 @@ describe('P2PManager', () => {
       manager.setSignalingChannel(mockChannel)
 
       // 'local-player-id' < 'zzz-player' lexicographically
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('peer_joined', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('peer_joined', {
         player_id: 'zzz-player',
       })
 
@@ -165,12 +165,12 @@ describe('P2PManager', () => {
       manager.setSignalingChannel(mockChannel)
 
       // First connect to a peer
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('peer_joined', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('peer_joined', {
         player_id: 'aaa-player',
       })
 
       // Then they leave
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('peer_left', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('peer_left', {
         player_id: 'aaa-player',
       })
 
@@ -260,7 +260,7 @@ describe('P2PManager', () => {
       manager.setSignalingChannel(mockChannel)
 
       // Create a peer
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('peer_joined', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('peer_joined', {
         player_id: 'aaa-player',
       })
 
@@ -274,7 +274,7 @@ describe('P2PManager', () => {
     it('should ignore offers not addressed to us', () => {
       manager.setSignalingChannel(mockChannel)
 
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('offer', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('offer', {
         type: 'offer',
         from: 'other-player',
         to: 'different-player', // Not us
@@ -288,7 +288,7 @@ describe('P2PManager', () => {
     it('should handle offers addressed to us', async () => {
       manager.setSignalingChannel(mockChannel)
 
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('offer', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('offer', {
         type: 'offer',
         from: 'other-player',
         to: 'local-player-id', // Us
@@ -308,7 +308,7 @@ describe('P2PManager', () => {
     it('should ignore answers not addressed to us', () => {
       manager.setSignalingChannel(mockChannel)
 
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('answer', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('answer', {
         type: 'answer',
         from: 'other-player',
         to: 'different-player',
@@ -323,7 +323,7 @@ describe('P2PManager', () => {
     it('should ignore ICE candidates not addressed to us', () => {
       manager.setSignalingChannel(mockChannel)
 
-      ;(mockChannel as unknown as { _trigger: Function })._trigger('ice_candidate', {
+      ;(mockChannel as unknown as { _trigger: (event: string, payload: Record<string, unknown>) => void })._trigger('ice_candidate', {
         type: 'ice_candidate',
         from: 'other-player',
         to: 'different-player',

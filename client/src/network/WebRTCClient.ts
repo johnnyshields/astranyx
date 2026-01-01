@@ -194,7 +194,7 @@ export class WebRTCClient {
     if (!this.peerConnection) return
 
     switch (message.type) {
-      case 'offer':
+      case 'offer': {
         await this.peerConnection.setRemoteDescription(
           new RTCSessionDescription(message.sdp!)
         )
@@ -202,6 +202,7 @@ export class WebRTCClient {
         await this.peerConnection.setLocalDescription(answer)
         this.sendSignaling({ type: 'answer', sdp: answer })
         break
+      }
 
       case 'answer':
         await this.peerConnection.setRemoteDescription(

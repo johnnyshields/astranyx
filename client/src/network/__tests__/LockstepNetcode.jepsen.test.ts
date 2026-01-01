@@ -16,15 +16,9 @@ import { LeaderElection } from '../LeaderElection.ts'
 import { InputBuffer } from '../InputBuffer.ts'
 import { LocalEventQueue } from '../LocalEventQueue.ts'
 import { StateSyncManager } from '../StateSyncManager.ts'
-import type { PlayerInput, GameEvent, FrameInput } from '../types.ts'
+import type { PlayerInput, GameEvent, FrameInput, VoteResponseMessage } from '../types.ts'
 import { emptyInput, getEventOwnerId } from '../types.ts'
-import {
-  FaultInjector,
-  MockDataChannel,
-  createMockNetwork,
-  type TestScenario,
-  runScenario,
-} from './FaultInjection.ts'
+import { FaultInjector, MockDataChannel, createMockNetwork } from './FaultInjection.ts'
 
 // =============================================================================
 // Test Utilities
@@ -40,10 +34,6 @@ function createTestInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
   return { ...emptyInput(), ...overrides }
 }
 
-// Advance time for election timeouts
-function advanceTime(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 // =============================================================================
 // InputBuffer Tests
@@ -456,7 +446,7 @@ describe('LeaderElection', () => {
   })
 
   it('grants votes correctly', () => {
-    const e1 = new LeaderElection({
+    const _e1 = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder: createPlayerOrder(['p1', 'p2']),
       electionTimeout: 1500,
@@ -470,8 +460,8 @@ describe('LeaderElection', () => {
       heartbeatInterval: 500,
     })
 
-    let voteResponse: any = null
-    e2.setSendMessage((peerId, msg) => {
+    let voteResponse: VoteResponseMessage | null = null
+    e2.setSendMessage((_peerId, msg) => {
       if (msg.type === 'vote_response') {
         voteResponse = msg
       }
@@ -489,7 +479,7 @@ describe('LeaderElection', () => {
     )
 
     expect(voteResponse).not.toBeNull()
-    expect(voteResponse.voteGranted).toBe(true)
+    expect(voteResponse!.voteGranted).toBe(true)
   })
 
   it('rejects vote for lower term', () => {
@@ -506,8 +496,8 @@ describe('LeaderElection', () => {
       'p1'
     )
 
-    let voteResponse: any = null
-    election.setSendMessage((peerId, msg) => {
+    let voteResponse: VoteResponseMessage | null = null
+    election.setSendMessage((_peerId, msg) => {
       if (msg.type === 'vote_response') {
         voteResponse = msg
       }
@@ -519,7 +509,7 @@ describe('LeaderElection', () => {
       'p3'
     )
 
-    expect(voteResponse.voteGranted).toBe(false)
+    expect(voteResponse!.voteGranted).toBe(false)
   })
 
   it('leader steps down when higher term discovered via heartbeat', () => {
@@ -579,7 +569,7 @@ describe('LeaderElection', () => {
       heartbeatInterval: 500,
     })
 
-    let voteResponses: any[] = []
+    const voteResponses: Array<{ peerId: string; msg: VoteResponseMessage }> = []
     election.setSendMessage((peerId, msg) => {
       if (msg.type === 'vote_response') {
         voteResponses.push({ peerId, msg })
@@ -593,7 +583,7 @@ describe('LeaderElection', () => {
     )
 
     expect(voteResponses.length).toBe(1)
-    expect(voteResponses[0].msg.voteGranted).toBe(true)
+    expect(voteResponses[0]!.msg.voteGranted).toBe(true)
 
     // p2 also requests vote for same term - should be rejected
     election.handleMessage(
@@ -602,7 +592,7 @@ describe('LeaderElection', () => {
     )
 
     expect(voteResponses.length).toBe(2)
-    expect(voteResponses[1].msg.voteGranted).toBe(false)
+    expect(voteResponses[1]!.msg.voteGranted).toBe(false)
   })
 
   it('allows vote for same candidate multiple times in same term', () => {
@@ -613,8 +603,8 @@ describe('LeaderElection', () => {
       heartbeatInterval: 500,
     })
 
-    let voteResponses: any[] = []
-    election.setSendMessage((peerId, msg) => {
+    const voteResponses: VoteResponseMessage[] = []
+    election.setSendMessage((_peerId, msg) => {
       if (msg.type === 'vote_response') {
         voteResponses.push(msg)
       }
@@ -631,8 +621,8 @@ describe('LeaderElection', () => {
     )
 
     expect(voteResponses.length).toBe(2)
-    expect(voteResponses[0].voteGranted).toBe(true)
-    expect(voteResponses[1].voteGranted).toBe(true) // Same candidate, still granted
+    expect(voteResponses[0]!.voteGranted).toBe(true)
+    expect(voteResponses[1]!.voteGranted).toBe(true) // Same candidate, still granted
   })
 
   it('candidate wins with majority votes', () => {
@@ -648,7 +638,7 @@ describe('LeaderElection', () => {
     e1.start() // Must start to enable elections
 
     let leaderChanged = false
-    e1.setLeaderChangeHandler((leaderId, term) => {
+    e1.setLeaderChangeHandler((leaderId, _term) => {
       if (leaderId === 'p2') leaderChanged = true
     })
 
@@ -751,7 +741,7 @@ describe('LeaderElection', () => {
       heartbeatInterval: 500,
     })
 
-    let voteResponses: any[] = []
+    const voteResponses: Array<{ peerId: string; msg: VoteResponseMessage }> = []
     election.setSendMessage((peerId, msg) => {
       if (msg.type === 'vote_response') {
         voteResponses.push({ peerId, msg })
@@ -763,14 +753,14 @@ describe('LeaderElection', () => {
       { type: 'request_vote', term: 1, candidateId: 'p1', lastFrame: 0 },
       'p1'
     )
-    expect(voteResponses[0].msg.voteGranted).toBe(true)
+    expect(voteResponses[0]!.msg.voteGranted).toBe(true)
 
     // New term 2 - should be able to vote for different candidate
     election.handleMessage(
       { type: 'request_vote', term: 2, candidateId: 'p2', lastFrame: 0 },
       'p2'
     )
-    expect(voteResponses[1].msg.voteGranted).toBe(true)
+    expect(voteResponses[1]!.msg.voteGranted).toBe(true)
   })
 
   it('candidate steps down via onHigherTermSeen (TLA+ ReceiveStateSync fix)', () => {
@@ -849,8 +839,8 @@ describe('LeaderElection', () => {
     // Advance local frame
     election.setCurrentFrame(100)
 
-    let voteResponse: any = null
-    election.setSendMessage((peerId, msg) => {
+    let voteResponse: VoteResponseMessage | null = null
+    election.setSendMessage((_peerId, msg) => {
       if (msg.type === 'vote_response') {
         voteResponse = msg
       }
@@ -863,7 +853,7 @@ describe('LeaderElection', () => {
     )
 
     // Should reject - candidate's log is behind
-    expect(voteResponse.voteGranted).toBe(false)
+    expect(voteResponse!.voteGranted).toBe(false)
   })
 
   it('notifies leader change via callback', () => {
@@ -874,7 +864,7 @@ describe('LeaderElection', () => {
       heartbeatInterval: 500,
     })
 
-    let leaderChanges: Array<{ leaderId: string; term: number }> = []
+    const leaderChanges: Array<{ leaderId: string; term: number }> = []
     election.setLeaderChangeHandler((leaderId, term) => {
       leaderChanges.push({ leaderId, term })
     })
@@ -1000,7 +990,6 @@ describe('Jepsen Failure Scenarios', () => {
       injector.setGlobalFaults({ dropRate: 0.5 })
 
       let delivered = 0
-      let attempts = 0
       const maxAttempts = 100
 
       const channel = injector.getChannel('p1', 'p2')!
@@ -1009,7 +998,6 @@ describe('Jepsen Failure Scenarios', () => {
       // Send many messages, some should get through
       for (let i = 0; i < maxAttempts; i++) {
         channel.send(JSON.stringify({ id: i }))
-        attempts++
       }
 
       // With 50% loss, expect roughly half delivered
@@ -1123,7 +1111,7 @@ describe('Jepsen Failure Scenarios', () => {
 
       // Simulate first sync "sent" but lost
       manager.onSyncSent()
-      const lastSync1 = manager.getLastSyncFrame()
+      const _lastSync1 = manager.getLastSyncFrame()
 
       // Advance frames
       manager.setCurrentFrame(20)
@@ -1169,9 +1157,9 @@ describe('Integration: Full Lockstep with Faults', () => {
       playerOrder,
     })
 
-    let disconnectedPeer: string | null = null
+    let _disconnectedPeer: string | null = null
     netcode.setPeerDisconnectHandler((peerId) => {
-      disconnectedPeer = peerId
+      _disconnectedPeer = peerId
     })
 
     // Add mock peer
@@ -1199,9 +1187,9 @@ describe('Integration: Full Lockstep with Faults', () => {
       playerOrder,
     })
 
-    let newLeader: string | null = null
+    let _newLeader: string | null = null
     netcode.setLeaderChangeHandler((leaderId) => {
-      newLeader = leaderId
+      _newLeader = leaderId
     })
 
     netcode.start()
@@ -1422,7 +1410,7 @@ describe('Extended Chaos Tests', () => {
             }
             break
 
-          case 1: // Vote request (simulates election timeout)
+          case 1: { // Vote request (simulates election timeout)
             const srcElection = elections[srcIdx]
             const dstElection = elections[dstIdx]
             const candidateId = ['p1', 'p2', 'p3', 'p4', 'p5'][srcIdx]
@@ -1436,6 +1424,7 @@ describe('Extended Chaos Tests', () => {
               }
             }
             break
+          }
 
           case 2: // Step down (higher term discovered)
             // Already handled by heartbeat reception
@@ -1568,8 +1557,6 @@ describe('Extended Chaos Tests', () => {
       })
       queue.reset()
 
-      let localEventCount = 0
-
       // Add random local and remote events
       for (let i = 0; i < 20; i++) {
         const isLocal = Math.random() > 0.5
@@ -1581,7 +1568,6 @@ describe('Extended Chaos Tests', () => {
           newLives: 3,
         }
         queue.addEvent(event, i)
-        if (isLocal) localEventCount++
       }
 
       // Perform state sync

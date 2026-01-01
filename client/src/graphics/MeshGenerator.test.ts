@@ -28,7 +28,7 @@ import {
   type MeshData,
 } from './MeshGenerator'
 
-function validateMeshData(mesh: MeshData, name: string) {
+function validateMeshData(mesh: MeshData, _name: string) {
   // Vertices should be Float32Array
   expect(mesh.vertices).toBeInstanceOf(Float32Array)
 

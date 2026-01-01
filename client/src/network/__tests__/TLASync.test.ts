@@ -85,7 +85,7 @@ const IGNORE_WORDS = new Set([
 ])
 
 // TS implementations that don't map 1:1 to TLA+ (helper methods, etc.)
-const TS_ONLY_IMPLEMENTATIONS = new Set([
+const _TS_ONLY_IMPLEMENTATIONS = new Set([
   // Internal helpers
   'getDebugInfo',
   'reset',
@@ -439,7 +439,7 @@ describe('TLA+ Sync Verification', () => {
       }
 
       // Check which invariants have runtime assertions
-      const assertMethods = [
+      const _assertMethods = [
         'assertInvariants',
         'assertLocalEventsOnly',
         'assertCanAdvance',

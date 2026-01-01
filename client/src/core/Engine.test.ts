@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { Engine, type InitPhase } from './Engine'
+import { Engine } from './Engine'
 
 // Mock dependencies using class mocks
 vi.mock('./Renderer.ts', () => {
@@ -100,7 +100,7 @@ describe('Engine', () => {
     it('should start the game loop', async () => {
       await engine.init()
 
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((_cb) => {
         return 1
       })
 
@@ -163,7 +163,6 @@ describe('Engine', () => {
       await engine.init()
 
       let frameCallback: FrameRequestCallback | null = null
-      let lastTime = 0
 
       vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
         frameCallback = cb

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { PhoenixClient, type PhoenixConfig, type RoomState, type GameEvent, type PlayerInput } from './PhoenixClient'
+import { PhoenixClient, type PhoenixConfig, type RoomState, type PlayerInput } from './PhoenixClient'
 
 // The phoenix module is mocked via vitest.config.ts alias
 // Tests here are simplified to work with the class-based mock

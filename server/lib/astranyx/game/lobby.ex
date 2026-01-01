@@ -59,7 +59,8 @@ defmodule Astranyx.Game.Lobby do
         id: room_id,
         host: host_player_id,
         players: [host_player_id],
-        status: :waiting,  # :waiting | :starting | :playing
+        # :waiting | :starting | :playing
+        status: :waiting,
         created_at: System.system_time(:millisecond)
       }
 

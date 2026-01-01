@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { Boot, type LoadingState } from './Boot'
+import { Boot } from './Boot'
 
 describe('Boot', () => {
   let boot: Boot

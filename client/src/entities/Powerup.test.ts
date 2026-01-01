@@ -1,10 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import {
-  Powerup,
-  POWERUP_EFFECTS,
-  ALL_POWERUP_TYPES,
-  type PowerupType,
-} from './Powerup.ts'
+import { Powerup, POWERUP_EFFECTS, ALL_POWERUP_TYPES } from './Powerup.ts'
 
 describe('Powerup', () => {
   let powerup: Powerup

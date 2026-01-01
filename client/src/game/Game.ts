@@ -1,7 +1,7 @@
 import type { Renderer, MeshHandle } from '../core/Renderer.ts'
 import type { Input } from '../core/Input.ts'
-import { Simulation, type EnemyType, type BulletType, type PowerupType, type BossType } from './Simulation.ts'
-import { LockstepNetcode, type PlayerInput, type GameEvent } from '../network/LockstepNetcode.ts'
+import { Simulation } from './Simulation.ts'
+import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
 import { WEAPON_STATS, WEAPON_COLORS, AMMO_TYPE_COLORS, type WeaponType } from './Weapons.ts'
 import { HUD, type WeaponDropLabel, type EntityHealthBar } from '../ui/HUD.ts'
 
@@ -941,7 +941,7 @@ export class Game {
         }
         break
 
-      case 5: // FINAL
+      case 5: { // FINAL
         // Core with pulsing
         const finalCoreColor: [number, number, number, number] = boss.health / boss.maxHealth > 0.5
           ? [1, 0, 1, 1]
@@ -969,6 +969,7 @@ export class Game {
         this.renderer.drawQuad(x - size.w/2 - 15, y - 20, 10, 30, 14, [1, 0.3, 0.3, 1])
         this.renderer.drawQuad(x - size.w/2 - 15, y + 20, 10, 30, 14, [1, 0.3, 0.3, 1])
         break
+      }
     }
   }
 

@@ -8,7 +8,7 @@
  * 4. Set up LockstepNetcode when all peers connect
  */
 
-import { PhoenixClient, type RoomInfo, type RoomData, type GameStartingData } from './PhoenixClient.ts'
+import { PhoenixClient, type RoomInfo, type GameStartingData } from './PhoenixClient.ts'
 import { P2PManager } from './P2PManager.ts'
 import { LockstepNetcode } from './LockstepNetcode.ts'
 

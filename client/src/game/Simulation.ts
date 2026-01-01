@@ -1671,7 +1671,7 @@ export class Simulation {
     )
   }
 
-  private updateEnemyBehavior(enemy: Enemy, dt: number): void {
+  private updateEnemyBehavior(enemy: Enemy, _dt: number): void {
     const x = fromFixed(enemy.x)
     const topY = this.playBounds.getTopY(x)
     const bottomY = this.playBounds.getBottomY(x)

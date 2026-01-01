@@ -235,7 +235,7 @@ describe('Game', () => {
     it('should not update simulation when paused', () => {
       game.startLocalGame(1)
       const sim = game.getSimulation()
-      const initialFrame = sim?.getState().frame ?? 0
+      const _initialFrame = sim?.getState().frame ?? 0
 
       // Simulate pause press
       ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({

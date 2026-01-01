@@ -12,7 +12,8 @@ defmodule Astranyx.TurnCredentials do
   ```
   """
 
-  @default_ttl 3600  # 1 hour
+  # 1 hour
+  @default_ttl 3600
 
   @doc """
   Generate ephemeral TURN credentials for a user.

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import type { PlayerInput, GameStateSnapshot, GameEvent, EntityState } from './NetworkManager'
-import type { GameMessage } from './WebRTCClient'
 
 // NetworkManager directly instantiates WebRTCClient internally, making it hard to mock
 // These tests validate the exported type interfaces which is still valuable

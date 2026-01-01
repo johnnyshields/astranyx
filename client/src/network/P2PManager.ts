@@ -136,7 +136,7 @@ export class P2PManager {
 
   /**
    * Create peer connection and initiate handshake
-   * TLA+: StartConnecting action - connectionState[p] = "connecting"
+   * (WebRTC connection management, not modeled in TLA+)
    */
   private async connectToPeer(playerId: string): Promise<void> {
     if (this.peers.has(playerId)) return
@@ -216,7 +216,7 @@ export class P2PManager {
   private setupDataChannel(playerId: string, channel: RTCDataChannel): void {
     channel.binaryType = 'arraybuffer'
 
-    // TLA+: ConnectionEstablished action - connectionState[p] = "connected"
+    // Connection established (WebRTC management, not modeled in TLA+)
     channel.onopen = () => {
       console.log(`P2P: DataChannel to ${playerId} open`)
 

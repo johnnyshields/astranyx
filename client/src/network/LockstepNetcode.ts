@@ -329,7 +329,7 @@ export class LockstepNetcode {
 
   /**
    * Process received input from a peer.
-   * TLA+ model: DeliverMessage(msg) action in LockstepNetwork.tla
+   * TLA+ model: ReceiveInput(m) action in LockstepNetwork.tla
    * - Stores input in buffer for the specified frame
    * - Triggers frame advance check if we were waiting
    */

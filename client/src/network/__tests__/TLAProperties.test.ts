@@ -10,7 +10,7 @@
  * - LockstepNetwork.tla: ConnectedFrameBoundedDrift, NoAdvanceWithoutInputs
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it } from 'vitest'
 import * as fc from 'fast-check'
 import { LeaderElection } from '../LeaderElection.ts'
 import { InputBuffer } from '../InputBuffer.ts'
@@ -41,7 +41,7 @@ const electionActionArb = fc.oneof(
   })
 )
 
-type ElectionAction =
+type _ElectionAction =
   | { type: 'heartbeat' }
   | { type: 'timeout' }
   | { type: 'stepDown' }
@@ -143,7 +143,7 @@ describe('TLA+ LeaderElection Properties', () => {
           }
 
           // Verify: no term has more than one leader
-          for (const [term, leaders] of leadersByTerm) {
+          for (const [_term, leaders] of leadersByTerm) {
             if (leaders.length > 1) {
               return false // Invariant violated!
             }
@@ -161,7 +161,7 @@ describe('TLA+ LeaderElection Properties', () => {
       fc.property(
         peerSetArb,
         termArb,
-        (peerIds, initialTerm) => {
+        (peerIds, _initialTerm) => {
           if (peerIds.length < 2) return true
 
           const elections = createElections(peerIds)

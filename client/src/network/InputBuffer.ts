@@ -67,7 +67,7 @@ export class InputBuffer {
 
   /**
    * Store an input for a specific frame and player
-   * TLA+: StoreLocalInput (local) or DeliverMessage (remote)
+   * TLA+: SubmitInput (local) or ReceiveInput (remote)
    */
   storeInput(frameInput: FrameInput): void {
     let frameInputs = this.buffer.get(frameInput.frame)
@@ -97,7 +97,7 @@ export class InputBuffer {
 
   /**
    * Check if a frame has inputs from all players
-   * TLA+: HasAllInputs helper in LockstepNetwork.tla
+   * TLA+: inputsReceived = ConnectedPeers precondition in AdvanceFrame
    */
   hasAllInputs(frame: number): boolean {
     const frameInputs = this.buffer.get(frame)
@@ -133,7 +133,7 @@ export class InputBuffer {
   /**
    * Check for checksum mismatches at a frame
    * Returns array of mismatches: { playerId, localChecksum, remoteChecksum }
-   * TLA+: DetectDesync action in LockstepNetwork.tla
+   * TLA+: Desync action in LockstepNetwork.tla
    */
   checkDesync(frame: number, localPlayerId: string): Array<{
     playerId: string
@@ -247,7 +247,7 @@ export class InputBuffer {
 
   /**
    * Check that advancing frame is safe (all inputs received).
-   * TLA+: NoAdvanceWithoutInputs - precondition for AdvanceFrame action
+   * TLA+: AdvanceFrame precondition - HasAllInputs(p) in LockstepNetwork.tla
    *
    * @param frame Frame to check before advancing
    */
