@@ -3,7 +3,6 @@
   - [ ] Ships
   - [ ] Levels / Backgrounds
   - [ ] Bosses
-  - 
 
 - Game Mechanics
   - [ ] Level transitions
@@ -23,4 +22,3 @@ SIL Open Font License (OFL) 1.1
 
 - Makinas https://moji-waku.com/makinas/
 - free font
-

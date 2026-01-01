@@ -1,6 +1,17 @@
 # Project: Astranyx
 
-2.5D multiplayer shoot-em-up game inspired by R-Type, Einhänder, Gradius, Ikaruga, and Radiant Silvergun.
+2.5D multiplayer shoot-em-up game.
+
+## Inspirations
+
+Inspired by popular arcade and console shooters:
+- R-Type
+- Gradius / Parodius
+- Einhänder
+- Ikaruga
+- Radiant Silvergun
+- Starfox
+- Rogue Squadron
 
 ## Tech Stack
 
