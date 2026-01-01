@@ -1,24 +1,19 @@
 #!/bin/bash
 # Run TLC model checker on lockstep specifications
 #
-# Models:
-#   LeaderElection  - Raft election, term safety, majority voting (~114M states)
-#   LockstepSimple  - Frame sync, basic events, leader authority (~159M states)
-#   LockstepState   - Event ownership, syncTerm validation, desync recovery (~50M states)
-#   LockstepNetwork - Message loss, peer lifecycle, checksum detection (~TBD states)
+# Models are auto-detected by finding MC*.tla files in the tla/ directory.
 #
 # Usage:
-#   ./run_tlc.sh                              # Run all models (default)
-#   ./run_tlc.sh -m LeaderElection            # Run single model
-#   ./run_tlc.sh -m LeaderElection,LockstepSimple  # Run specific models
-#   ./run_tlc.sh --force                      # Force re-run ignoring cache
-#   ./run_tlc.sh --max                        # Use maximum resources (75% mem, 90% cpu)
-#   ./run_tlc.sh --ci                         # CI mode: hash check + sanity checks (30s each)
-#   ./run_tlc.sh -x, --hash-check             # Hash check: fail if any hashes missing
-#   ./run_tlc.sh -s, --sanity                 # Sanity check: run each model for 30s, report failures
-#   ./run_tlc.sh -f, --fail-fast              # Stop on first failure (default: continue and report all)
-#   ./run_tlc.sh -d, --download-jar           # Auto-download TLC jar to tla/tmp if missing
-#   ./run_tlc.sh --jar ~/tla2tools.jar        # Specify path to tla2tools.jar
+#   ./run_tlc.sh                   # Run all models (default)
+#   ./run_tlc.sh Model1 Model2     # Run specific model(s)
+#   ./run_tlc.sh -f, --force       # Force re-run ignoring .tlc_passed hashes
+#   ./run_tlc.sh --max             # Use maximum resources (75% mem, 90% cpu)
+#   ./run_tlc.sh --ci              # CI mode: hash check + sanity checks (30s each)
+#   ./run_tlc.sh -k, --hash-check  # Hash check: fail if any hashes missing
+#   ./run_tlc.sh -s, --sanity      # Sanity check: run each model for 30s, report failures
+#   ./run_tlc.sh -x, --fail-fast   # Stop on first failure (default: continue and report all)
+#   ./run_tlc.sh -d, --download-jar     # Auto-download TLC jar to tla/tmp if missing
+#   ./run_tlc.sh --jar ~/tla2tools.jar  # Specify path to tla2tools.jar
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PASSED_FILE="$SCRIPT_DIR/.tlc_passed"
@@ -26,8 +21,23 @@ TMP_DIR="$SCRIPT_DIR/tmp"
 
 mkdir -p "$TMP_DIR"
 
-# All available models
-ALL_MODELS="LeaderElection,LockstepSimple,LockstepState,LockstepNetwork"
+# Auto-detect all models by finding MC*.tla files (strips MC prefix and .tla suffix)
+# Searches current dir and subdirs
+detect_models() {
+    local models=""
+    while IFS= read -r -d '' mc_file; do
+        local basename=$(basename "$mc_file" .tla)
+        local model_name=${basename#MC}  # Remove MC prefix
+        if [[ -z "$models" ]]; then
+            models="$model_name"
+        else
+            models="$models,$model_name"
+        fi
+    done < <(find "$SCRIPT_DIR" -name "MC*.tla" -print0 2>/dev/null | sort -z)
+    echo "$models"
+}
+
+ALL_MODELS=$(detect_models)
 
 # Parse arguments
 FORCE=false
@@ -38,17 +48,22 @@ SANITY_MODE=false
 FAIL_FAST=false
 DOWNLOAD_JAR=false
 TLC_JAR=""
-MODEL_LIST=""
-ARGS=()
+MODEL_ARGS=()
+
+show_help() {
+    head -16 "$0" | tail -11
+    exit 0
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --force) FORCE=true; shift ;;
+        -h|--help) show_help ;;
+        -f|--force) FORCE=true; shift ;;
         --max) MAX_RESOURCES=true; shift ;;
         --ci) CI_MODE=true; shift ;;
-        -x|--hash-check) HASH_CHECK_ONLY=true; shift ;;
+        -k|--hash-check) HASH_CHECK_ONLY=true; shift ;;
         -s|--sanity) SANITY_MODE=true; shift ;;
-        -f|--fail-fast) FAIL_FAST=true; shift ;;
+        -x|--fail-fast) FAIL_FAST=true; shift ;;
         -d|--download-jar) DOWNLOAD_JAR=true; shift ;;
         --jar)
             TLC_JAR="$2"
@@ -58,16 +73,20 @@ while [[ $# -gt 0 ]]; do
             TLC_JAR="${1#*=}"
             shift
             ;;
-        -m|--model)
-            MODEL_LIST="$2"
-            shift 2
-            ;;
-        -m=*|--model=*)
-            MODEL_LIST="${1#*=}"
-            shift
-            ;;
-        *) ARGS+=("$1"); shift ;;
+        -*) echo "Unknown option: $1"; exit 1 ;;
+        *) MODEL_ARGS+=("$1"); shift ;;
     esac
+done
+
+# Build MODEL_LIST from positional arguments (supports space-sep and comma-sep)
+MODEL_LIST=""
+for arg in "${MODEL_ARGS[@]}"; do
+    if [[ -z "$MODEL_LIST" ]]; then
+        MODEL_LIST="$arg"
+    else
+        # Convert spaces to commas for unified handling
+        MODEL_LIST="$MODEL_LIST,$arg"
+    fi
 done
 
 # Default to all models if none specified
@@ -338,7 +357,8 @@ run_model() {
         WORKERS="-workers auto"
     fi
 
-    if java -XX:+UseParallelGC \
+    local TLC_OUTPUT
+    TLC_OUTPUT=$(java -XX:+UseParallelGC \
          -Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.OffHeapDiskFPSet \
          $HEAP \
          -jar "$TLC_JAR" \
@@ -347,10 +367,37 @@ run_model() {
          -lncheck final \
          -cleanup \
          $WORKERS \
-         "${ARGS[@]}" \
-         "MC${SPEC_NAME}.tla"; then
-        # Record successful run immediately after TLC passes
-        echo "$HASH  $SPEC_NAME  $(date -Iseconds)" >> "$PASSED_FILE"
+         "MC${SPEC_NAME}.tla" 2>&1 | tee /dev/stderr)
+    local TLC_EXIT=${PIPESTATUS[0]}
+
+    if [[ $TLC_EXIT -eq 0 ]]; then
+        # Parse state counts from TLC output
+        # Format: "46895806 states generated, 5602527 distinct states found, 0 states left on queue."
+        local STATES_LINE=$(echo "$TLC_OUTPUT" | grep -E "^[0-9]+ states generated")
+        local STATES_GENERATED=""
+        local STATES_DISTINCT=""
+        if [[ -n "$STATES_LINE" ]]; then
+            STATES_GENERATED=$(echo "$STATES_LINE" | sed -E 's/^([0-9]+) states generated.*/\1/')
+            STATES_DISTINCT=$(echo "$STATES_LINE" | sed -E 's/.*[^0-9]([0-9]+) distinct states found.*/\1/')
+        fi
+
+        # Parse graph depth from TLC output
+        # Format: "The depth of the complete state graph search is 32."
+        local DEPTH_LINE=$(echo "$TLC_OUTPUT" | grep -E "^The depth of the complete state graph search is")
+        local GRAPH_DEPTH=""
+        if [[ -n "$DEPTH_LINE" ]]; then
+            GRAPH_DEPTH=$(echo "$DEPTH_LINE" | sed -E 's/.*is ([0-9]+)\..*/\1/')
+        fi
+
+        # Record successful run with state counts and depth
+        local RECORD="$HASH  $SPEC_NAME  $(date -Iseconds)"
+        if [[ -n "$STATES_GENERATED" ]] && [[ -n "$STATES_DISTINCT" ]]; then
+            RECORD="$RECORD  states_generated=$STATES_GENERATED  states_distinct=$STATES_DISTINCT"
+        fi
+        if [[ -n "$GRAPH_DEPTH" ]]; then
+            RECORD="$RECORD  graph_depth=$GRAPH_DEPTH"
+        fi
+        echo "$RECORD" >> "$PASSED_FILE"
         echo "[$SPEC_NAME] PASSED - hash recorded: ${HASH:0:16}..."
         echo ""
         return 0
