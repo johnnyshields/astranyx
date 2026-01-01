@@ -4,14 +4,13 @@
 # Models are auto-detected by finding MC*.tla files in the tla/ directory.
 #
 # Usage:
-#   ./run_tlc.sh                   # Run all models (default)
-#   ./run_tlc.sh Model1 Model2     # Run specific model(s)
-#   ./run_tlc.sh -f, --force       # Force re-run ignoring .tlc_passed hashes
-#   ./run_tlc.sh --max             # Use maximum resources (75% mem, 90% cpu)
-#   ./run_tlc.sh --ci              # CI mode: hash check + sanity checks (30s each)
-#   ./run_tlc.sh -k, --hash-check  # Hash check: fail if any hashes missing
-#   ./run_tlc.sh -s, --sanity      # Sanity check: run each model for 30s, report failures
-#   ./run_tlc.sh -x, --fail-fast   # Stop on first failure (default: continue and report all)
+#   ./run_tlc.sh                        # Run all models (default)
+#   ./run_tlc.sh Model1 Model2          # Run specific model(s)
+#   ./run_tlc.sh -f, --force            # Force re-run ignoring .tlc_passed hashes
+#   ./run_tlc.sh -k, --hash-check       # Hash check: fail if any hashes missing
+#   ./run_tlc.sh -s, --sanity           # Sanity check: run each model for 30s
+#   ./run_tlc.sh -x, --fail-fast        # Stop on first failure
+#   ./run_tlc.sh --ci                   # CI mode: hash check + sanity checks (30s each)
 #   ./run_tlc.sh -d, --download-jar     # Auto-download TLC jar to tla/tmp if missing
 #   ./run_tlc.sh --jar ~/tla2tools.jar  # Specify path to tla2tools.jar
 
@@ -41,7 +40,6 @@ ALL_MODELS=$(detect_models)
 
 # Parse arguments
 FORCE=false
-MAX_RESOURCES=false
 CI_MODE=false
 HASH_CHECK_ONLY=false
 SANITY_MODE=false
@@ -51,7 +49,7 @@ TLC_JAR=""
 MODEL_ARGS=()
 
 show_help() {
-    head -16 "$0" | tail -11
+    head -15 "$0" | tail -10
     exit 0
 }
 
@@ -59,7 +57,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) show_help ;;
         -f|--force) FORCE=true; shift ;;
-        --max) MAX_RESOURCES=true; shift ;;
         --ci) CI_MODE=true; shift ;;
         -k|--hash-check) HASH_CHECK_ONLY=true; shift ;;
         -s|--sanity) SANITY_MODE=true; shift ;;
@@ -322,40 +319,21 @@ run_model() {
     echo "[$SPEC_NAME] Running TLC model checker..."
     echo ""
 
-    # Resource configuration
-    if [[ "$MAX_RESOURCES" == "true" ]]; then
-        # --max: Use most available resources (75% mem, 90% cpu)
-        if [[ -f /proc/meminfo ]]; then
-            TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-            TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
-        elif command -v sysctl &> /dev/null; then
-            # macOS
-            TOTAL_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
-            TOTAL_MEM_GB=$((TOTAL_MEM_BYTES / 1024 / 1024 / 1024))
-        else
-            TOTAL_MEM_GB=8
-        fi
-        HEAP_GB=$((TOTAL_MEM_GB * 75 / 100))
-        [[ $HEAP_GB -lt 4 ]] && HEAP_GB=4
-        HEAP="-Xmx${HEAP_GB}g"
-
-        if command -v nproc &> /dev/null; then
-            NUM_CPUS=$(nproc)
-        elif command -v sysctl &> /dev/null; then
-            NUM_CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-        else
-            NUM_CPUS=4
-        fi
-        NUM_WORKERS=$((NUM_CPUS * 90 / 100))
-        [[ $NUM_WORKERS -lt 2 ]] && NUM_WORKERS=2
-        WORKERS="-workers $NUM_WORKERS"
-
-        echo "[$SPEC_NAME] Using MAX resources: ${HEAP_GB}GB heap, $NUM_WORKERS workers"
+    # Resource configuration: use 75% of available memory, auto workers
+    if [[ -f /proc/meminfo ]]; then
+        TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+        TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+    elif command -v sysctl &> /dev/null; then
+        # macOS
+        TOTAL_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+        TOTAL_MEM_GB=$((TOTAL_MEM_BYTES / 1024 / 1024 / 1024))
     else
-        # Default: Conservative settings
-        HEAP="-Xmx4g"
-        WORKERS="-workers auto"
+        TOTAL_MEM_GB=8
     fi
+    HEAP_GB=$((TOTAL_MEM_GB * 75 / 100))
+    [[ $HEAP_GB -lt 4 ]] && HEAP_GB=4
+    HEAP="-Xmx${HEAP_GB}g"
+    WORKERS="-workers auto"
 
     local TLC_OUTPUT
     TLC_OUTPUT=$(java -XX:+UseParallelGC \
