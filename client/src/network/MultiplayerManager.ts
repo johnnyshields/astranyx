@@ -11,6 +11,7 @@
 import { PhoenixClient, type RoomInfo, type GameStartingData } from './PhoenixClient.ts'
 import { P2PManager } from './P2PManager.ts'
 import { LockstepNetcode } from './LockstepNetcode.ts'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 export type MultiplayerState =
   | 'disconnected'
@@ -152,7 +153,7 @@ export class MultiplayerManager {
       this.notifyLobbyUpdate()
       return rooms
     } catch (error) {
-      console.error('Failed to list rooms:', error)
+      SafeConsole.error('Failed to list rooms:', error)
       return []
     }
   }
@@ -277,7 +278,7 @@ export class MultiplayerManager {
   }
 
   private handleGameStarting(data: GameStartingData): void {
-    console.log('Game starting with data:', data)
+    SafeConsole.log('Game starting with data:', data)
 
     this.gameStartData = data
     this.expectedPlayers = data.room.players
@@ -289,10 +290,10 @@ export class MultiplayerManager {
 
     // Set TURN credentials if provided (secure, only at game start)
     if (data.turn) {
-      console.log('Using TURN credentials from server')
+      SafeConsole.log('Using TURN credentials from server')
       this.p2p.setIceServers(data.turn.urls, data.turn.username, data.turn.credential)
     } else {
-      console.warn('No TURN credentials provided - STUN only')
+      SafeConsole.warn('No TURN credentials provided - STUN only')
     }
 
     // Set up signaling channel
@@ -316,14 +317,14 @@ export class MultiplayerManager {
 
     // Set up P2P connection handlers
     this.p2p.onConnected((playerId, channel) => {
-      console.log(`Peer connected: ${playerId}`)
+      SafeConsole.log(`Peer connected: ${playerId}`)
       this.connectedPeers.add(playerId)
       this.netcode!.addPeer(playerId, channel)
       this.checkAllPeersConnected()
     })
 
     this.p2p.onDisconnected((playerId) => {
-      console.log(`Peer disconnected: ${playerId}`)
+      SafeConsole.log(`Peer disconnected: ${playerId}`)
       this.connectedPeers.delete(playerId)
       this.netcode?.removePeer(playerId)
     })
@@ -340,7 +341,7 @@ export class MultiplayerManager {
       this.peerConnectionTimeoutId = setTimeout(() => {
         if (this.state === 'connecting_peers') {
           const missing = otherPlayers.filter(p => !this.connectedPeers.has(p))
-          console.error('Peer connection timeout. Missing peers:', missing)
+          SafeConsole.error('Peer connection timeout. Missing peers:', missing)
           this.handleError(new Error(`Failed to connect to peers: ${missing.join(', ')}`))
         }
       }, timeout)
@@ -368,11 +369,11 @@ export class MultiplayerManager {
       try {
         const credentials = await this.phoenix?.refreshTurnCredentials()
         if (credentials && this.p2p) {
-          console.log('Refreshed TURN credentials')
+          SafeConsole.log('Refreshed TURN credentials')
           this.p2p.updateIceServers(credentials.urls, credentials.username, credentials.credential)
         }
       } catch (error) {
-        console.warn('Failed to refresh TURN credentials:', error)
+        SafeConsole.warn('Failed to refresh TURN credentials:', error)
       }
     }, MultiplayerManager.CREDENTIAL_REFRESH_INTERVAL)
   }
@@ -390,7 +391,7 @@ export class MultiplayerManager {
 
     // Check if we have all peer connections
     if (this.connectedPeers.size >= otherPlayers.length) {
-      console.log('All peers connected!')
+      SafeConsole.log('All peers connected!')
 
       // Clear the timeout since we connected successfully
       this.clearPeerConnectionTimeout()
@@ -460,7 +461,7 @@ export class MultiplayerManager {
   private setState(newState: MultiplayerState): void {
     if (this.state === newState) return
 
-    console.log(`MultiplayerManager: ${this.state} → ${newState}`)
+    SafeConsole.log(`MultiplayerManager: ${this.state} → ${newState}`)
     this.state = newState
 
     for (const handler of this.stateChangeHandlers) {
@@ -475,7 +476,7 @@ export class MultiplayerManager {
   }
 
   private handleError(error: Error): void {
-    console.error('MultiplayerManager error:', error)
+    SafeConsole.error('MultiplayerManager error:', error)
     this.setState('error')
 
     for (const handler of this.errorHandlers) {

@@ -15,6 +15,7 @@ import { MultiplayerManager, type MultiplayerState } from './network/Multiplayer
 import { LobbyUI } from './ui/LobbyUI.ts'
 import type { Engine } from './core/Engine.ts'
 import type { Game } from './game/Game.ts'
+import { SafeConsole } from './core/SafeConsole.ts'
 
 // Server URL - configurable via environment or auto-detect
 function getServerUrl(): string {
@@ -40,7 +41,7 @@ async function main() {
 
   // Optional: Add progress listener for custom UI
   boot.onProgress((state) => {
-    console.log(`[Boot] ${state.phase}: ${state.progress}% - ${state.message}`)
+    SafeConsole.log(`[Boot] ${state.phase}: ${state.progress}% - ${state.message}`)
   })
 
   try {
@@ -80,12 +81,12 @@ async function main() {
     // Setup multiplayer after engine is ready
     setupMultiplayer(engine)
 
-    console.log('ASTRANYX initialized')
+    SafeConsole.log('ASTRANYX initialized')
 
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
     boot.showError(`INITIALIZATION FAILED: ${message}`)
-    console.error('Failed to initialize:', error)
+    SafeConsole.error('Failed to initialize:', error)
   }
 }
 
@@ -151,7 +152,7 @@ function setupMultiplayer(engine: Engine): void {
         const rooms = await multiplayer.listRooms()
         lobbyUI?.updateRoomList(rooms)
       } catch (error) {
-        console.error('Failed to refresh rooms:', error)
+        SafeConsole.error('Failed to refresh rooms:', error)
       }
     },
 
@@ -190,7 +191,7 @@ function setupMultiplayer(engine: Engine): void {
     })
 
     multiplayer.onError((error) => {
-      console.error('Multiplayer error:', error)
+      SafeConsole.error('Multiplayer error:', error)
       lobbyUI?.showError(error.message)
     })
 
@@ -208,7 +209,7 @@ function setupMultiplayer(engine: Engine): void {
       lobbyUI?.updateRoomList(rooms)
     } catch (error) {
       lobbyUI?.showError('Failed to connect to server. Local play still available.')
-      console.error('Failed to connect:', error)
+      SafeConsole.error('Failed to connect:', error)
     }
   })
 }
@@ -222,7 +223,7 @@ function handleMultiplayerStateChange(
   lobbyUI: LobbyUI,
   _game: Game
 ): void {
-  console.log('Multiplayer state:', state)
+  SafeConsole.log('Multiplayer state:', state)
 
   switch (state) {
     case 'connecting':
@@ -285,7 +286,7 @@ function startMultiplayerGame(
 ): void {
   const netcode = multiplayer.getNetcode()
   if (!netcode) {
-    console.error('No netcode available')
+    SafeConsole.error('No netcode available')
     return
   }
 
@@ -294,13 +295,13 @@ function startMultiplayerGame(
 
   // Set up chat/voice handlers
   game.setChatHandler(() => {
-    console.log('Chat opened (C key) - TODO: implement chat UI')
+    SafeConsole.log('Chat opened (C key) - TODO: implement chat UI')
     // TODO: Implement text chat UI
     // Could use WebRTC data channel for P2P chat messages
   })
 
   game.setVoiceToggleHandler((enabled) => {
-    console.log(`Voice ${enabled ? 'enabled' : 'disabled'} (V key) - TODO: implement voice chat`)
+    SafeConsole.log(`Voice ${enabled ? 'enabled' : 'disabled'} (V key) - TODO: implement voice chat`)
     // TODO: Implement WebRTC voice chat
     // Would need to request microphone access and set up audio tracks
   })
@@ -317,7 +318,7 @@ function startMultiplayerGame(
   // Mark multiplayer as playing
   multiplayer.setPlaying()
 
-  console.log('Multiplayer game started!')
+  SafeConsole.log('Multiplayer game started!')
 }
 
 // Start the application

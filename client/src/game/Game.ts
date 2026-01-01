@@ -4,6 +4,7 @@ import { Simulation } from './Simulation.ts'
 import { LockstepNetcode, type PlayerInput } from '../network/LockstepNetcode.ts'
 import { WEAPON_STATS, WEAPON_COLORS, AMMO_TYPE_COLORS, type WeaponType } from './Weapons.ts'
 import { HUD, type WeaponDropLabel, type EntityHealthBar } from '../ui/HUD.ts'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 // Mesh file paths
 const MESH_PATHS = {
@@ -265,7 +266,7 @@ export class Game {
     // Show title screen
     this.state = 'title'
 
-    console.log('Game initialized with 3D meshes')
+    SafeConsole.log('Game initialized with 3D meshes')
   }
 
   startLocalGame(numPlayers: number): void {
@@ -285,7 +286,7 @@ export class Game {
     this.simulation = new Simulation(this.playerIds)
     this.state = 'playing'
 
-    console.log(`${numPlayers} player local mode started`)
+    SafeConsole.log(`${numPlayers} player local mode started`)
   }
 
   restartGame(): void {
@@ -377,37 +378,37 @@ export class Game {
 
     // Set up desync handler for debugging
     netcode.setDesyncHandler((frame, localChecksum, remoteChecksum) => {
-      console.error('=== DESYNC DETECTED ===')
-      console.error(`Frame: ${frame}`)
-      console.error(`Local checksum: ${localChecksum}`)
-      console.error(`Remote checksum: ${remoteChecksum}`)
+      SafeConsole.error('=== DESYNC DETECTED ===')
+      SafeConsole.error(`Frame: ${frame}`)
+      SafeConsole.error(`Local checksum: ${localChecksum}`)
+      SafeConsole.error(`Remote checksum: ${remoteChecksum}`)
       if (this.simulation) {
-        console.error('Local state:', this.simulation.getDebugState())
+        SafeConsole.error('Local state:', this.simulation.getDebugState())
       }
     })
 
     // Set up state sync handler (for non-hosts to receive authoritative state)
     netcode.setStateSyncHandler((state, frame, pendingEvents) => {
-      console.log(`Applying state sync from frame ${frame}`)
+      SafeConsole.log(`Applying state sync from frame ${frame}`)
       if (this.simulation) {
         // Apply authoritative state from host
         this.simulation.applyState(state as import('./Simulation.ts').SerializedState)
 
         // Re-apply pending local events (pickups, damage, etc. that occurred locally)
         if (pendingEvents.length > 0) {
-          console.log(`Re-applying ${pendingEvents.length} pending local events`)
+          SafeConsole.log(`Re-applying ${pendingEvents.length} pending local events`)
           this.simulation.applyEvents(pendingEvents)
         }
 
         this.currentState = this.simulation.getState()
-        console.log('State sync applied, new frame:', this.simulation.getState().frame)
+        SafeConsole.log('State sync applied, new frame:', this.simulation.getState().frame)
       }
     })
 
     netcode.start()
     this.state = 'playing'
 
-    console.log('Multiplayer mode started with players:', playerIds)
+    SafeConsole.log('Multiplayer mode started with players:', playerIds)
   }
 
   resize(width: number, height: number): void {

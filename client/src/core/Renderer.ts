@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { WebGPURenderer } from 'three/webgpu'
 import type { MeshData } from '../graphics/MeshGenerator.ts'
+import { SafeConsole } from './SafeConsole.ts'
 
 export interface MeshHandle {
   geometry: THREE.BufferGeometry
@@ -64,7 +65,7 @@ export class Renderer {
     // Check if WebGPU backend is active
     const backend = this.renderer.backend as { isWebGPUBackend?: boolean }
     const isWebGPU = backend.isWebGPUBackend === true
-    console.log(`Three.js Renderer initialized (${isWebGPU ? 'WebGPU' : 'WebGL'} backend)`)
+    SafeConsole.log(`Three.js Renderer initialized (${isWebGPU ? 'WebGPU' : 'WebGL'} backend)`)
 
     // Scene setup
     this.scene = new THREE.Scene()
@@ -275,7 +276,7 @@ export class Renderer {
     const positions = new Float32Array(binChunk, posView.byteOffset, posAccessor.count * 3)
     const normals = new Float32Array(binChunk, normalView.byteOffset, normalAccessor.count * 3)
 
-    console.log(`Loaded ${name}: ${posAccessor.count} vertices`)
+    SafeConsole.log(`Loaded ${name}: ${posAccessor.count} vertices`)
 
     // Create Three.js BufferGeometry with separate position and normal attributes
     const geometry = new THREE.BufferGeometry()

@@ -1,3 +1,5 @@
+import { SafeConsole } from './SafeConsole.ts'
+
 export interface InputState {
   up: boolean
   down: boolean
@@ -87,12 +89,12 @@ export class Input {
   }
 
   private onGamepadConnected = (e: GamepadEvent): void => {
-    console.log('Gamepad connected:', e.gamepad.id)
+    SafeConsole.log('Gamepad connected:', e.gamepad.id)
     this.gamepadIndex = e.gamepad.index
   }
 
   private onGamepadDisconnected = (e: GamepadEvent): void => {
-    console.log('Gamepad disconnected:', e.gamepad.id)
+    SafeConsole.log('Gamepad disconnected:', e.gamepad.id)
     if (this.gamepadIndex === e.gamepad.index) {
       this.gamepadIndex = null
     }

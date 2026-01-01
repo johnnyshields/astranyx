@@ -19,6 +19,7 @@
 
 import type { StateSyncMessage, GameEvent } from './types.ts'
 import type { LocalEventQueue } from './LocalEventQueue.ts'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 export interface StateSyncManagerConfig {
   syncInterval: number        // Frames between syncs (default: 300 = 5 seconds)
@@ -158,7 +159,7 @@ export class StateSyncManager {
   receiveSyncMessage(message: StateSyncMessage): GameEvent[] {
     // Validate term - only accept syncs from current or higher term
     if (message.term < this.currentTerm) {
-      console.warn(`StateSyncManager: Ignoring sync from old term ${message.term} (current: ${this.currentTerm})`)
+      SafeConsole.warn(`StateSyncManager: Ignoring sync from old term ${message.term} (current: ${this.currentTerm})`)
       return []
     }
 
@@ -167,7 +168,7 @@ export class StateSyncManager {
       this.currentTerm = message.term
     }
 
-    console.log(`StateSyncManager: Applying sync from frame ${message.frame}, term ${message.term}`)
+    SafeConsole.log(`StateSyncManager: Applying sync from frame ${message.frame}, term ${message.term}`)
 
     // Get pending events to re-apply from event queue
     let pendingEvents: GameEvent[] = []

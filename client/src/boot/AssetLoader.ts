@@ -3,6 +3,8 @@
  * Handles progressive loading of images, audio, and other assets
  */
 
+import { SafeConsole } from '../core/SafeConsole.ts'
+
 export interface AssetManifest {
   images?: string[]
   audio?: string[]
@@ -126,7 +128,7 @@ export class AssetLoader {
         assetCache.setImage(src, img)
         reportProgress(src)
       } catch (e) {
-        console.warn(`Failed to load image: ${src}`, e)
+        SafeConsole.warn(`Failed to load image: ${src}`, e)
         reportProgress(src)
       }
     }
@@ -138,7 +140,7 @@ export class AssetLoader {
         assetCache.setAudio(src, aud)
         reportProgress(src)
       } catch (e) {
-        console.warn(`Failed to load audio: ${src}`, e)
+        SafeConsole.warn(`Failed to load audio: ${src}`, e)
         reportProgress(src)
       }
     }
@@ -179,7 +181,7 @@ export class AssetLoader {
           const img = await loadImage(src)
           assetCache.setImage(src, img)
         } catch (e) {
-          console.warn(`Failed to load image: ${src}`, e)
+          SafeConsole.warn(`Failed to load image: ${src}`, e)
         }
         reportProgress(src)
       })
@@ -191,7 +193,7 @@ export class AssetLoader {
           const aud = await loadAudio(src)
           assetCache.setAudio(src, aud)
         } catch (e) {
-          console.warn(`Failed to load audio: ${src}`, e)
+          SafeConsole.warn(`Failed to load audio: ${src}`, e)
         }
         reportProgress(src)
       })

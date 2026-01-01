@@ -3,6 +3,7 @@
  */
 
 import { Socket, Channel } from 'phoenix'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 export interface PhoenixConfig {
   url: string
@@ -133,13 +134,13 @@ export class PhoenixClient {
         if (!settled) {
           settled = true
           cleanup()
-          console.log('Phoenix: Connected')
+          SafeConsole.log('Phoenix: Connected')
 
           // Auto-join lobby channel for room listing
           try {
             await this.joinLobby()
           } catch (e) {
-            console.warn('Failed to join lobby channel:', e)
+            SafeConsole.warn('Failed to join lobby channel:', e)
           }
 
           resolve(this.playerId)
@@ -150,13 +151,13 @@ export class PhoenixClient {
         if (!settled) {
           settled = true
           cleanup()
-          console.error('Phoenix: Connection error', error)
+          SafeConsole.error('Phoenix: Connection error', error)
           reject(new Error('Failed to connect to server'))
         }
       })
 
       this.socket.onClose(() => {
-        console.log('Phoenix: Disconnected')
+        SafeConsole.log('Phoenix: Disconnected')
       })
 
       this.socket.connect()
@@ -174,7 +175,7 @@ export class PhoenixClient {
       this.lobbyChannel
         .join()
         .receive('ok', () => {
-          console.log('Joined lobby channel')
+          SafeConsole.log('Joined lobby channel')
           resolve()
         })
         .receive('error', (error: { reason: string }) => {
@@ -206,7 +207,7 @@ export class PhoenixClient {
       })
 
       this.roomChannel.on('player_joined', (payload: { player_id: string; players: string[] }) => {
-        console.log('Player joined:', payload.player_id)
+        SafeConsole.log('Player joined:', payload.player_id)
         if (this.currentRoom) {
           this.currentRoom.players = payload.players
         }
@@ -216,7 +217,7 @@ export class PhoenixClient {
       })
 
       this.roomChannel.on('player_left', (payload: { player_id: string }) => {
-        console.log('Player left:', payload.player_id)
+        SafeConsole.log('Player left:', payload.player_id)
         if (this.currentRoom) {
           this.currentRoom.players = this.currentRoom.players.filter(p => p !== payload.player_id)
         }
@@ -226,7 +227,7 @@ export class PhoenixClient {
       })
 
       this.roomChannel.on('game_starting', (data: GameStartingData) => {
-        console.log('Game starting:', data)
+        SafeConsole.log('Game starting:', data)
         for (const handler of this.gameStartingHandlers) {
           handler(data)
         }
@@ -235,13 +236,13 @@ export class PhoenixClient {
       this.roomChannel
         .join()
         .receive('ok', (response: { room: RoomData; player_id: string }) => {
-          console.log('Joined room:', roomId)
+          SafeConsole.log('Joined room:', roomId)
           this.playerId = response.player_id
           this.currentRoom = response.room
           resolve(response.room)
         })
         .receive('error', (error: { reason: string }) => {
-          console.error('Failed to join room:', error)
+          SafeConsole.error('Failed to join room:', error)
           reject(new Error(error.reason))
         })
     })
@@ -258,7 +259,7 @@ export class PhoenixClient {
       this.signalingChannel
         .join()
         .receive('ok', () => {
-          console.log('Joined signaling channel:', roomId)
+          SafeConsole.log('Joined signaling channel:', roomId)
           resolve()
         })
         .receive('error', (error: { reason: string }) => {
@@ -366,7 +367,7 @@ export class PhoenixClient {
           resolve(response.turn)
         })
         .receive('error', (error: { reason: string }) => {
-          console.warn('Failed to refresh TURN credentials:', error.reason)
+          SafeConsole.warn('Failed to refresh TURN credentials:', error.reason)
           resolve(null)
         })
     })

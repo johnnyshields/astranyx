@@ -13,6 +13,7 @@
  */
 
 import type { Channel } from 'phoenix'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 export interface PeerConnection {
   playerId: string
@@ -141,7 +142,7 @@ export class P2PManager {
   private async connectToPeer(playerId: string): Promise<void> {
     if (this.peers.has(playerId)) return
 
-    console.log(`P2P: Connecting to ${playerId}`)
+    SafeConsole.log(`P2P: Connecting to ${playerId}`)
 
     const connection = this.createPeerConnection(playerId)
     const dataChannel = connection.createDataChannel('game', {
@@ -167,33 +168,33 @@ export class P2PManager {
   }
 
   private createPeerConnection(playerId: string): RTCPeerConnection {
-    console.log('P2P: Creating connection with ICE servers:', this.iceServers)
+    SafeConsole.log('P2P: Creating connection with ICE servers:', this.iceServers)
     const connection = new RTCPeerConnection({
       iceServers: this.iceServers,
     })
 
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('P2P: ICE candidate:', event.candidate.type, event.candidate.candidate)
+        SafeConsole.log('P2P: ICE candidate:', event.candidate.type, event.candidate.candidate)
         this.sendSignaling('ice_candidate', playerId, {
           candidate: event.candidate,
         })
       } else {
-        console.log('P2P: ICE gathering complete')
+        SafeConsole.log('P2P: ICE gathering complete')
       }
     }
 
     connection.onicegatheringstatechange = () => {
-      console.log('P2P: ICE gathering state:', connection.iceGatheringState)
+      SafeConsole.log('P2P: ICE gathering state:', connection.iceGatheringState)
     }
 
     connection.oniceconnectionstatechange = () => {
-      console.log('P2P: ICE connection state:', connection.iceConnectionState)
+      SafeConsole.log('P2P: ICE connection state:', connection.iceConnectionState)
     }
 
     connection.onconnectionstatechange = () => {
       const state = connection.connectionState
-      console.log(`P2P: Connection to ${playerId} is ${state}`)
+      SafeConsole.log(`P2P: Connection to ${playerId} is ${state}`)
 
       if (state === 'disconnected' || state === 'failed') {
         this.disconnectPeer(playerId)
@@ -218,7 +219,7 @@ export class P2PManager {
 
     // Connection established (WebRTC management, not modeled in TLA+)
     channel.onopen = () => {
-      console.log(`P2P: DataChannel to ${playerId} open`)
+      SafeConsole.log(`P2P: DataChannel to ${playerId} open`)
 
       const peer = this.peers.get(playerId)
       if (peer) {
@@ -228,12 +229,12 @@ export class P2PManager {
     }
 
     channel.onclose = () => {
-      console.log(`P2P: DataChannel to ${playerId} closed`)
+      SafeConsole.log(`P2P: DataChannel to ${playerId} closed`)
       this.disconnectPeer(playerId)
     }
 
     channel.onerror = (error) => {
-      console.error(`P2P: DataChannel error with ${playerId}`, error)
+      SafeConsole.error(`P2P: DataChannel error with ${playerId}`, error)
     }
   }
 
@@ -241,7 +242,7 @@ export class P2PManager {
     fromPlayerId: string,
     sdp: RTCSessionDescriptionInit
   ): Promise<void> {
-    console.log(`P2P: Received offer from ${fromPlayerId}`)
+    SafeConsole.log(`P2P: Received offer from ${fromPlayerId}`)
 
     let peer = this.peers.get(fromPlayerId)
 
@@ -267,7 +268,7 @@ export class P2PManager {
     fromPlayerId: string,
     sdp: RTCSessionDescriptionInit
   ): Promise<void> {
-    console.log(`P2P: Received answer from ${fromPlayerId}`)
+    SafeConsole.log(`P2P: Received answer from ${fromPlayerId}`)
 
     const peer = this.peers.get(fromPlayerId)
     if (peer) {

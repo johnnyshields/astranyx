@@ -319,9 +319,9 @@ export class LockstepNetcode {
     const mismatches = this.inputBuffer.checkDesync(frame, this.config.localPlayerId)
 
     for (const mismatch of mismatches) {
-      console.error(`DESYNC DETECTED at frame ${frame}!`)
-      console.error(`  Local checksum: ${mismatch.localChecksum}`)
-      console.error(`  Remote (${mismatch.playerId}) checksum: ${mismatch.remoteChecksum}`)
+      SafeConsole.error(`DESYNC DETECTED at frame ${frame}!`)
+      SafeConsole.error(`  Local checksum: ${mismatch.localChecksum}`)
+      SafeConsole.error(`  Remote (${mismatch.playerId}) checksum: ${mismatch.remoteChecksum}`)
       this.syncManager.markDesync()
       this.onDesync?.(frame, mismatch.localChecksum, mismatch.remoteChecksum)
     }
