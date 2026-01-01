@@ -45,6 +45,7 @@ EXTENDS Integers, FiniteSets
 CONSTANT Peer
 CONSTANT MaxFrame
 CONSTANT MaxTerm
+CONSTANT InitialLeader     \* First peer to be leader (typically the host)
 
 ----
 \* Variables (8 total - simplified from LockstepState's 10)
@@ -64,19 +65,18 @@ vars == <<frame, inputsReceived, currentTerm, state, votedFor, votesReceived, he
 \* Helpers
 
 IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
-MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 IsLeader(p) == state[p] = "Leader"
 
 ----
-\* Initial state
+\* Initial state - InitialLeader starts as leader, others as followers
 
 Init ==
     /\ frame = [p \in Peer |-> 0]
     /\ inputsReceived = {}
     /\ currentTerm = [p \in Peer |-> 0]
-    /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
+    /\ state = [p \in Peer |-> IF p = InitialLeader THEN "Leader" ELSE "Follower"]
+    /\ votedFor = [p \in Peer |-> IF p = InitialLeader THEN p ELSE 0]
     /\ votesReceived = [p \in Peer |-> {}]
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
     /\ hasPendingEvent = [p \in Peer |-> FALSE]

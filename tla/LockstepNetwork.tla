@@ -45,6 +45,7 @@ CONSTANT MaxFrame
 CONSTANT MaxTerm
 CONSTANT MaxEvents          \* Max pending events per peer
 CONSTANT MaxMessages        \* Max messages in network
+CONSTANT InitialLeader      \* First peer to be leader (typically the host)
 
 ----
 \* Variables
@@ -94,7 +95,6 @@ MsgTo(m) == m[3]
 \* Helpers
 
 IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
-MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
 IsLeader(p) == state[p] = "Leader"
 
@@ -114,11 +114,11 @@ PartitionPairs == {{p, q} : p, q \in Peer}
 \* Initial state
 
 Init ==
-    \* Protocol state
+    \* Protocol state - InitialLeader starts as leader
     /\ frame = [p \in Peer |-> 0]
     /\ currentTerm = [p \in Peer |-> 0]
-    /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
+    /\ state = [p \in Peer |-> IF p = InitialLeader THEN "Leader" ELSE "Follower"]
+    /\ votedFor = [p \in Peer |-> IF p = InitialLeader THEN p ELSE 0]
     /\ votesReceived = [p \in Peer |-> {}]
     /\ inputsReceived = {}
     /\ heartbeatReceived = [p \in Peer |-> TRUE]

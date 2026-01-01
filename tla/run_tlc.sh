@@ -94,7 +94,8 @@ if [[ "$HASH_CHECK_ONLY" == "true" ]]; then
             exit 1
         fi
 
-        HASH=$(cat "$SPEC_FILE" "$CONFIG_FILE" | sha256sum | cut -d' ' -f1)
+        MC_FILE="$SCRIPT_DIR/MC${model}.tla"
+        HASH=$(cat "$SPEC_FILE" "$MC_FILE" "$CONFIG_FILE" 2>/dev/null | sha256sum | cut -d' ' -f1)
 
         if [[ ! -f "$PASSED_FILE" ]] || ! grep -q "$HASH" "$PASSED_FILE"; then
             MISSING+=("$model")
@@ -133,7 +134,8 @@ if [[ "$CI_MODE" == "true" ]]; then
             exit 1
         fi
 
-        HASH=$(cat "$SPEC_FILE" "$CONFIG_FILE" | sha256sum | cut -d' ' -f1)
+        MC_FILE="$SCRIPT_DIR/MC${model}.tla"
+        HASH=$(cat "$SPEC_FILE" "$MC_FILE" "$CONFIG_FILE" 2>/dev/null | sha256sum | cut -d' ' -f1)
 
         if [[ ! -f "$PASSED_FILE" ]] || ! grep -q "$HASH" "$PASSED_FILE"; then
             MISSING+=("$model")
@@ -216,6 +218,7 @@ run_model_sanity() {
     local SPEC_NAME=$1
     local TIMEOUT=${2:-30}
     local SPEC_FILE="$SCRIPT_DIR/${SPEC_NAME}.tla"
+    local MC_FILE="$SCRIPT_DIR/MC${SPEC_NAME}.tla"
     local CONFIG_FILE="$SCRIPT_DIR/MC${SPEC_NAME}.cfg"
 
     if [[ ! -f "$SPEC_FILE" ]]; then
@@ -224,19 +227,26 @@ run_model_sanity() {
         return 1
     fi
 
+    if [[ ! -f "$MC_FILE" ]]; then
+        echo "Error: $MC_FILE not found"
+        FAILED_MODELS+=("$SPEC_NAME")
+        return 1
+    fi
+
     cd "$SCRIPT_DIR"
 
     echo "[$SPEC_NAME] Sanity check (${TIMEOUT}s timeout)..."
 
-    # Use conservative resources for sanity check
     local OUTPUT
     OUTPUT=$(timeout "${TIMEOUT}s" java -XX:+UseParallelGC \
          -Xmx4g \
+         -Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.OffHeapDiskFPSet \
          -jar "$TLC_JAR" \
          -config "MC${SPEC_NAME}.cfg" \
          -metadir "$TMP_DIR" \
          -workers auto \
-         "${SPEC_NAME}.tla" 2>&1) || true
+         -lncheck final \
+         "MC${SPEC_NAME}.tla" 2>&1) || true
 
     # Check for errors in output
     if echo "$OUTPUT" | grep -q "Error:"; then
@@ -258,6 +268,7 @@ run_model_sanity() {
 run_model() {
     local SPEC_NAME=$1
     local SPEC_FILE="$SCRIPT_DIR/${SPEC_NAME}.tla"
+    local MC_FILE="$SCRIPT_DIR/MC${SPEC_NAME}.tla"
     local CONFIG_FILE="$SCRIPT_DIR/MC${SPEC_NAME}.cfg"
 
     if [[ ! -f "$SPEC_FILE" ]]; then
@@ -269,8 +280,16 @@ run_model() {
         return 1
     fi
 
-    # Compute hash of spec + config
-    local HASH=$(cat "$SPEC_FILE" "$CONFIG_FILE" | sha256sum | cut -d' ' -f1)
+    if [[ ! -f "$MC_FILE" ]]; then
+        echo "Error: $MC_FILE not found"
+        FAILED_MODELS+=("$SPEC_NAME")
+        if [[ "$FAIL_FAST" == "true" ]]; then
+            exit 1
+        fi
+        return 1
+    fi
+
+    local HASH=$(cat "$SPEC_FILE" "$MC_FILE" "$CONFIG_FILE" | sha256sum | cut -d' ' -f1)
     echo "[$SPEC_NAME] Hash: ${HASH:0:16}..."
 
     # Check if already passed
@@ -320,13 +339,16 @@ run_model() {
     fi
 
     if java -XX:+UseParallelGC \
+         -Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.OffHeapDiskFPSet \
          $HEAP \
          -jar "$TLC_JAR" \
          -config "MC${SPEC_NAME}.cfg" \
          -metadir "$TMP_DIR" \
+         -lncheck final \
+         -cleanup \
          $WORKERS \
          "${ARGS[@]}" \
-         "${SPEC_NAME}.tla"; then
+         "MC${SPEC_NAME}.tla"; then
         # Record successful run immediately after TLC passes
         echo "$HASH  $SPEC_NAME  $(date -Iseconds)" >> "$PASSED_FILE"
         echo "[$SPEC_NAME] PASSED - hash recorded: ${HASH:0:16}..."

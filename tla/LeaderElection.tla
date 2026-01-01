@@ -16,6 +16,7 @@ EXTENDS Integers, FiniteSets
 CONSTANT Peer
 CONSTANT MaxTerm
 CONSTANT MaxFrame          \* For frame comparison in voting
+CONSTANT InitialLeader     \* First peer to be leader (typically the host)
 
 ----
 \* Variables
@@ -33,16 +34,15 @@ vars == <<currentTerm, state, votedFor, votesReceived, heartbeatReceived, frame>
 \* Helpers
 
 IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
-MinPeer == CHOOSE p \in Peer : \A q \in Peer : p <= q
 IsLeader(p) == state[p] = "Leader"
 
 ----
-\* Initial state - peer with lowest ID starts as leader
+\* Initial state - InitialLeader starts as leader, others as followers
 
 Init ==
     /\ currentTerm = [p \in Peer |-> 0]
-    /\ state = [p \in Peer |-> IF p = MinPeer THEN "Leader" ELSE "Follower"]
-    /\ votedFor = [p \in Peer |-> IF p = MinPeer THEN p ELSE 0]  \* Initial leader voted for self
+    /\ state = [p \in Peer |-> IF p = InitialLeader THEN "Leader" ELSE "Follower"]
+    /\ votedFor = [p \in Peer |-> IF p = InitialLeader THEN p ELSE 0]
     /\ votesReceived = [p \in Peer |-> {}]
     /\ heartbeatReceived = [p \in Peer |-> TRUE]
     /\ frame = [p \in Peer |-> 0]
