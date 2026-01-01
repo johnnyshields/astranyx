@@ -59,7 +59,8 @@ defmodule Astranyx.Game.Lobby do
         id: room_id,
         host: host_player_id,
         players: [host_player_id],
-        status: :waiting,  # :waiting | :starting | :playing
+        # :waiting | :starting | :playing
+        status: :waiting,
         created_at: System.system_time(:millisecond)
       }
 
@@ -100,13 +101,13 @@ defmodule Astranyx.Game.Lobby do
     rooms =
       state.rooms
       |> Map.values()
-      |> Enum.filter(&(&1.status == :waiting))
       |> Enum.map(fn room ->
         %{
           id: room.id,
           host: room.host,
           player_count: length(room.players),
-          max_players: @max_players_per_room
+          max_players: @max_players_per_room,
+          status: room.status
         }
       end)
 
@@ -127,7 +128,7 @@ defmodule Astranyx.Game.Lobby do
       %{host: host} when host != player_id ->
         {:reply, {:error, :not_host}, state}
 
-      %{players: players} when length(players) < 1 ->
+      %{players: []} ->
         {:reply, {:error, :not_enough_players}, state}
 
       room ->
@@ -147,20 +148,19 @@ defmodule Astranyx.Game.Lobby do
 
       room ->
         players = List.delete(room.players, player_id)
-
-        state =
-          if players == [] do
-            # Room empty, delete it
-            Logger.info("Room #{room_id} deleted (empty)")
-            update_in(state, [:rooms], &Map.delete(&1, room_id))
-          else
-            # Update room, maybe transfer host
-            new_host = if room.host == player_id, do: hd(players), else: room.host
-            room = %{room | players: players, host: new_host}
-            put_in(state, [:rooms, room_id], room)
-          end
-
+        state = update_room_after_leave(state, room_id, room, players)
         {:noreply, state}
     end
+  end
+
+  defp update_room_after_leave(state, room_id, _room, []) do
+    Logger.info("Room #{room_id} deleted (empty)")
+    update_in(state, [:rooms], &Map.delete(&1, room_id))
+  end
+
+  defp update_room_after_leave(state, room_id, room, players) do
+    new_host = if room.host in players, do: room.host, else: hd(players)
+    room = %{room | players: players, host: new_host}
+    put_in(state, [:rooms, room_id], room)
   end
 end

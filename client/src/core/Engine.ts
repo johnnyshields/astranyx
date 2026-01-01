@@ -1,6 +1,9 @@
 import { Renderer } from './Renderer.ts'
 import { Input } from './Input.ts'
-import { Game } from '../game/Game.ts'
+import type { Game } from '../game/Game.ts'
+
+export type InitPhase = 'renderer' | 'input' | 'game' | 'ready'
+export type InitCallback = (phase: InitPhase, progress: number) => void
 
 export class Engine {
   private canvas: HTMLCanvasElement
@@ -16,26 +19,47 @@ export class Engine {
   private readonly TICK_RATE = 1000 / 60
   private accumulator = 0
 
+  private onInit: InitCallback | null = null
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
   }
 
+  /**
+   * Set initialization progress callback
+   */
+  onProgress(callback: InitCallback): this {
+    this.onInit = callback
+    return this
+  }
+
   async init(): Promise<void> {
     // Initialize WebGL2 renderer
+    this.onInit?.('renderer', 0)
     this.renderer = new Renderer(this.canvas)
     await this.renderer.init()
+    this.onInit?.('renderer', 25)
 
     // Initialize input handling
+    this.onInit?.('input', 25)
     this.input = new Input()
     this.input.init()
+    this.onInit?.('input', 40)
 
-    // Initialize game
+    // Lazy load and initialize game module
+    this.onInit?.('game', 40)
+    const { Game } = await import('../game/Game.ts')
+    this.onInit?.('game', 70)
+
     this.game = new Game(this.renderer, this.input)
     await this.game.init()
+    this.onInit?.('game', 90)
 
     // Handle resize
     this.resize()
     window.addEventListener('resize', () => this.resize())
+
+    this.onInit?.('ready', 100)
   }
 
   private resize(): void {
@@ -64,6 +88,13 @@ export class Engine {
     if (this.frameId) {
       cancelAnimationFrame(this.frameId)
     }
+  }
+
+  /**
+   * Get the game instance for external wiring (e.g., multiplayer)
+   */
+  getGame(): Game {
+    return this.game
   }
 
   private loop = (currentTime: number): void => {

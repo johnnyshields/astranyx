@@ -60,5 +60,5 @@ Steps:
 5. After completing refactors -> re-run tests:
    ```bash
    cd client && bun run typecheck
-   cd server && source ~/.asdf/asdf.sh && mix test
+   cd server && mix test
    ```

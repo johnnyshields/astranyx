@@ -5,12 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ASTRANYX</title>
   <style>
+    @font-face {
+      font-family: 'Pixelon';
+      src: url('/assets/fonts/pixelon/pixelon-regular.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: block;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%;
       height: 100%;
       overflow: hidden;
       background: #000;
+      font-family: 'Pixelon', monospace;
     }
     #game-container {
       width: 100%;
@@ -34,6 +42,425 @@
       font-size: 24px;
       text-shadow: 0 0 20px #0ff;
     }
+
+    /* Title Screen */
+    #titleScreen {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 20, 0.98);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 100;
+    }
+    #titleScreen.hidden { display: none; }
+    #titleScreen h1 {
+      font-size: 72px;
+      color: #0ff;
+      text-shadow: 0 0 40px #0ff, 0 0 80px #08f;
+      margin-bottom: 10px;
+      letter-spacing: 12px;
+    }
+    #titleScreen .subtitle {
+      color: #f0f;
+      font-size: 14px;
+      margin-bottom: 60px;
+      text-shadow: 0 0 20px #f0f;
+      letter-spacing: 4px;
+    }
+    #titleScreen .mode-select {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 50px;
+    }
+    #titleScreen .mode-btn {
+      background: transparent;
+      border: 3px solid #0f0;
+      color: #0f0;
+      padding: 20px 50px;
+      font-family: monospace;
+      font-size: 24px;
+      cursor: pointer;
+      text-shadow: 0 0 15px #0f0;
+      box-shadow: 0 0 25px rgba(0, 255, 0, 0.3);
+      transition: all 0.2s;
+    }
+    #titleScreen .mode-btn:hover {
+      background: #0f0;
+      color: #000;
+      box-shadow: 0 0 40px rgba(0, 255, 0, 0.6);
+    }
+    #titleScreen .controls-info {
+      color: #088;
+      font-size: 13px;
+      text-align: center;
+      line-height: 2.2;
+    }
+    #titleScreen .controls-info span {
+      color: #0ff;
+      border: 1px solid #088;
+      padding: 3px 8px;
+      margin: 0 3px;
+    }
+    #titleScreen .p1-controls, #titleScreen .p2-controls {
+      margin: 8px 0;
+    }
+    #titleScreen .p1-label { color: #0ff; font-weight: bold; }
+    #titleScreen .p2-label { color: #f80; font-weight: bold; }
+
+    /* Pause Overlay */
+    #pauseOverlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 20, 0.85);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 90;
+    }
+    #pauseOverlay.visible { display: flex; }
+    #pauseOverlay h1 {
+      font-size: 48px;
+      color: #0ff;
+      text-shadow: 0 0 30px #0ff;
+      margin-bottom: 20px;
+    }
+    #pauseOverlay .hint {
+      color: #088;
+      font-size: 14px;
+      margin-top: 15px;
+    }
+    #pauseOverlay .hint span {
+      color: #0ff;
+      border: 1px solid #088;
+      padding: 2px 6px;
+    }
+
+    /* Game Over Overlay */
+    #gameOverOverlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(20, 0, 0, 0.95);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 90;
+    }
+    #gameOverOverlay.visible { display: flex; }
+    #gameOverOverlay h1 {
+      font-size: 48px;
+      color: #f00;
+      text-shadow: 0 0 30px #f00;
+      margin-bottom: 20px;
+      animation: glitch 0.3s infinite;
+    }
+    @keyframes glitch {
+      0% { transform: translate(0); }
+      25% { transform: translate(-2px, 1px); }
+      50% { transform: translate(2px, -1px); }
+      75% { transform: translate(-1px, 2px); }
+      100% { transform: translate(0); }
+    }
+    #gameOverOverlay .final {
+      color: #0ff;
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
+    #gameOverOverlay .final span {
+      color: #ff0;
+      font-size: 32px;
+    }
+    #gameOverOverlay .btn {
+      background: transparent;
+      border: 2px solid #0f0;
+      color: #0f0;
+      padding: 15px 40px;
+      font-family: monospace;
+      font-size: 16px;
+      cursor: pointer;
+      text-shadow: 0 0 10px #0f0;
+      box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    }
+    #gameOverOverlay .btn:hover {
+      background: #0f0;
+      color: #000;
+    }
+
+    /* Lobby Screen */
+    #lobbyScreen {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 20, 0.98);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    #lobbyScreen.hidden { display: none; }
+    #lobbyScreen h1 {
+      font-size: 48px;
+      color: #0ff;
+      text-shadow: 0 0 30px #0ff;
+      margin-bottom: 30px;
+      letter-spacing: 8px;
+    }
+    #lobbyScreen .subtitle {
+      color: #f0f;
+      font-size: 14px;
+      margin-bottom: 20px;
+      letter-spacing: 3px;
+    }
+
+    /* Room List View */
+    #roomListView { text-align: center; }
+    #roomListView.hidden { display: none; }
+    .quickmatch-btn {
+      background: linear-gradient(135deg, #0f0, #0a0);
+      border: 3px solid #0f0;
+      color: #000;
+      padding: 20px 60px;
+      font-family: 'Pixelon', monospace;
+      font-size: 24px;
+      cursor: pointer;
+      box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+      margin-bottom: 30px;
+      transition: all 0.2s;
+    }
+    .quickmatch-btn:hover {
+      box-shadow: 0 0 50px rgba(0, 255, 0, 0.8);
+      transform: scale(1.05);
+    }
+    .room-list {
+      max-height: 200px;
+      overflow-y: auto;
+      margin: 20px 0;
+      width: 400px;
+      min-height: 100px;
+      border: 1px solid #088;
+      background: rgba(0, 0, 0, 0.3);
+    }
+    .room-list-header {
+      color: #088;
+      font-size: 12px;
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+    .room-item {
+      background: rgba(0, 255, 255, 0.05);
+      border: 1px solid #0ff;
+      padding: 12px 20px;
+      margin: 5px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+    .room-item:hover {
+      background: rgba(0, 255, 255, 0.15);
+      box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+    }
+    .room-item .room-name { color: #0ff; font-size: 14px; }
+    .room-item .room-players { color: #0f0; font-size: 12px; }
+    .room-list-empty {
+      color: #666;
+      padding: 30px;
+      font-size: 12px;
+    }
+    .lobby-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin: 20px 0;
+    }
+    .lobby-actions input {
+      background: rgba(0, 0, 0, 0.5);
+      border: 2px solid #088;
+      color: #0ff;
+      padding: 12px 15px;
+      font-family: 'Pixelon', monospace;
+      font-size: 14px;
+      width: 180px;
+      text-transform: uppercase;
+    }
+    .lobby-actions input::placeholder {
+      color: #055;
+    }
+    .lobby-actions input:focus {
+      outline: none;
+      border-color: #0ff;
+      box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+    }
+    .lobby-btn {
+      background: transparent;
+      border: 2px solid #0f0;
+      color: #0f0;
+      padding: 12px 25px;
+      font-family: 'Pixelon', monospace;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .lobby-btn:hover {
+      background: #0f0;
+      color: #000;
+    }
+    .lobby-btn.secondary {
+      border-color: #088;
+      color: #088;
+    }
+    .lobby-btn.secondary:hover {
+      background: #088;
+      color: #000;
+    }
+    .back-btn {
+      margin-top: 30px;
+      background: transparent;
+      border: 2px solid #f80;
+      color: #f80;
+      padding: 12px 40px;
+      font-family: 'Pixelon', monospace;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .back-btn:hover {
+      background: #f80;
+      color: #000;
+    }
+
+    /* Room Waiting View */
+    #roomWaitingView { text-align: center; }
+    #roomWaitingView.hidden { display: none; }
+    .room-title {
+      color: #0ff;
+      font-size: 18px;
+      margin-bottom: 20px;
+      letter-spacing: 3px;
+    }
+    .player-list {
+      width: 300px;
+      min-height: 120px;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid #088;
+      margin: 0 auto 20px;
+    }
+    .player-list-header {
+      color: #088;
+      font-size: 12px;
+      padding: 10px;
+      border-bottom: 1px solid #088;
+    }
+    .player-item {
+      padding: 12px 20px;
+      color: #0ff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #044;
+    }
+    .player-item:last-child { border-bottom: none; }
+    .player-item .player-name { font-size: 14px; }
+    .player-item.host .player-name::after {
+      content: ' ★';
+      color: #ff0;
+    }
+    .player-item.local { color: #0f0; }
+    .room-controls {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    .start-btn {
+      background: linear-gradient(135deg, #0f0, #0a0);
+      border: 3px solid #0f0;
+      color: #000;
+      padding: 15px 50px;
+      font-family: 'Pixelon', monospace;
+      font-size: 18px;
+      cursor: pointer;
+      box-shadow: 0 0 25px rgba(0, 255, 0, 0.4);
+      transition: all 0.2s;
+    }
+    .start-btn:hover:not(:disabled) {
+      box-shadow: 0 0 40px rgba(0, 255, 0, 0.7);
+    }
+    .start-btn:disabled {
+      background: #333;
+      border-color: #555;
+      color: #555;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+    .leave-btn {
+      background: transparent;
+      border: 2px solid #f00;
+      color: #f00;
+      padding: 15px 30px;
+      font-family: 'Pixelon', monospace;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .leave-btn:hover {
+      background: #f00;
+      color: #000;
+    }
+    #connectionStatus {
+      color: #088;
+      font-size: 12px;
+      margin-top: 20px;
+    }
+
+    /* Connecting View */
+    #connectingView { text-align: center; }
+    #connectingView.hidden { display: none; }
+    #connectingView h2 {
+      color: #0ff;
+      font-size: 24px;
+      margin-bottom: 30px;
+      text-shadow: 0 0 20px #0ff;
+    }
+    #peerStatus {
+      width: 300px;
+      margin: 0 auto;
+    }
+    .peer-status-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 15px;
+      margin: 5px 0;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid #088;
+    }
+    .peer-status-item .peer-name { color: #0ff; }
+    .peer-status-item .peer-state { font-size: 12px; }
+    .peer-status-item .peer-state.connecting { color: #ff0; }
+    .peer-status-item .peer-state.connected { color: #0f0; }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #088;
+      border-top-color: #0ff;
+      border-radius: 50%;
+      margin: 30px auto;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Error message */
+    .error-message {
+      color: #f00;
+      font-size: 12px;
+      margin-top: 15px;
+      text-shadow: 0 0 10px #f00;
+    }
   </style>
 </head>
 <body>
@@ -41,6 +468,81 @@
     <canvas id="game"></canvas>
   </div>
   <div id="loading">INITIALIZING...</div>
+
+  <div id="titleScreen">
+    <h1>ASTRANYX</h1>
+    <div class="subtitle">SPACE COMBAT SIMULATOR</div>
+    <div class="mode-select">
+      <button class="mode-btn" id="btn1P">1 PLAYER</button>
+      <button class="mode-btn" id="btn2P">2 PLAYERS</button>
+      <button class="mode-btn" id="btnMultiplayer">ONLINE</button>
+    </div>
+    <div class="controls-info">
+      <div class="p1-controls"><span class="p1-label">P1:</span> <span>W</span><span>A</span><span>S</span><span>D</span> MOVE &nbsp; <span>SPACE</span> FIRE</div>
+      <div class="p2-controls"><span class="p2-label">P2:</span> <span>ARROWS</span> MOVE &nbsp; <span>0</span> FIRE</div>
+      <div style="margin-top: 15px;"><span>ESC</span> PAUSE &nbsp; <span>HOLD FIRE</span> CHARGE SHOT</div>
+    </div>
+  </div>
+
+  <div id="pauseOverlay">
+    <h1>PAUSED</h1>
+    <div class="hint">Press <span>ESC</span> to resume</div>
+  </div>
+
+  <div id="gameOverOverlay">
+    <h1>GAME OVER</h1>
+    <div class="final">FINAL SCORE: <span id="finalScore">0</span></div>
+    <button class="btn" id="btnRestart">CONTINUE?</button>
+  </div>
+
+  <!-- Lobby Screen -->
+  <div id="lobbyScreen" class="hidden">
+    <h1>MULTIPLAYER</h1>
+
+    <!-- Room List View -->
+    <div id="roomListView">
+      <button class="quickmatch-btn" id="btnQuickmatch">QUICKMATCH</button>
+
+      <div class="room-list-header">AVAILABLE ROOMS</div>
+      <div class="room-list" id="roomList">
+        <div class="room-list-empty">NO ROOMS AVAILABLE</div>
+      </div>
+
+      <div class="lobby-actions">
+        <input type="text" id="roomNameInput" placeholder="ROOM NAME" maxlength="20" />
+        <button class="lobby-btn" id="btnCreateRoom">CREATE</button>
+        <button class="lobby-btn secondary" id="btnRefreshRooms">REFRESH</button>
+      </div>
+
+      <div id="lobbyError" class="error-message" style="display: none;"></div>
+      <button class="back-btn" id="btnBackToTitle">BACK</button>
+    </div>
+
+    <!-- Room Waiting View -->
+    <div id="roomWaitingView" class="hidden">
+      <div class="room-title">ROOM: <span id="currentRoomName"></span></div>
+
+      <div class="player-list">
+        <div class="player-list-header">PLAYERS</div>
+        <div id="playerList"></div>
+      </div>
+
+      <div class="room-controls">
+        <button class="start-btn" id="btnStartGame" disabled>START GAME</button>
+        <button class="leave-btn" id="btnLeaveRoom">LEAVE</button>
+      </div>
+
+      <div id="connectionStatus">WAITING FOR PLAYERS...</div>
+    </div>
+
+    <!-- Connecting View -->
+    <div id="connectingView" class="hidden">
+      <h2>ESTABLISHING CONNECTIONS</h2>
+      <div id="peerStatus"></div>
+      <div class="spinner"></div>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

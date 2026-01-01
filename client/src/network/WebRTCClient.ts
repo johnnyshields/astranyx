@@ -12,6 +12,8 @@
  * - Once connected, game data flows over DataChannel
  */
 
+import { SafeConsole } from '../core/SafeConsole.ts'
+
 export interface GameMessage {
   type: 'input' | 'state' | 'event' | 'ping' | 'pong'
   seq: number
@@ -76,7 +78,7 @@ export class WebRTCClient {
       // 4. Create and send offer
       await this.createAndSendOffer()
 
-      console.log('WebRTC: Waiting for connection...')
+      SafeConsole.log('WebRTC: Waiting for connection...')
     } catch (error) {
       this.state = 'disconnected'
       throw error
@@ -89,18 +91,18 @@ export class WebRTCClient {
       this.signaling = new WebSocket(url)
 
       this.signaling.onopen = () => {
-        console.log('Signaling: Connected')
+        SafeConsole.log('Signaling: Connected')
         this.state = 'signaling'
         resolve()
       }
 
       this.signaling.onerror = (error) => {
-        console.error('Signaling: Error', error)
+        SafeConsole.error('Signaling: Error', error)
         reject(new Error('Signaling connection failed'))
       }
 
       this.signaling.onclose = () => {
-        console.log('Signaling: Disconnected')
+        SafeConsole.log('Signaling: Disconnected')
       }
 
       this.signaling.onmessage = (event) => {
@@ -125,7 +127,7 @@ export class WebRTCClient {
 
     this.peerConnection.onconnectionstatechange = () => {
       const state = this.peerConnection?.connectionState
-      console.log('WebRTC: Connection state:', state)
+      SafeConsole.log('WebRTC: Connection state:', state)
 
       if (state === 'connected') {
         this.state = 'connected'
@@ -159,11 +161,11 @@ export class WebRTCClient {
     channel.binaryType = 'arraybuffer'
 
     channel.onopen = () => {
-      console.log('DataChannel: Open')
+      SafeConsole.log('DataChannel: Open')
     }
 
     channel.onclose = () => {
-      console.log('DataChannel: Closed')
+      SafeConsole.log('DataChannel: Closed')
     }
 
     channel.onmessage = (event) => {
@@ -194,7 +196,7 @@ export class WebRTCClient {
     if (!this.peerConnection) return
 
     switch (message.type) {
-      case 'offer':
+      case 'offer': {
         await this.peerConnection.setRemoteDescription(
           new RTCSessionDescription(message.sdp!)
         )
@@ -202,6 +204,7 @@ export class WebRTCClient {
         await this.peerConnection.setLocalDescription(answer)
         this.sendSignaling({ type: 'answer', sdp: answer })
         break
+      }
 
       case 'answer':
         await this.peerConnection.setRemoteDescription(
@@ -237,7 +240,7 @@ export class WebRTCClient {
       const json = decoder.decode(data)
       return JSON.parse(json) as GameMessage
     } catch {
-      console.error('Failed to decode message')
+      SafeConsole.error('Failed to decode message')
       return null
     }
   }

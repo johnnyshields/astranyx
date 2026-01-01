@@ -14,7 +14,7 @@
 cd client && bun run dev
 
 # Terminal 2: Server
-cd server && source ~/.asdf/asdf.sh && mix phx.server
+cd server && mix phx.server
 ```
 
 - Client: http://localhost:4100

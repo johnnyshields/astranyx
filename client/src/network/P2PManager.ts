@@ -1,11 +1,19 @@
 /**
  * P2P Connection Manager
  *
+ * TLA+ Model: LockstepNetwork.tla
+ * - connectionState variable: "disconnected" | "connecting" | "connected"
+ * - StartConnecting action: initiates WebRTC handshake
+ * - ConnectionEstablished action: DataChannel.onopen
+ * - Disconnect action: connection failure or peer_left
+ * - Reconnect action: peer_joined triggers new connection
+ *
  * Handles WebRTC peer connections between players.
  * Uses Phoenix signaling channel to exchange SDP/ICE.
  */
 
 import type { Channel } from 'phoenix'
+import { SafeConsole } from '../core/SafeConsole.ts'
 
 export interface PeerConnection {
   playerId: string
@@ -33,13 +41,43 @@ export class P2PManager {
   private onPeerConnected: ConnectionHandler | null = null
   private onPeerDisconnected: DisconnectHandler | null = null
 
-  private readonly iceServers: RTCIceServer[] = [
+  // ICE servers for WebRTC connection establishment
+  // These are set dynamically via setIceServers() with credentials from server
+  // See /docs/deployment.md for TURN server setup
+  private iceServers: RTCIceServer[] = [
+    // STUN only as fallback - TURN credentials come from server
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
   ]
 
   constructor(localPlayerId: string) {
     this.localPlayerId = localPlayerId
+  }
+
+  /**
+   * Set ICE servers with TURN credentials from server
+   */
+  setIceServers(turnUrls: string[], username: string, credential: string): void {
+    this.iceServers = [
+      // STUN servers
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // TURN servers with ephemeral credentials
+      ...turnUrls.map(url => ({
+        urls: url,
+        username,
+        credential,
+      })),
+    ]
+  }
+
+  /**
+   * Update ICE servers (for credential refresh).
+   * Note: This only affects new connections - existing connections
+   * continue using their original credentials until they need to reconnect.
+   */
+  updateIceServers(turnUrls: string[], username: string, credential: string): void {
+    this.setIceServers(turnUrls, username, credential)
   }
 
   /**
@@ -99,11 +137,12 @@ export class P2PManager {
 
   /**
    * Create peer connection and initiate handshake
+   * (WebRTC connection management, not modeled in TLA+)
    */
   private async connectToPeer(playerId: string): Promise<void> {
     if (this.peers.has(playerId)) return
 
-    console.log(`P2P: Connecting to ${playerId}`)
+    SafeConsole.log(`P2P: Connecting to ${playerId}`)
 
     const connection = this.createPeerConnection(playerId)
     const dataChannel = connection.createDataChannel('game', {
@@ -129,21 +168,33 @@ export class P2PManager {
   }
 
   private createPeerConnection(playerId: string): RTCPeerConnection {
+    SafeConsole.log('P2P: Creating connection with ICE servers:', this.iceServers)
     const connection = new RTCPeerConnection({
       iceServers: this.iceServers,
     })
 
     connection.onicecandidate = (event) => {
       if (event.candidate) {
+        SafeConsole.log('P2P: ICE candidate:', event.candidate.type, event.candidate.candidate)
         this.sendSignaling('ice_candidate', playerId, {
           candidate: event.candidate,
         })
+      } else {
+        SafeConsole.log('P2P: ICE gathering complete')
       }
+    }
+
+    connection.onicegatheringstatechange = () => {
+      SafeConsole.log('P2P: ICE gathering state:', connection.iceGatheringState)
+    }
+
+    connection.oniceconnectionstatechange = () => {
+      SafeConsole.log('P2P: ICE connection state:', connection.iceConnectionState)
     }
 
     connection.onconnectionstatechange = () => {
       const state = connection.connectionState
-      console.log(`P2P: Connection to ${playerId} is ${state}`)
+      SafeConsole.log(`P2P: Connection to ${playerId} is ${state}`)
 
       if (state === 'disconnected' || state === 'failed') {
         this.disconnectPeer(playerId)
@@ -166,8 +217,9 @@ export class P2PManager {
   private setupDataChannel(playerId: string, channel: RTCDataChannel): void {
     channel.binaryType = 'arraybuffer'
 
+    // Connection established (WebRTC management, not modeled in TLA+)
     channel.onopen = () => {
-      console.log(`P2P: DataChannel to ${playerId} open`)
+      SafeConsole.log(`P2P: DataChannel to ${playerId} open`)
 
       const peer = this.peers.get(playerId)
       if (peer) {
@@ -177,12 +229,12 @@ export class P2PManager {
     }
 
     channel.onclose = () => {
-      console.log(`P2P: DataChannel to ${playerId} closed`)
+      SafeConsole.log(`P2P: DataChannel to ${playerId} closed`)
       this.disconnectPeer(playerId)
     }
 
     channel.onerror = (error) => {
-      console.error(`P2P: DataChannel error with ${playerId}`, error)
+      SafeConsole.error(`P2P: DataChannel error with ${playerId}`, error)
     }
   }
 
@@ -190,7 +242,7 @@ export class P2PManager {
     fromPlayerId: string,
     sdp: RTCSessionDescriptionInit
   ): Promise<void> {
-    console.log(`P2P: Received offer from ${fromPlayerId}`)
+    SafeConsole.log(`P2P: Received offer from ${fromPlayerId}`)
 
     let peer = this.peers.get(fromPlayerId)
 
@@ -216,7 +268,7 @@ export class P2PManager {
     fromPlayerId: string,
     sdp: RTCSessionDescriptionInit
   ): Promise<void> {
-    console.log(`P2P: Received answer from ${fromPlayerId}`)
+    SafeConsole.log(`P2P: Received answer from ${fromPlayerId}`)
 
     const peer = this.peers.get(fromPlayerId)
     if (peer) {
@@ -245,6 +297,7 @@ export class P2PManager {
     })
   }
 
+  // TLA+: Disconnect action - connectionState[p] = "disconnected"
   private disconnectPeer(playerId: string): void {
     const peer = this.peers.get(playerId)
     if (peer) {
@@ -288,5 +341,25 @@ export class P2PManager {
       this.disconnectPeer(playerId)
     }
     this.signalingChannel = null
+  }
+
+  // ===========================================================================
+  // Runtime Invariant Checks (TLA+ verification at runtime)
+  // ===========================================================================
+
+  /**
+   * Check TLA+ TypeInvariant for connection states.
+   *
+   * TLA+ Invariant: connectionState[p] \in {"disconnected", "connecting", "connected"}
+   */
+  assertInvariants(): void {
+    const validStates = ['disconnected', 'connecting', 'connected']
+    for (const [peerId, peer] of this.peers) {
+      if (!validStates.includes(peer.state)) {
+        throw new Error(
+          `TLA+ TypeInvariant violated: peer ${peerId} has invalid state "${peer.state}"`
+        )
+      }
+    }
   }
 }

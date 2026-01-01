@@ -25,7 +25,7 @@ Steps:
 
 5. **Test**
    - Client: `cd client && bun run typecheck`
-   - Server: `cd server && source ~/.asdf/asdf.sh && mix test`
+   - Server: `cd server && mix test`
    - Fix all failures/warnings
 
 6. **Lint**
