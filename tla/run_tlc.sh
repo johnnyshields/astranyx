@@ -13,7 +13,8 @@
 #   ./run_tlc.sh -m LeaderElection,LockstepSimple  # Run specific models
 #   ./run_tlc.sh --force                      # Force re-run ignoring cache
 #   ./run_tlc.sh --max                        # Use maximum resources (75% mem, 90% cpu)
-#   ./run_tlc.sh --ci                         # CI mode: fail if any hashes missing (no TLC run)
+#   ./run_tlc.sh --ci                         # CI mode: hash check + sanity checks (30s each)
+#   ./run_tlc.sh -x, --hash-check             # Hash check: fail if any hashes missing
 #   ./run_tlc.sh -s, --sanity                 # Sanity check: run each model for 30s, report failures
 #   ./run_tlc.sh -f, --fail-fast              # Stop on first failure (default: continue and report all)
 #   ./run_tlc.sh -d, --download-jar           # Auto-download TLC jar to tla/tmp if missing
@@ -32,6 +33,7 @@ ALL_MODELS="LeaderElection,LockstepSimple,LockstepState,LockstepNetwork"
 FORCE=false
 MAX_RESOURCES=false
 CI_MODE=false
+HASH_CHECK_ONLY=false
 SANITY_MODE=false
 FAIL_FAST=false
 DOWNLOAD_JAR=false
@@ -44,6 +46,7 @@ while [[ $# -gt 0 ]]; do
         --force) FORCE=true; shift ;;
         --max) MAX_RESOURCES=true; shift ;;
         --ci) CI_MODE=true; shift ;;
+        -x|--hash-check) HASH_CHECK_ONLY=true; shift ;;
         -s|--sanity) SANITY_MODE=true; shift ;;
         -f|--fail-fast) FAIL_FAST=true; shift ;;
         -d|--download-jar) DOWNLOAD_JAR=true; shift ;;
@@ -72,8 +75,13 @@ if [[ -z "$MODEL_LIST" ]]; then
     MODEL_LIST="$ALL_MODELS"
 fi
 
-# CI mode: check hashes only, don't run TLC
-if [[ "$CI_MODE" == "true" ]]; then
+# TLC JAR configuration (needed for CI mode sanity checks)
+TLC_VERSION="1.8.0"
+TLC_URL="https://github.com/tlaplus/tlaplus/releases/download/v${TLC_VERSION}/tla2tools.jar"
+LOCAL_JAR="$TMP_DIR/tla2tools.jar"
+
+# Hash check mode: verify hashes without running TLC
+if [[ "$HASH_CHECK_ONLY" == "true" ]]; then
     MISSING=()
     IFS=',' read -ra MODELS <<< "$MODEL_LIST"
     for model in "${MODELS[@]}"; do
@@ -109,37 +117,95 @@ if [[ "$CI_MODE" == "true" ]]; then
     exit 0
 fi
 
-# Resolve TLC JAR location
-TLC_VERSION="1.8.0"
-TLC_URL="https://github.com/tlaplus/tlaplus/releases/download/v${TLC_VERSION}/tla2tools.jar"
-LOCAL_JAR="$TMP_DIR/tla2tools.jar"
-
-# Try to find tla2tools.jar: --jar flag, local download, or PATH
-if [[ -n "$TLC_JAR" ]]; then
-    # Explicit --jar provided
-    :
-elif [[ -f "$LOCAL_JAR" ]]; then
-    TLC_JAR="$LOCAL_JAR"
-elif command -v tla2tools.jar &> /dev/null; then
-    TLC_JAR="$(command -v tla2tools.jar)"
-fi
-
-# Download if requested and still not found
-if [[ "$DOWNLOAD_JAR" == "true" ]] && [[ ! -f "$TLC_JAR" ]]; then
-    echo "Downloading TLC tools v${TLC_VERSION}..."
-    curl -L -o "$LOCAL_JAR" "$TLC_URL"
-    echo "Downloaded to $LOCAL_JAR"
-    TLC_JAR="$LOCAL_JAR"
-fi
-
-if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
-    echo "Error: tla2tools.jar not found"
+# CI mode: check hashes THEN run sanity checks
+if [[ "$CI_MODE" == "true" ]]; then
+    echo "=== Phase 1: Verify model hashes ==="
     echo ""
-    echo "Options:"
-    echo "  1. Download from https://github.com/tlaplus/tlaplus/releases and add to PATH"
-    echo "  2. Use --jar /path/to/tla2tools.jar"
-    echo "  3. Use --download-jar to auto-download"
-    exit 1
+    MISSING=()
+    IFS=',' read -ra MODELS <<< "$MODEL_LIST"
+    for model in "${MODELS[@]}"; do
+        model=$(echo "$model" | xargs)
+        SPEC_FILE="$SCRIPT_DIR/${model}.tla"
+        CONFIG_FILE="$SCRIPT_DIR/MC${model}.cfg"
+
+        if [[ ! -f "$SPEC_FILE" ]]; then
+            echo "Error: $SPEC_FILE not found"
+            exit 1
+        fi
+
+        HASH=$(cat "$SPEC_FILE" "$CONFIG_FILE" | sha256sum | cut -d' ' -f1)
+
+        if [[ ! -f "$PASSED_FILE" ]] || ! grep -q "$HASH" "$PASSED_FILE"; then
+            MISSING+=("$model")
+            echo "[$model] MISSING - hash not found: ${HASH:0:16}..."
+        else
+            echo "[$model] OK - hash found: ${HASH:0:16}..."
+        fi
+    done
+
+    if [[ ${#MISSING[@]} -gt 0 ]]; then
+        echo ""
+        echo "ERROR: ${#MISSING[@]} model(s) have not been verified: ${MISSING[*]}"
+        echo ""
+        echo "Run tla/run_tlc.sh locally and commit tla/.tlc_passed file after it succeeds"
+        exit 1
+    fi
+
+    echo ""
+    echo "All model hashes verified."
+    echo ""
+
+    # Now run sanity checks (requires Java/TLC JAR)
+    # Skip if TLC JAR not available (hash check is the primary gate)
+    if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
+        # Try to find or download JAR for sanity checks
+        if [[ -f "$LOCAL_JAR" ]]; then
+            TLC_JAR="$LOCAL_JAR"
+        elif [[ "$DOWNLOAD_JAR" == "true" ]]; then
+            echo "Downloading TLC tools v${TLC_VERSION} for sanity checks..."
+            curl -L -o "$LOCAL_JAR" "$TLC_URL"
+            TLC_JAR="$LOCAL_JAR"
+        fi
+    fi
+
+    if [[ -n "$TLC_JAR" ]] && [[ -f "$TLC_JAR" ]]; then
+        echo "=== Phase 2: Sanity checks (30s per model) ==="
+        echo ""
+        SANITY_MODE=true
+        # Continue to sanity check logic below
+    else
+        echo "Skipping sanity checks (TLC JAR not available)"
+        echo "Use --download-jar to enable sanity checks in CI"
+        exit 0
+    fi
+fi
+
+# Resolve TLC JAR (skip if already set by CI mode)
+if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
+    # Try to find tla2tools.jar: --jar flag, local download, or PATH
+    if [[ -f "$LOCAL_JAR" ]]; then
+        TLC_JAR="$LOCAL_JAR"
+    elif command -v tla2tools.jar &> /dev/null; then
+        TLC_JAR="$(command -v tla2tools.jar)"
+    fi
+
+    # Download if requested and still not found
+    if [[ "$DOWNLOAD_JAR" == "true" ]] && { [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; }; then
+        echo "Downloading TLC tools v${TLC_VERSION}..."
+        curl -L -o "$LOCAL_JAR" "$TLC_URL"
+        echo "Downloaded to $LOCAL_JAR"
+        TLC_JAR="$LOCAL_JAR"
+    fi
+
+    if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
+        echo "Error: tla2tools.jar not found"
+        echo ""
+        echo "Options:"
+        echo "  1. Download from https://github.com/tlaplus/tlaplus/releases and add to PATH"
+        echo "  2. Use --jar /path/to/tla2tools.jar"
+        echo "  3. Use --download-jar to auto-download"
+        exit 1
+    fi
 fi
 
 # Track failures for reporting at end
@@ -280,8 +346,10 @@ run_model() {
 IFS=',' read -ra MODELS <<< "$MODEL_LIST"
 
 if [[ "$SANITY_MODE" == "true" ]]; then
-    echo "Running sanity checks (30s per model)..."
-    echo ""
+    if [[ "$CI_MODE" != "true" ]]; then
+        echo "Running sanity checks (30s per model)..."
+        echo ""
+    fi
     for model in "${MODELS[@]}"; do
         model=$(echo "$model" | xargs)
         run_model_sanity "$model" 30
