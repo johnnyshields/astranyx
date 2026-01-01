@@ -16,7 +16,7 @@ import { LeaderElection } from '../LeaderElection.ts'
 import { InputBuffer } from '../InputBuffer.ts'
 import { LocalEventQueue } from '../LocalEventQueue.ts'
 import { StateSyncManager } from '../StateSyncManager.ts'
-import type { GameEvent, FrameInput, PlayerInput } from '../types.ts'
+import type { GameEvent, FrameInput } from '../types.ts'
 import { emptyInput } from '../types.ts'
 
 // =============================================================================

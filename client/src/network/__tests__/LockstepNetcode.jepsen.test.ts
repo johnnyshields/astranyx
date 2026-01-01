@@ -1236,7 +1236,7 @@ describe('Safety Properties', () => {
     }
 
     // Verify at most one leader per term
-    for (const [term, leaders] of leadersInTerm) {
+    for (const [_term, leaders] of leadersInTerm) {
       expect(leaders.length).toBeLessThanOrEqual(1)
     }
   })
