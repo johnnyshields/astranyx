@@ -1,6 +1,6 @@
 # Astranyx
 
-2.5D multiplayer shoot-em-up game inspired by R-Type, Einhänder, Gradius, Ikaruga, and Radiant Silvergun.
+Multiplayer shoot-em-up game, inspired by popular arcade and console space shooters.
 
 ## Tech Stack
 
@@ -135,7 +135,30 @@ docker run -d --network=host coturn/coturn \
 ```
 
 Set server environment variables:
+
 ```bash
 TURN_SECRET=dev-secret-123
 TURN_URLS=turn:localhost:3478
 ```
+
+## Sponsorship
+
+Astranyx is a free-to-play game and a non-commercial project. My goal is to have fun,
+learn, and build the open--**not** to make money. I don't intend to enshittify the
+game with ads, micro-transactions, paywalls, spam, etc.
+
+If you'd like to give me a [Github Sponsorship ❤️](https://github.com/sponsors/johnnyshields),
+I'll invest it back 100% into improving and running the game.
+
+## License
+
+Astranyx is libre software licensed under the AGPL (code), CC-BY-SA (assets), and OFL (fonts).
+Refer to [LICENSE](LICENSE) for details.
+
+## Contributing
+
+You're welcome to raise a pull request for any part of the project you'd like to improve!
+By submitting a pull request, you agree to our [Contributor License Agreement (CLA)](CONTRIBUTOR_AGREEMENT).
+Under the CLA, you confirm that the work is your own and grant permission for its use in Astranyx.
+
+Reporting an issue does **not** invoke or require the Contributor License Agreement.

@@ -1,0 +1,34 @@
+# Astranyx Licensing
+
+This project has separate licenses for its components.
+
+## Source Code
+
+All source code is licensed under the GNU Affero General Public License v3.0 or later.
+See LICENSE_CODE for the full license text.
+
+* SPDX-License-Identifier: AGPL-3.0-or-later
+
+## Art, Music, and Assets
+
+All art, music, textures, 3D models, and other creative assets (excluding fonts) are
+licensed under the Creative Commons Attribution-ShareAlike 4.0 International License.
+See LICENSE_ASSETS for the full license text.
+
+* SPDX-License-Identifier: CC-BY-SA-4.0
+
+## Fonts
+
+Font files are licensed under the SIL Open Font License, Version 1.1.
+See LICENSE_FONTS for the full license text.
+
+* SPDX-License-Identifier: OFL-1.1
+
+## Contributions
+
+Unless otherwise stated, all contributions to this project are licensed
+under the same terms above.
+
+## Third-Party Dependencies
+
+Third-party dependencies and assets retain their original licenses.

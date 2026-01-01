@@ -16,9 +16,8 @@
     SIL Open Font License, Version 1.1
 
   - Munro font - (c) Ed Merritt https://www.tenbytwenty.com/
+
 SIL Open Font License (OFL) 1.1
-
 - MPlus https://fontsinuse.com/typefaces/183074/m-plus
-
-- Makinas https://moji-waku.com/makinas/
-- free font
+  - Makinas https://moji-waku.com/makinas/
+  - free font
