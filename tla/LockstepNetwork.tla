@@ -25,14 +25,14 @@
 \* INCLUDED (network layer):
 \* - Message loss: Messages can be dropped (unreliable DataChannel)
 \* - Partitions: Symmetric partitions between peer pairs
-\* - Connection state: connected/disconnected per peer
+\* - Composite mode: 5 explicit states (Disconnected/Syncing/Active/Electing/Leading)
 \*
 \* EXCLUDED (intentional simplifications):
 \* - ICE restart: Implementation detail, doesn't affect protocol semantics
 \* - Message reordering: Lockstep tolerates via frame numbers (wrong frame ignored)
 \* - Message duplication: Idempotent receive (sets are deduplicated)
-\* - WebRTC signaling states: Simplified to connected/disconnected
-\* - Checksum collision: Abstract inSync boolean suffices
+\* - WebRTC signaling states: Simplified to mode (composite state)
+\* - Checksum collision: Abstract Syncing/Active mode suffices
 \* - Connection flapping: Would explode state space
 \*
 \* Target: ~20-50M states with 3 peers
@@ -53,14 +53,26 @@ CONSTANT MaxMessages
 CONSTANT InitialLeader
 
 (**************************************************************************************************)
+(* Peer mode                                                                                      *)
+(*                                                                                                *)
+(* Composite state replacing separate connected/state/inSync variables:                           *)
+(*   Disconnected - Peer offline (WebRTC connection failed)                                       *)
+(*   Syncing     - Connected but waiting for state sync from leader                               *)
+(*   Active      - Connected follower, in sync with leader                                        *)
+(*   Electing    - Connected candidate, running for leader                                        *)
+(*   Leading     - Connected leader, broadcasting state syncs                                     *)
+(**************************************************************************************************)
+Mode == {"Disconnected", "Syncing", "Active", "Electing", "Leading"}
+
+(**************************************************************************************************)
 (* Per-peer variables                                                                             *)
 (**************************************************************************************************)
 
+\* Peer's operational mode (replaces connected, state, inSync)
+VARIABLE mode
+
 \* The peer's current election term
 VARIABLE currentTerm
-
-\* The peer's state: "Follower", "Candidate", or "Leader"
-VARIABLE state
 
 \* Who this peer voted for in current term (0 = none)
 VARIABLE votedFor
@@ -68,7 +80,7 @@ VARIABLE votedFor
 \* Votes received by this peer (when candidate)
 VARIABLE votesReceived
 
-electionVars == <<currentTerm, state, votedFor, votesReceived>>
+electionVars == <<currentTerm, mode, votedFor, votesReceived>>
 
 \* Current simulation frame per peer
 VARIABLE frame
@@ -82,10 +94,7 @@ VARIABLE syncTerm
 \* Pending events per peer: set of <<owner, frame>> tuples
 VARIABLE pendingEvents
 
-\* Whether peer's state matches leader (checksum abstraction)
-VARIABLE inSync
-
-syncVars == <<syncTerm, pendingEvents, inSync>>
+syncVars == <<syncTerm, pendingEvents>>
 
 frameVars == <<frame, heartbeatReceived>>
 
@@ -100,16 +109,13 @@ VARIABLE inputsReceived
 (* Network variables                                                                              *)
 (**************************************************************************************************)
 
-\* Whether peer is connected (boolean per peer)
-VARIABLE connected
-
 \* Set of in-flight messages
 VARIABLE network
 
 \* Symmetric partition: partitioned[{p,q}] = TRUE
 VARIABLE partitioned
 
-networkVars == <<connected, network, partitioned>>
+networkVars == <<network, partitioned>>
 
 \* All variables
 protocolVars == <<electionVars, frameVars, syncVars, inputsReceived>>
@@ -139,15 +145,22 @@ MsgTo(m) == m[3]
 
 IsMajority(votes) == Cardinality(votes) * 2 > Cardinality(Peer)
 MinFrame == CHOOSE f \in {frame[p] : p \in Peer} : \A q \in Peer : frame[q] >= f
-IsLeader(p) == state[p] = "Leader"
+
+\* Mode helpers
+IsConnected(p) == mode[p] # "Disconnected"
+IsLeader(p) == mode[p] = "Leading"
+IsCandidate(p) == mode[p] = "Electing"
+IsFollower(p) == mode[p] \in {"Active", "Syncing"}
+IsSyncing(p) == mode[p] = "Syncing"
+IsActive(p) == mode[p] = "Active"
 
 \* Connected peers only
-ConnectedPeers == {p \in Peer : connected[p]}
+ConnectedPeers == {p \in Peer : IsConnected(p)}
 
 \* Check if two peers can communicate (both connected, not partitioned)
 CanCommunicate(p, q) ==
-    /\ connected[p]
-    /\ connected[q]
+    /\ IsConnected(p)
+    /\ IsConnected(q)
     /\ ~partitioned[{p, q}]
 
 \* All partition pairs (unordered)
@@ -159,9 +172,10 @@ PartitionPairs == {{p, q} : p, q \in Peer}
 (**************************************************************************************************)
 
 Init ==
+    \* Mode: Leader starts as Leading, others as Active (connected, in sync)
+    /\ mode = [p \in Peer |-> IF p = InitialLeader THEN "Leading" ELSE "Active"]
     \* Election state
     /\ currentTerm = [p \in Peer |-> 0]
-    /\ state = [p \in Peer |-> IF p = InitialLeader THEN "Leader" ELSE "Follower"]
     /\ votedFor = [p \in Peer |-> IF p = InitialLeader THEN p ELSE 0]
     /\ votesReceived = [p \in Peer |-> {}]
     \* Frame state
@@ -170,11 +184,9 @@ Init ==
     \* Sync state
     /\ syncTerm = [p \in Peer |-> 0]
     /\ pendingEvents = [p \in Peer |-> {}]
-    /\ inSync = [p \in Peer |-> TRUE]
     \* Global state
     /\ inputsReceived = {}
     \* Network state
-    /\ connected = [p \in Peer |-> TRUE]
     /\ network = {}
     /\ partitioned = [pair \in PartitionPairs |-> FALSE]
 
@@ -189,11 +201,11 @@ Init ==
 (* Peer disconnects (models WebRTC connection failure).                       *)
 (******************************************************************************)
 Disconnect(p) ==
-    /\ connected[p] = TRUE
-    /\ connected' = [connected EXCEPT ![p] = FALSE]
+    /\ IsConnected(p)
+    /\ mode' = [mode EXCEPT ![p] = "Disconnected"]
     \* Drop all messages to/from this peer
     /\ network' = {m \in network : MsgFrom(m) # p /\ MsgTo(m) # p}
-    /\ UNCHANGED protocolVars
+    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, syncVars, inputsReceived>>
     /\ UNCHANGED partitioned
 
 (******************************************************************************)
@@ -202,11 +214,10 @@ Disconnect(p) ==
 (* Peer reconnects.                                                           *)
 (******************************************************************************)
 Reconnect(p) ==
-    /\ connected[p] = FALSE
-    /\ connected' = [connected EXCEPT ![p] = TRUE]
-    \* Reconnecting peer may be out of sync
-    /\ inSync' = [inSync EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<electionVars, frameVars, syncTerm, pendingEvents, inputsReceived>>
+    /\ mode[p] = "Disconnected"
+    \* Reconnecting peer needs state sync
+    /\ mode' = [mode EXCEPT ![p] = "Syncing"]
+    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, syncVars, inputsReceived>>
     /\ UNCHANGED <<network, partitioned>>
 
 (******************************************************************************)
@@ -222,7 +233,6 @@ CreatePartition(p, q) ==
     /\ network' = {m \in network :
          ~((MsgFrom(m) = p /\ MsgTo(m) = q) \/ (MsgFrom(m) = q /\ MsgTo(m) = p))}
     /\ UNCHANGED protocolVars
-    /\ UNCHANGED connected
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -234,7 +244,7 @@ HealPartition(p, q) ==
     /\ partitioned[{p, q}]
     /\ partitioned' = [partitioned EXCEPT ![{p, q}] = FALSE]
     /\ UNCHANGED protocolVars
-    /\ UNCHANGED <<connected, network>>
+    /\ UNCHANGED network
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -245,7 +255,7 @@ LoseMessage(m) ==
     /\ m \in network
     /\ network' = network \ {m}
     /\ UNCHANGED protocolVars
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 ----
 (**************************************************************************************************)
@@ -258,7 +268,7 @@ LoseMessage(m) ==
 (* Peer submits input for current frame.                                      *)
 (******************************************************************************)
 SubmitInput(p) ==
-    /\ connected[p]
+    /\ IsConnected(p)
     /\ p \notin inputsReceived
     /\ frame[p] = MinFrame
     /\ inputsReceived' = inputsReceived \union {p}
@@ -266,7 +276,7 @@ SubmitInput(p) ==
     /\ LET newMsgs == {<<"input", p, q, frame[p]>> : q \in ConnectedPeers \ {p}}
        IN network' = network \union newMsgs
     /\ UNCHANGED <<electionVars, frameVars, syncVars>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -279,7 +289,7 @@ ReceiveInput(m) ==
     /\ LET sender == MsgFrom(m)
            receiver == MsgTo(m)
            msgFrame == m[4]
-       IN /\ connected[receiver]
+       IN /\ IsConnected(receiver)
           /\ CanCommunicate(sender, receiver)
           \* Input is useful if it's for our current frame
           /\ msgFrame = frame[receiver]
@@ -287,7 +297,7 @@ ReceiveInput(m) ==
           /\ inputsReceived' = inputsReceived \union {sender}
     /\ network' = network \ {m}
     /\ UNCHANGED <<electionVars, frameVars, syncVars>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -295,7 +305,7 @@ ReceiveInput(m) ==
 (* Peer advances to next frame after all inputs received.                     *)
 (******************************************************************************)
 AdvanceFrame(p) ==
-    /\ connected[p]
+    /\ IsConnected(p)
     /\ inputsReceived = ConnectedPeers  \* All connected peers submitted
     /\ frame[p] < MaxFrame
     /\ frame[p] = MinFrame
@@ -318,10 +328,10 @@ AdvanceFrame(p) ==
 (* Peer generates a local event.                                              *)
 (******************************************************************************)
 GenerateEvent(p) ==
-    /\ connected[p]
+    /\ IsConnected(p)
     /\ Cardinality(pendingEvents[p]) < MaxEvents
     /\ pendingEvents' = [pendingEvents EXCEPT ![p] = pendingEvents[p] \union {<<p, frame[p]>>}]
-    /\ UNCHANGED <<electionVars, frameVars, syncTerm, inSync, inputsReceived>>
+    /\ UNCHANGED <<electionVars, frameVars, syncTerm, inputsReceived>>
     /\ UNCHANGED networkVars
 
 ----
@@ -336,20 +346,21 @@ GenerateEvent(p) ==
 (******************************************************************************)
 SendStateSync(leader) ==
     /\ IsLeader(leader)
-    /\ connected[leader]
     /\ Cardinality(network) < MaxMessages
     \* Send sync message to all connected followers
     /\ LET newMsgs == {<<"state_sync", leader, q, currentTerm[leader], frame[leader]>>
                        : q \in ConnectedPeers \ {leader}}
        IN network' = network \union newMsgs
     /\ UNCHANGED protocolVars
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
 (*                                                                            *)
-(* Follower receives state sync from leader.                                  *)
+(* Non-leader receives state sync from leader.                                *)
 (* Key: Remote events cleared, LOCAL events preserved.                        *)
+(* Candidates step down, clears election state.                               *)
+(* Transitions any non-leader -> Active.                                      *)
 (******************************************************************************)
 ReceiveStateSync(m) ==
     /\ m \in network
@@ -358,33 +369,36 @@ ReceiveStateSync(m) ==
            receiver == MsgTo(m)
            msgTerm == m[4]
            msgFrame == m[5]
-       IN /\ connected[receiver]
+       IN /\ IsConnected(receiver)
           /\ ~IsLeader(receiver)  \* Leaders don't accept syncs
           /\ CanCommunicate(sender, receiver)
           \* Term validation: only accept from current or higher term
           /\ msgTerm >= syncTerm[receiver]
+          \* Transition to Active (in sync with leader) - candidates step down
+          /\ mode' = [mode EXCEPT ![receiver] = "Active"]
           /\ currentTerm' = [currentTerm EXCEPT ![receiver] = IF msgTerm > currentTerm[receiver] THEN msgTerm ELSE currentTerm[receiver]]
+          \* Clear votes - cannot use old votes in new term
+          /\ votesReceived' = [votesReceived EXCEPT ![receiver] = {}]
+          \* Reset votedFor on term change (can vote again in new term)
+          /\ votedFor' = [votedFor EXCEPT ![receiver] = IF msgTerm > currentTerm[receiver] THEN 0 ELSE votedFor[receiver]]
           /\ syncTerm' = [syncTerm EXCEPT ![receiver] = msgTerm]
           \* KEY: Filter to keep only events owned by receiver
           /\ pendingEvents' = [pendingEvents EXCEPT
                ![receiver] = {e \in pendingEvents[receiver] : e[1] = receiver}]
-          /\ inSync' = [inSync EXCEPT ![receiver] = TRUE]
     /\ network' = network \ {m}
-    /\ UNCHANGED <<frame, state, votedFor, votesReceived,
-                   inputsReceived, heartbeatReceived>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED <<frame, inputsReceived, heartbeatReceived>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Peer detects state divergence (checksum mismatch).                         *)
+(* Transitions Active -> Syncing.                                             *)
 (******************************************************************************)
 Desync(p) ==
-    /\ connected[p]
-    /\ ~IsLeader(p)
-    /\ inSync[p] = TRUE
-    /\ inSync' = [inSync EXCEPT ![p] = FALSE]
-    /\ UNCHANGED <<electionVars, frameVars, syncTerm, pendingEvents, inputsReceived>>
+    /\ IsActive(p)  \* Only Active followers can desync
+    /\ mode' = [mode EXCEPT ![p] = "Syncing"]
+    /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, syncVars, inputsReceived>>
     /\ UNCHANGED networkVars
 
 ----
@@ -399,7 +413,6 @@ Desync(p) ==
 (******************************************************************************)
 BroadcastHeartbeat(leader) ==
     /\ IsLeader(leader)
-    /\ connected[leader]
     /\ Cardinality(network) < MaxMessages
     \* Send heartbeat to all connected peers
     /\ LET newMsgs == {<<"heartbeat", leader, q, currentTerm[leader]>>
@@ -408,12 +421,13 @@ BroadcastHeartbeat(leader) ==
     \* Leader's own heartbeat is always "received"
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![leader] = TRUE]
     /\ UNCHANGED <<electionVars, frame, syncVars, inputsReceived>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Peer receives heartbeat from leader.                                       *)
+(* Non-followers step down to Syncing (need state sync from new leader).      *)
 (******************************************************************************)
 ReceiveHeartbeat(m) ==
     /\ m \in network
@@ -421,16 +435,20 @@ ReceiveHeartbeat(m) ==
     /\ LET sender == MsgFrom(m)
            receiver == MsgTo(m)
            msgTerm == m[4]
-       IN /\ connected[receiver]
+       IN /\ IsConnected(receiver)
           /\ CanCommunicate(sender, receiver)
           /\ msgTerm >= currentTerm[receiver]
-          \* Accept heartbeat: become follower, update term
-          /\ state' = [state EXCEPT ![receiver] = "Follower"]
+          \* Accept heartbeat: Leaders/Candidates step down to Syncing, Active stays Active
+          /\ mode' = [mode EXCEPT ![receiver] =
+               CASE IsLeader(receiver)    -> "Syncing"    \* Leader steps down
+                 [] IsCandidate(receiver) -> "Syncing"    \* Candidate steps down
+                 [] IsActive(receiver)    -> "Active"     \* Stay in sync
+                 [] OTHER                 -> "Syncing"]   \* Syncing stays Syncing
           /\ currentTerm' = [currentTerm EXCEPT ![receiver] = msgTerm]
           /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![receiver] = TRUE]
     /\ network' = network \ {m}
     /\ UNCHANGED <<frame, votedFor, votesReceived, inputsReceived, syncVars>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -438,7 +456,7 @@ ReceiveHeartbeat(m) ==
 (* Peer's heartbeat timer expires (models timeout).                           *)
 (******************************************************************************)
 ExpireHeartbeat(p) ==
-    /\ connected[p]
+    /\ IsConnected(p)
     /\ heartbeatReceived[p] = TRUE
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
     /\ UNCHANGED <<electionVars, frame, syncVars, inputsReceived>>
@@ -453,14 +471,14 @@ ExpireHeartbeat(p) ==
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Follower starts election after heartbeat timeout.                          *)
+(* Transitions Active/Syncing -> Electing.                                    *)
 (******************************************************************************)
 StartElection(p) ==
-    /\ connected[p]
-    /\ state[p] = "Follower"
+    /\ IsFollower(p)  \* Active or Syncing
     /\ heartbeatReceived[p] = FALSE
     /\ currentTerm[p] < MaxTerm
+    /\ mode' = [mode EXCEPT ![p] = "Electing"]
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
-    /\ state' = [state EXCEPT ![p] = "Candidate"]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = TRUE]
@@ -469,12 +487,13 @@ StartElection(p) ==
                        : q \in ConnectedPeers \ {p}}
        IN network' = network \union newMsgs
     /\ UNCHANGED <<frame, syncVars, inputsReceived>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Peer receives vote request and grants vote.                                *)
+(* Non-Active voters step down to Syncing.                                    *)
 (******************************************************************************)
 ReceiveVoteRequest(m) ==
     /\ m \in network
@@ -483,22 +502,26 @@ ReceiveVoteRequest(m) ==
            voter == MsgTo(m)
            msgTerm == m[4]
            lastFrame == m[5]
-       IN /\ connected[voter]
+       IN /\ IsConnected(voter)
           /\ CanCommunicate(candidate, voter)
           /\ msgTerm >= currentTerm[voter]
           /\ lastFrame >= frame[voter]  \* Log comparison
           /\ \/ votedFor[voter] = 0
              \/ msgTerm > currentTerm[voter]
-          \* Grant vote
+          \* Grant vote: non-Active modes step down to Syncing
+          /\ mode' = [mode EXCEPT ![voter] =
+               CASE IsLeader(voter)    -> "Syncing"    \* Leader steps down
+                 [] IsCandidate(voter) -> "Syncing"    \* Candidate steps down
+                 [] IsActive(voter)    -> "Active"     \* Stay in sync
+                 [] OTHER              -> "Syncing"]   \* Syncing stays Syncing
           /\ votedFor' = [votedFor EXCEPT ![voter] = candidate]
           /\ currentTerm' = [currentTerm EXCEPT ![voter] = msgTerm]
-          /\ state' = [state EXCEPT ![voter] = "Follower"]
           /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![voter] = TRUE]
           \* Send vote response
           /\ network' = (network \ {m}) \union
                {<<"vote_resp", voter, candidate, msgTerm, TRUE>>}
     /\ UNCHANGED <<frame, votesReceived, syncVars, inputsReceived>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -512,27 +535,27 @@ ReceiveVoteResponse(m) ==
            candidate == MsgTo(m)
            msgTerm == m[4]
            granted == m[5]
-       IN /\ connected[candidate]
+       IN /\ IsConnected(candidate)
           /\ CanCommunicate(voter, candidate)
-          /\ state[candidate] = "Candidate"
+          /\ IsCandidate(candidate)
           /\ msgTerm = currentTerm[candidate]
           /\ granted = TRUE
           /\ votesReceived' = [votesReceived EXCEPT
                ![candidate] = votesReceived[candidate] \union {voter}]
     /\ network' = network \ {m}
-    /\ UNCHANGED <<frame, currentTerm, state, votedFor, frameVars, syncVars, inputsReceived>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED <<currentTerm, mode, votedFor, frameVars, syncVars, inputsReceived>>
+    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Candidate wins election with majority votes.                               *)
+(* Transitions Electing -> Leading.                                           *)
 (******************************************************************************)
 BecomeLeader(p) ==
-    /\ connected[p]
-    /\ state[p] = "Candidate"
+    /\ IsCandidate(p)
     /\ IsMajority(votesReceived[p])
-    /\ state' = [state EXCEPT ![p] = "Leader"]
+    /\ mode' = [mode EXCEPT ![p] = "Leading"]
     /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, syncVars, inputsReceived>>
     /\ UNCHANGED networkVars
 
@@ -540,12 +563,12 @@ BecomeLeader(p) ==
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Leader steps down upon seeing higher term.                                 *)
+(* Transitions Leading -> Syncing (needs sync from new leader).               *)
 (******************************************************************************)
 StepDown(p) ==
-    /\ connected[p]
     /\ IsLeader(p)
     /\ \E q \in Peer : currentTerm[q] > currentTerm[p]
-    /\ state' = [state EXCEPT ![p] = "Follower"]
+    /\ mode' = [mode EXCEPT ![p] = "Syncing"]
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![p] = FALSE]
     /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frame, syncVars, inputsReceived>>
     /\ UNCHANGED networkVars
@@ -556,8 +579,7 @@ StepDown(p) ==
 (* Candidate retries election after timeout.                                  *)
 (******************************************************************************)
 RetryElection(p) ==
-    /\ connected[p]
-    /\ state[p] = "Candidate"
+    /\ IsCandidate(p)
     /\ currentTerm[p] < MaxTerm
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
@@ -566,8 +588,8 @@ RetryElection(p) ==
     /\ LET newMsgs == {<<"vote_req", p, q, currentTerm'[p], frame[p]>>
                        : q \in ConnectedPeers \ {p}}
        IN network' = network \union newMsgs
-    /\ UNCHANGED <<state, frameVars, syncVars, inputsReceived>>
-    /\ UNCHANGED <<connected, partitioned>>
+    /\ UNCHANGED <<mode, frameVars, syncVars, inputsReceived>>
+    /\ UNCHANGED partitioned
 
 ----
 (**************************************************************************************************)
@@ -635,10 +657,8 @@ TypeInvariant ==
     /\ \A p \in Peer : frame[p] >= 0 /\ frame[p] <= MaxFrame
     /\ \A p \in Peer : currentTerm[p] >= 0 /\ currentTerm[p] <= MaxTerm
     /\ \A p \in Peer : syncTerm[p] >= 0 /\ syncTerm[p] <= MaxTerm
-    /\ \A p \in Peer : state[p] \in {"Leader", "Follower", "Candidate"}
+    /\ \A p \in Peer : mode[p] \in Mode
     /\ \A p \in Peer : Cardinality(pendingEvents[p]) <= MaxEvents
-    /\ \A p \in Peer : inSync[p] \in BOOLEAN
-    /\ \A p \in Peer : connected[p] \in BOOLEAN
     /\ Cardinality(network) <= MaxMessages
 
 \* Leader is at most 1 frame behind connected peers
@@ -656,7 +676,7 @@ SyncTermBounded ==
 
 \* If candidate, must have voted for self
 CandidateVotedForSelf ==
-    \A p \in Peer : state[p] = "Candidate" => votedFor[p] = p
+    \A p \in Peer : IsCandidate(p) => votedFor[p] = p
 
 \* If leader, must have voted for self
 LeaderVotedForSelf ==
@@ -697,10 +717,10 @@ InputsFromValidPeers ==
 EventuallyLeader ==
     <>(\E p \in ConnectedPeers : IsLeader(p))
 
-\* Desync is eventually corrected via state sync
+\* Desync is eventually corrected via state sync (Syncing -> Active)
 DesyncEventuallyCorrected ==
     (\E p \in Peer : IsLeader(p)) =>
-        <>(\A p \in ConnectedPeers : inSync[p])
+        <>(\A p \in ConnectedPeers : ~IsSyncing(p))
 
 \* Partitions eventually heal
 PartitionsEventuallyHeal ==

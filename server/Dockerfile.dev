@@ -1,0 +1,38 @@
+# Development Dockerfile for Phoenix server
+# Includes dev tools and hot reloading support
+
+FROM hexpm/elixir:1.19.0-erlang-28.0-alpine-3.21.0
+
+WORKDIR /app
+
+# Install build and dev dependencies
+RUN apk add --no-cache \
+    git \
+    build-base \
+    inotify-tools \
+    nodejs \
+    npm
+
+# Install hex + rebar
+RUN mix local.hex --force && \
+    mix local.rebar --force
+
+# Set development environment
+ENV MIX_ENV=dev
+
+# Copy dependency files first (for caching)
+COPY mix.exs mix.lock ./
+
+# Install dependencies
+RUN mix deps.get
+
+# Copy application code
+COPY . .
+
+# Compile
+RUN mix compile
+
+EXPOSE 4200
+
+# Start Phoenix with code reloading
+CMD ["mix", "phx.server"]
