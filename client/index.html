@@ -214,6 +214,35 @@
       margin-bottom: 20px;
       letter-spacing: 3px;
     }
+    .player-name-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 25px;
+    }
+    .player-name-row label {
+      color: #088;
+      font-size: 12px;
+      letter-spacing: 2px;
+    }
+    .player-name-row input {
+      background: rgba(0, 0, 0, 0.5);
+      border: 2px solid #f0f;
+      color: #f0f;
+      padding: 10px 15px;
+      font-family: 'Pixelon', monospace;
+      font-size: 14px;
+      width: 180px;
+      text-transform: uppercase;
+    }
+    .player-name-row input::placeholder {
+      color: #606;
+    }
+    .player-name-row input:focus {
+      outline: none;
+      border-color: #f0f;
+      box-shadow: 0 0 15px rgba(255, 0, 255, 0.3);
+    }
 
     /* Room List View */
     #roomListView { text-align: center; }
@@ -498,6 +527,11 @@
   <!-- Lobby Screen -->
   <div id="lobbyScreen" class="hidden">
     <h1>MULTIPLAYER</h1>
+
+    <div class="player-name-row">
+      <label>CALLSIGN:</label>
+      <input type="text" id="playerNameInput" placeholder="PLAYER" maxlength="16" />
+    </div>
 
     <!-- Room List View -->
     <div id="roomListView">

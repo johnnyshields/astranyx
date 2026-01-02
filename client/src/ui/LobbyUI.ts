@@ -35,6 +35,7 @@ export class LobbyUI {
   // Room List elements
   private roomList: HTMLElement | null = null
   private roomNameInput: HTMLInputElement | null = null
+  private playerNameInput: HTMLInputElement | null = null
   private lobbyError: HTMLElement | null = null
 
   // Room Waiting elements
@@ -48,11 +49,38 @@ export class LobbyUI {
 
   // State
   private localPlayerId = ''
+  private playerNames: Map<string, string> = new Map() // playerId -> displayName
 
   constructor(callbacks: LobbyUICallbacks) {
     this.callbacks = callbacks
     this.bindElements()
     this.setupEventListeners()
+    this.initPlayerName()
+  }
+
+  private initPlayerName(): void {
+    // Load from localStorage or generate default
+    const saved = localStorage.getItem('astranyx_player_name')
+    if (saved && this.playerNameInput) {
+      this.playerNameInput.value = saved
+    } else if (this.playerNameInput) {
+      // Generate a default name like "PILOT-1234"
+      const randomNum = Math.floor(Math.random() * 9000) + 1000
+      this.playerNameInput.value = `PILOT-${randomNum}`
+    }
+
+    // Save on change
+    this.playerNameInput?.addEventListener('input', () => {
+      const name = this.playerNameInput?.value.trim()
+      if (name) {
+        localStorage.setItem('astranyx_player_name', name)
+      }
+    })
+  }
+
+  getPlayerName(): string {
+    const name = this.playerNameInput?.value.trim()
+    return name || 'PLAYER'
   }
 
   private bindElements(): void {
@@ -65,6 +93,7 @@ export class LobbyUI {
     // Room List
     this.roomList = document.getElementById('roomList')
     this.roomNameInput = document.getElementById('roomNameInput') as HTMLInputElement
+    this.playerNameInput = document.getElementById('playerNameInput') as HTMLInputElement
     this.lobbyError = document.getElementById('lobbyError')
 
     // Room Waiting
@@ -212,6 +241,22 @@ export class LobbyUI {
 
   setLocalPlayerId(playerId: string): void {
     this.localPlayerId = playerId
+    // Map local player's ID to their custom name
+    this.playerNames.set(playerId, this.getPlayerName())
+  }
+
+  setPlayerName(playerId: string, name: string): void {
+    this.playerNames.set(playerId, name)
+  }
+
+  private getDisplayName(playerId: string): string {
+    // Check if we have a custom name for this player
+    const customName = this.playerNames.get(playerId)
+    if (customName) {
+      return customName.toUpperCase()
+    }
+    // Fall back to truncated ID
+    return truncatePlayerId(playerId)
   }
 
   updatePlayerList(players: string[], hostId: string): void {
@@ -225,7 +270,7 @@ export class LobbyUI {
         if (isHost) classes.push('host')
         if (isLocal) classes.push('local')
 
-        const displayName = truncatePlayerId(playerId)
+        const displayName = this.getDisplayName(playerId)
 
         return `
           <div class="${classes.join(' ')}">
@@ -252,7 +297,7 @@ export class LobbyUI {
 
     const items: string[] = []
     for (const [playerId, state] of peers) {
-      const displayName = truncatePlayerId(playerId)
+      const displayName = this.getDisplayName(playerId)
 
       items.push(`
         <div class="peer-status-item">
