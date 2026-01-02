@@ -67,6 +67,7 @@ import { LocalEventQueue } from './LocalEventQueue.ts'
 import { StateSyncManager } from './StateSyncManager.ts'
 import { LeaderElection } from './LeaderElection.ts'
 import { SafeConsole } from '../core/SafeConsole.ts'
+import { MessageCodec } from './protocol/index.ts'
 
 // Re-export types for backwards compatibility
 export type { PlayerInput, GameEvent, FrameInput, LockstepConfig, StateSyncMessage }
@@ -80,6 +81,7 @@ export class LockstepNetcode {
   private eventQueue: LocalEventQueue
   private syncManager: StateSyncManager
   private election: LeaderElection
+  private codec: MessageCodec
 
   // Frame tracking
   private currentFrame = 0
@@ -105,38 +107,44 @@ export class LockstepNetcode {
 
   constructor(config: LockstepConfig) {
     this.config = {
-      inputDelay: config.inputDelay ?? DEFAULT_CONFIG.inputDelay,
+      inputDelayTicks: config.inputDelayTicks ?? DEFAULT_CONFIG.inputDelayTicks,
       playerCount: config.playerCount,
       localPlayerId: config.localPlayerId,
       playerOrder: config.playerOrder,
-      stateSyncInterval: config.stateSyncInterval ?? DEFAULT_CONFIG.stateSyncInterval,
-      eventBufferSize: config.eventBufferSize ?? DEFAULT_CONFIG.eventBufferSize,
-      electionTimeout: config.electionTimeout ?? DEFAULT_CONFIG.electionTimeout,
-      heartbeatInterval: config.heartbeatInterval ?? DEFAULT_CONFIG.heartbeatInterval,
+      stateSyncTicks: config.stateSyncTicks ?? DEFAULT_CONFIG.stateSyncTicks,
+      eventBufferTicks: config.eventBufferTicks ?? DEFAULT_CONFIG.eventBufferTicks,
+      electionTimeoutMs: config.electionTimeoutMs ?? DEFAULT_CONFIG.electionTimeoutMs,
+      heartbeatMs: config.heartbeatMs ?? DEFAULT_CONFIG.heartbeatMs,
     }
 
     // Initialize components
     this.inputBuffer = new InputBuffer({
-      inputDelay: this.config.inputDelay,
+      inputDelayTicks: this.config.inputDelayTicks,
       playerCount: this.config.playerCount,
       playerOrder: this.config.playerOrder,
     })
 
     this.eventQueue = new LocalEventQueue({
-      bufferSize: this.config.eventBufferSize!,
+      bufferSize: this.config.eventBufferTicks!,
       localPlayerId: this.config.localPlayerId,
     })
 
     this.syncManager = new StateSyncManager({
-      syncInterval: this.config.stateSyncInterval!,
+      syncInterval: this.config.stateSyncTicks!,
     })
     this.syncManager.setEventQueue(this.eventQueue)
 
     this.election = new LeaderElection({
       localPlayerId: this.config.localPlayerId,
       playerOrder: this.config.playerOrder,
-      electionTimeout: this.config.electionTimeout!,
-      heartbeatInterval: this.config.heartbeatInterval!,
+      electionTimeoutMs: this.config.electionTimeoutMs!,
+      heartbeatMs: this.config.heartbeatMs!,
+    })
+
+    // Initialize binary protocol codec
+    this.codec = new MessageCodec({
+      playerOrder: this.config.playerOrder,
+      useBinaryProtocol: true,
     })
 
     // Wire up election message sending
@@ -174,7 +182,7 @@ export class LockstepNetcode {
 
     SafeConsole.log('LockstepNetcode: Started', {
       playerCount: this.config.playerCount,
-      inputDelay: this.config.inputDelay,
+      inputDelayTicks: this.config.inputDelayTicks,
       localPlayerId: this.config.localPlayerId,
       isLeader: this.election.isLeader(),
       peers: Array.from(this.peers.keys()),
@@ -195,7 +203,9 @@ export class LockstepNetcode {
     this.election.addPeer(playerId)
 
     dataChannel.onmessage = (event) => {
-      const data = JSON.parse(event.data as string) as NetMessage
+      // Support both binary (ArrayBuffer) and JSON (string) messages
+      const rawData = event.data
+      const data = this.codec.decode(rawData as ArrayBuffer | string)
       this.handleMessage(data, playerId)
     }
   }
@@ -248,7 +258,7 @@ export class LockstepNetcode {
     }
 
     // Create input for future frame (with input delay)
-    const targetFrame = this.currentFrame + this.config.inputDelay
+    const targetFrame = this.currentFrame + this.config.inputDelayTicks
     const frameInput: FrameInput = {
       frame: targetFrame,
       playerId: this.config.localPlayerId,
@@ -286,7 +296,7 @@ export class LockstepNetcode {
     this.waitingForInputs = false
 
     // Check for desync
-    const checksumFrame = this.currentFrame - this.config.inputDelay
+    const checksumFrame = this.currentFrame - this.config.inputDelayTicks
     if (checksumFrame >= 0) {
       this.checkForDesync(checksumFrame)
     }
@@ -343,7 +353,7 @@ export class LockstepNetcode {
 
     // Track peer's frame for FrameBoundedDrift invariant
     // Peer's currentFrame is approximately frameInput.frame - inputDelay
-    const peerFrame = frameInput.frame - this.config.inputDelay
+    const peerFrame = frameInput.frame - this.config.inputDelayTicks
     const existingFrame = this.peerFrames.get(frameInput.playerId) ?? 0
     if (peerFrame > existingFrame) {
       this.peerFrames.set(frameInput.playerId, peerFrame)
@@ -356,10 +366,22 @@ export class LockstepNetcode {
   }
 
   private broadcastInput(frameInput: FrameInput): void {
-    const message = JSON.stringify(frameInput)
+    const encoded = this.codec.encode(frameInput)
+    this.broadcastEncoded(encoded)
+  }
+
+  /**
+   * Send encoded data to all peers.
+   * Handles type narrowing for RTCDataChannel.send() overloads.
+   */
+  private broadcastEncoded(encoded: string | ArrayBuffer): void {
     for (const [, channel] of this.peers) {
       if (channel.readyState === 'open') {
-        channel.send(message)
+        if (typeof encoded === 'string') {
+          channel.send(encoded)
+        } else {
+          channel.send(encoded)
+        }
       }
     }
   }
@@ -367,7 +389,12 @@ export class LockstepNetcode {
   private sendToPeer(peerId: string, message: NetMessage): void {
     const channel = this.peers.get(peerId)
     if (channel && channel.readyState === 'open') {
-      channel.send(JSON.stringify(message))
+      const encoded = this.codec.encode(message)
+      if (typeof encoded === 'string') {
+        channel.send(encoded)
+      } else {
+        channel.send(encoded)
+      }
     }
   }
 
@@ -386,13 +413,8 @@ export class LockstepNetcode {
     }
 
     const message = this.syncManager.createSyncMessage(state, checksum)
-    const json = JSON.stringify(message)
-
-    for (const [, channel] of this.peers) {
-      if (channel.readyState === 'open') {
-        channel.send(json)
-      }
-    }
+    const encoded = this.codec.encode(message)
+    this.broadcastEncoded(encoded)
 
     this.syncManager.onSyncSent()
     SafeConsole.log(`LockstepNetcode: Broadcast state sync at frame ${this.currentFrame}`)
@@ -531,7 +553,7 @@ export class LockstepNetcode {
   }
 
   getInputDelay(): number {
-    return this.config.inputDelay
+    return this.config.inputDelayTicks
   }
 
   /**

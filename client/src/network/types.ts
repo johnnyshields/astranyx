@@ -179,6 +179,7 @@ export interface HeartbeatMessage {
   term: number
   leaderId: string
   frame: number
+  timestamp?: number  // For RTT measurement (ms since epoch)
 }
 
 export interface HeartbeatAckMessage {
@@ -186,6 +187,7 @@ export interface HeartbeatAckMessage {
   term: number
   peerId: string
   frame: number
+  timestamp?: number  // Echo back the heartbeat timestamp for RTT calculation
 }
 
 /**
@@ -233,27 +235,36 @@ export function isFrameInput(msg: NetMessage): msg is FrameInput {
 
 /**
  * Configuration for lockstep netcode
+ * Tick values are simulation ticks (30Hz), time values are milliseconds
  */
 export interface LockstepConfig {
-  inputDelay: number           // Frames of input delay (default: 3)
+  inputDelayTicks: number      // Ticks of input delay (default: 2)
   playerCount: number
   localPlayerId: string
   playerOrder: Map<string, number>  // player_id -> index
-  stateSyncInterval?: number   // Frames between state syncs (default: 300 = 5 seconds)
-  eventBufferSize?: number     // Max frames of events to buffer (default: 900 = 15 seconds)
-  electionTimeout?: number     // Ms before election timeout (default: 1500)
-  heartbeatInterval?: number   // Ms between heartbeats (default: 500)
+  stateSyncTicks?: number      // Ticks between state syncs (default: 150 = 5 seconds)
+  eventBufferTicks?: number    // Max ticks of events to buffer (default: 450 = 15 seconds)
+  electionTimeoutMs?: number   // Ms before election timeout (default: 1500)
+  heartbeatMs?: number         // Ms between heartbeats (default: 500)
 }
 
 /**
+ * Simulation tick rate (must match Engine.ts)
+ * Network sync happens at this rate, not render frame rate
+ */
+export const SIM_TICK_RATE = 30 // ticks per second
+export const SIM_TICK_MS = 1000 / SIM_TICK_RATE // 33.33ms per tick
+
+/**
  * Default configuration values
+ * Tick values are simulation ticks (30Hz), time values are milliseconds
  */
 export const DEFAULT_CONFIG = {
-  inputDelay: 3,
-  stateSyncInterval: 300,      // 5 seconds at 60fps
-  eventBufferSize: 900,        // 15 seconds at 60fps
-  electionTimeout: 1500,       // 1.5 seconds
-  heartbeatInterval: 500,      // 0.5 seconds
+  inputDelayTicks: 2,          // 2 ticks = 66ms at 30Hz (responsive for shooters)
+  stateSyncTicks: 150,         // 5 seconds at 30Hz (150 ticks)
+  eventBufferTicks: 450,       // 15 seconds at 30Hz (450 ticks)
+  electionTimeoutMs: 1500,     // 1.5 seconds
+  heartbeatMs: 500,            // 0.5 seconds
 } as const
 
 // =============================================================================

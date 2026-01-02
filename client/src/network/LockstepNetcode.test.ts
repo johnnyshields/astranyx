@@ -17,7 +17,7 @@ function createMockDataChannel(): RTCDataChannel {
 
 function createConfig(overrides?: Partial<LockstepConfig>): LockstepConfig {
   return {
-    inputDelay: 3,
+    inputDelayTicks: 3,
     playerCount: 2,
     localPlayerId: 'player1',
     playerOrder: new Map([['player1', 0], ['player2', 1]]),
@@ -58,7 +58,7 @@ describe('LockstepNetcode', () => {
     })
 
     it('should use custom input delay', () => {
-      const customLockstep = new LockstepNetcode(createConfig({ inputDelay: 5 }))
+      const customLockstep = new LockstepNetcode(createConfig({ inputDelayTicks: 5 }))
       expect(customLockstep.getInputDelay()).toBe(5)
     })
 
