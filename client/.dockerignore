@@ -1,0 +1,26 @@
+# Build artifacts
+dist/
+coverage/
+node_modules/
+
+# Development
+.git/
+.gitignore
+*.md
+Dockerfile*
+.dockerignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test files
+__mocks__/
+*.test.ts
+*.spec.ts
+vitest.config.ts
+
+# Environment
+.env*

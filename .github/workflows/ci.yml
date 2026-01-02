@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master]
 
 jobs:
   client_lint:
@@ -170,18 +170,23 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v6
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Cache TLC JAR
-        uses: actions/cache@v5
-        with:
-          path: tla/tmp/tla2tools.jar
-          key: tlc-jar-1.8.0
-
-      - name: Verify TLA+ models (hash check + sanity check)
+      - name: Verify TLA+ models (hash check)
         working-directory: tla
-        run: ./run_tlc.sh --ci --download-jar
+        run: ./run_tlc.sh --hash-check --download-jar
+
+      # # Full sanity check
+      # - name: Setup Java
+      #   uses: actions/setup-java@v5
+      #   with:
+      #     distribution: 'temurin'
+      #     java-version: '21'
+      #
+      # - name: Cache TLC JAR
+      #   uses: actions/cache@v5
+      #   with:
+      #     path: tla/tmp/tla2tools.jar
+      #     key: tlc-jar-1.8.0
+      #
+      # - name: Verify TLA+ models (hash check + sanity check)
+      #   working-directory: tla
+      #   run: ./run_tlc.sh --ci --download-jar

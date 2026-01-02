@@ -1,4 +1,18 @@
 
+- Game States
+  - Game-over
+  - Looser lockstep? e.g. 30 frames
+  - Player disconnected (goes to autopilot?)
+
+- Networking
+  - [ ] Tune for slow clients
+  - [ ] Kickout players who are too slow
+
+- Game Modes
+  - [ ] 3D - Fly forward
+  - [ ] 3D - Free flight
+  - [ ] 3D - Toroidal
+
 - Assets
   - [ ] Ships
   - [ ] Levels / Backgrounds

@@ -50,6 +50,12 @@ export class Input {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    // Don't capture keys when user is typing in an input field
+    const target = e.target as HTMLElement
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return
+    }
+
     // Prevent default for game keys
     if (this.isGameKey(e.code)) {
       e.preventDefault()
