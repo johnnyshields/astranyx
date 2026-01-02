@@ -1,4 +1,13 @@
 
+- Networking
+  - [ ] Tune for slow clients
+  - [ ] Kickout players who are too slow
+
+- Game Modes
+  - [ ] 3D - Fly forward
+  - [ ] 3D - Free flight
+  - [ ] 3D - Toroidal
+
 - Assets
   - [ ] Ships
   - [ ] Levels / Backgrounds
