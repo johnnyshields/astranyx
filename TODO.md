@@ -1,4 +1,9 @@
 
+- Game States
+  - Game-over
+  - Looser lockstep? e.g. 30 frames
+  - Player disconnected (goes to autopilot?)
+
 - Networking
   - [ ] Tune for slow clients
   - [ ] Kickout players who are too slow
