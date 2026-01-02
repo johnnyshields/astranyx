@@ -10,6 +10,7 @@
 #   ./run_tlc.sh -k, --hash-check       # Hash check: fail if any hashes missing
 #   ./run_tlc.sh -s, --sanity           # Sanity check: run each model for 30s
 #   ./run_tlc.sh -x, --fail-fast        # Stop on first failure
+#   ./run_tlc.sh -r, --recover          # Resume from most recent checkpoint
 #   ./run_tlc.sh --ci                   # CI mode: hash check + sanity checks (30s each)
 #   ./run_tlc.sh -d, --download-jar     # Auto-download TLC jar to tla/tmp if missing
 #   ./run_tlc.sh --jar ~/tla2tools.jar  # Specify path to tla2tools.jar
@@ -45,11 +46,12 @@ HASH_CHECK_ONLY=false
 SANITY_MODE=false
 FAIL_FAST=false
 DOWNLOAD_JAR=false
+RECOVER_MODE=false
 TLC_JAR=""
 MODEL_ARGS=()
 
 show_help() {
-    head -15 "$0" | tail -10
+    head -16 "$0" | tail -11
     exit 0
 }
 
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         -k|--hash-check) HASH_CHECK_ONLY=true; shift ;;
         -s|--sanity) SANITY_MODE=true; shift ;;
         -x|--fail-fast) FAIL_FAST=true; shift ;;
+        -r|--recover) RECOVER_MODE=true; shift ;;
         -d|--download-jar) DOWNLOAD_JAR=true; shift ;;
         --jar)
             TLC_JAR="$2"
@@ -198,6 +201,26 @@ if [[ "$CI_MODE" == "true" ]]; then
     fi
 fi
 
+# Recover mode: find most recent checkpoint and resume
+if [[ "$RECOVER_MODE" == "true" ]]; then
+    # Find checkpoint directories (format: YY-MM-DD-HH-MM-SS.mmm)
+    CHECKPOINT_DIR=$(find "$TMP_DIR" -maxdepth 1 -type d -name "[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9].*" 2>/dev/null | sort -r | head -1)
+
+    if [[ -z "$CHECKPOINT_DIR" ]]; then
+        echo "Error: No checkpoint found in $TMP_DIR"
+        echo ""
+        echo "Checkpoint directories look like: 26-01-02-23-34-38.549"
+        exit 1
+    fi
+
+    echo "Found checkpoint: $CHECKPOINT_DIR"
+    echo ""
+
+    # Extract model name from checkpoint - look for MC*.tla reference in states/ subdir
+    # TLC checkpoints include the spec name in the directory structure
+    CHECKPOINT_NAME=$(basename "$CHECKPOINT_DIR")
+fi
+
 # Resolve TLC JAR (skip if already set by CI mode)
 if [[ -z "$TLC_JAR" ]] || [[ ! -f "$TLC_JAR" ]]; then
     # Try to find tla2tools.jar: --jar flag, local download, or PATH
@@ -228,6 +251,25 @@ fi
 
 # Track failures for reporting at end
 FAILED_MODELS=()
+
+# Configure TLC resource settings (heap size, workers)
+# Sets HEAP and WORKERS variables for use in TLC invocations
+configure_tlc_resources() {
+    if [[ -f /proc/meminfo ]]; then
+        TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+        TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+    elif command -v sysctl &> /dev/null; then
+        # macOS
+        TOTAL_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+        TOTAL_MEM_GB=$((TOTAL_MEM_BYTES / 1024 / 1024 / 1024))
+    else
+        TOTAL_MEM_GB=8
+    fi
+    HEAP_GB=$((TOTAL_MEM_GB * 75 / 100))
+    [[ $HEAP_GB -lt 4 ]] && HEAP_GB=4
+    HEAP="-Xmx${HEAP_GB}g"
+    WORKERS="-workers auto"
+}
 
 # Sanity check mode: run each model for limited time
 run_model_sanity() {
@@ -319,21 +361,7 @@ run_model() {
     echo "[$SPEC_NAME] Running TLC model checker..."
     echo ""
 
-    # Resource configuration: use 75% of available memory, auto workers
-    if [[ -f /proc/meminfo ]]; then
-        TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-        TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
-    elif command -v sysctl &> /dev/null; then
-        # macOS
-        TOTAL_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
-        TOTAL_MEM_GB=$((TOTAL_MEM_BYTES / 1024 / 1024 / 1024))
-    else
-        TOTAL_MEM_GB=8
-    fi
-    HEAP_GB=$((TOTAL_MEM_GB * 75 / 100))
-    [[ $HEAP_GB -lt 4 ]] && HEAP_GB=4
-    HEAP="-Xmx${HEAP_GB}g"
-    WORKERS="-workers auto"
+    configure_tlc_resources
 
     local TLC_OUTPUT
     TLC_OUTPUT=$(java -XX:+UseParallelGC \
@@ -388,6 +416,26 @@ run_model() {
         return 1
     fi
 }
+
+# Run recover mode if requested
+if [[ "$RECOVER_MODE" == "true" ]]; then
+    cd "$SCRIPT_DIR"
+    configure_tlc_resources
+
+    echo "Resuming TLC from checkpoint: $CHECKPOINT_DIR"
+    echo ""
+
+    java -XX:+UseParallelGC \
+         -Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.OffHeapDiskFPSet \
+         $HEAP \
+         -jar "$TLC_JAR" \
+         -recover "$CHECKPOINT_DIR" \
+         -metadir "$TMP_DIR" \
+         -lncheck final \
+         $WORKERS
+
+    exit $?
+fi
 
 # Parse comma-separated model list and run each model
 IFS=',' read -ra MODELS <<< "$MODEL_LIST"
