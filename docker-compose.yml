@@ -1,0 +1,63 @@
+# Local development environment
+# Usage: docker compose up
+
+services:
+  # Phoenix server (Elixir)
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    ports:
+      - "4200:4200"
+    environment:
+      - MIX_ENV=dev
+      - PHX_HOST=localhost
+      - SECRET_KEY_BASE=dev-secret-key-at-least-64-characters-long-for-phoenix-to-work-properly
+      - TURN_SECRET=dev-turn-secret-for-local-testing
+      - TURN_URLS=turn:localhost:3478
+    volumes:
+      - ./server:/app
+      - server_deps:/app/deps
+      - server_build:/app/_build
+    depends_on:
+      - coturn
+
+  # Vite dev server (TypeScript client)
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.dev
+    ports:
+      - "4100:4100"
+    environment:
+      - VITE_API_URL=http://localhost:4200
+    volumes:
+      - ./client:/app
+      - client_node_modules:/app/node_modules
+    depends_on:
+      - server
+
+  # TURN server for WebRTC
+  coturn:
+    image: coturn/coturn:latest
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--realm=astranyx"
+      - "--use-auth-secret"
+      - "--static-auth-secret=dev-turn-secret-for-local-testing"
+      - "--min-port=49152"
+      - "--max-port=49200"
+      - "--fingerprint"
+      - "--lt-cred-mech"
+      - "--no-cli"
+      - "--no-tls"
+      - "--no-dtls"
+
+volumes:
+  server_deps:
+  server_build:
+  client_node_modules:
