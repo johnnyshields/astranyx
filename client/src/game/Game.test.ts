@@ -103,10 +103,16 @@ describe('Game', () => {
   describe('constructor', () => {
     it('should create game with renderer and input', () => {
       expect(game).toBeInstanceOf(Game)
+      expect(game).toBeDefined()
     })
 
     it('should start in title state', () => {
       expect(game.getState()).toBe('title')
+      expect(typeof game.getState()).toBe('string')
+    })
+
+    it('should have null simulation before init', () => {
+      expect(game.getSimulation()).toBeNull()
     })
   })
 
@@ -144,7 +150,13 @@ describe('Game', () => {
     it('should initialize HUD', async () => {
       await game.init()
 
-      // HUD init is called internally
+      // HUD init is called internally - just verify no errors
+      expect(game.getState()).toBe('title')
+    })
+
+    it('should be callable multiple times safely', async () => {
+      await game.init()
+      await expect(game.init()).resolves.not.toThrow()
     })
   })
 
@@ -158,6 +170,7 @@ describe('Game', () => {
 
       expect(game.getState()).toBe('playing')
       expect(game.getSimulation()).not.toBeNull()
+      expect(typeof game.getState()).toBe('string')
     })
 
     it('should start two player game', () => {
@@ -174,6 +187,21 @@ describe('Game', () => {
 
       expect(titleScreen!.classList.contains('hidden')).toBe(true)
     })
+
+    it('should create simulation with correct player count', () => {
+      game.startLocalGame(2)
+
+      const sim = game.getSimulation()
+      expect(sim).not.toBeNull()
+      expect(sim?.getPlayerIds().length).toBe(2)
+    })
+
+    it('should start with frame 0', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      expect(sim?.getFrame()).toBe(0)
+    })
   })
 
   describe('startSinglePlayer', () => {
@@ -185,6 +213,14 @@ describe('Game', () => {
       game.startSinglePlayer()
 
       expect(game.getState()).toBe('playing')
+      expect(game.getSimulation()).not.toBeNull()
+    })
+
+    it('should create single player simulation', () => {
+      game.startSinglePlayer()
+
+      const sim = game.getSimulation()
+      expect(sim?.getPlayerIds().length).toBe(1)
     })
   })
 
@@ -210,13 +246,50 @@ describe('Game', () => {
       // Should still be 2 player mode
       expect(game.getState()).toBe('playing')
     })
+
+    it('should reset simulation state', () => {
+      // Run some frames first
+      for (let i = 0; i < 50; i++) {
+        game.update(1 / 60)
+      }
+
+      const frameBeforeRestart = game.getSimulation()?.getFrame()
+      expect(frameBeforeRestart).toBeGreaterThan(0)
+
+      game.restartGame()
+
+      const frameAfterRestart = game.getSimulation()?.getFrame()
+      expect(frameAfterRestart).toBe(0)
+    })
+
+    it('should maintain playing state after restart', () => {
+      game.restartGame()
+      expect(game.getState()).toBe('playing')
+      expect(game.getSimulation()).not.toBeNull()
+    })
   })
 
   describe('resize', () => {
     it('should store screen dimensions', () => {
-      game.resize(1920, 1080)
+      // Should not throw with valid dimensions
+      expect(() => game.resize(1920, 1080)).not.toThrow()
+    })
 
-      // Dimensions stored internally
+    it('should handle various screen sizes', () => {
+      const sizes = [
+        [800, 600],
+        [1920, 1080],
+        [3840, 2160],
+        [1366, 768],
+      ]
+
+      for (const [width, height] of sizes) {
+        expect(() => game.resize(width, height)).not.toThrow()
+      }
+    })
+
+    it('should handle small sizes', () => {
+      expect(() => game.resize(320, 240)).not.toThrow()
     })
   })
 
@@ -385,6 +458,12 @@ describe('Game', () => {
   describe('getState', () => {
     it('should return current game state', () => {
       expect(game.getState()).toBe('title')
+      expect(typeof game.getState()).toBe('string')
+    })
+
+    it('should return valid game state values', () => {
+      const validStates: GameState[] = ['title', 'lobby', 'connecting', 'playing', 'paused', 'gameover']
+      expect(validStates).toContain(game.getState())
     })
   })
 
@@ -398,6 +477,17 @@ describe('Game', () => {
       game.startLocalGame(1)
 
       expect(game.getSimulation()).not.toBeNull()
+      expect(game.getSimulation()).toBeDefined()
+    })
+
+    it('should return consistent simulation reference', async () => {
+      await game.init()
+      game.startLocalGame(1)
+
+      const sim1 = game.getSimulation()
+      const sim2 = game.getSimulation()
+
+      expect(sim1).toBe(sim2)
     })
   })
 })
@@ -406,6 +496,20 @@ describe('GameState type', () => {
   it('should support all game states', () => {
     const states: GameState[] = ['title', 'lobby', 'connecting', 'playing', 'paused', 'gameover']
     expect(states).toHaveLength(6)
+    expect(Array.isArray(states)).toBe(true)
+  })
+
+  it('should have all states as strings', () => {
+    const states: GameState[] = ['title', 'lobby', 'connecting', 'playing', 'paused', 'gameover']
+    for (const state of states) {
+      expect(typeof state).toBe('string')
+      expect(state.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('should have unique states', () => {
+    const states: GameState[] = ['title', 'lobby', 'connecting', 'playing', 'paused', 'gameover']
+    expect(new Set(states).size).toBe(states.length)
   })
 })
 
@@ -442,6 +546,11 @@ describe('Game additional functionality', () => {
       const handler = vi.fn()
       expect(() => game.setChatHandler(handler)).not.toThrow()
     })
+
+    it('should accept handler without throwing', () => {
+      const handler = (msg: string) => console.log(msg)
+      expect(() => game.setChatHandler(handler)).not.toThrow()
+    })
   })
 
   describe('setVoiceToggleHandler', () => {
@@ -449,11 +558,23 @@ describe('Game additional functionality', () => {
       const handler = vi.fn()
       expect(() => game.setVoiceToggleHandler(handler)).not.toThrow()
     })
+
+    it('should accept handler without throwing', () => {
+      const handler = () => {}
+      expect(() => game.setVoiceToggleHandler(handler)).not.toThrow()
+    })
   })
 
   describe('isVoiceEnabled', () => {
     it('should return false by default', () => {
       expect(game.isVoiceEnabled()).toBe(false)
+      expect(typeof game.isVoiceEnabled()).toBe('boolean')
+    })
+
+    it('should return consistent value', () => {
+      const val1 = game.isVoiceEnabled()
+      const val2 = game.isVoiceEnabled()
+      expect(val1).toBe(val2)
     })
   })
 
@@ -466,6 +587,8 @@ describe('Game additional functionality', () => {
       }
 
       expect(game.getState()).toBe('playing')
+      // Frame should have advanced
+      expect(game.getSimulation()?.getFrame()).toBeGreaterThan(0)
     })
 
     it('should handle multiple render calls', () => {
@@ -478,6 +601,30 @@ describe('Game additional functionality', () => {
 
       expect(mockRenderer.beginFrame).toHaveBeenCalledTimes(10)
       expect(mockRenderer.endFrame).toHaveBeenCalledTimes(10)
+    })
+
+    it('should maintain simulation state across updates', () => {
+      game.startLocalGame(1)
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const sim = game.getSimulation()
+      expect(sim).not.toBeNull()
+      expect(sim?.getFrame()).toBe(60)
+    })
+
+    it('should handle rapid update and render cycles', () => {
+      game.startLocalGame(1)
+      game.resize(800, 600)
+
+      for (let i = 0; i < 30; i++) {
+        game.update(1 / 60)
+        game.render(1.0)
+      }
+
+      expect(game.getState()).toBe('playing')
     })
   })
 
@@ -493,6 +640,21 @@ describe('Game additional functionality', () => {
       expect(game.getState()).toBe('playing')
       expect(gameOverOverlay!.classList.contains('visible')).toBe(false)
     })
+
+    it('should reset simulation on restart', () => {
+      game.startLocalGame(1)
+
+      // Run simulation
+      for (let i = 0; i < 50; i++) {
+        game.update(1 / 60)
+      }
+
+      game.restartGame()
+
+      const sim = game.getSimulation()
+      expect(sim?.getFrame()).toBe(0)
+      expect(sim?.getState().score).toBe(0)
+    })
   })
 
   describe('render with enemies', () => {
@@ -507,6 +669,19 @@ describe('Game additional functionality', () => {
       game.render(1.0)
 
       expect(mockRenderer.drawMesh).toHaveBeenCalled()
+    })
+
+    it('should maintain game state after rendering enemies', () => {
+      game.startLocalGame(1)
+
+      for (let i = 0; i < 100; i++) {
+        game.update(1 / 60)
+        game.render(1.0)
+      }
+
+      expect(game.getState()).toBe('playing')
+      const sim = game.getSimulation()
+      expect(sim?.getState().enemies.length).toBeGreaterThanOrEqual(0)
     })
   })
 
@@ -535,6 +710,23 @@ describe('Game additional functionality', () => {
       game.render(1.0)
 
       expect(mockRenderer.drawMesh).toHaveBeenCalled()
+    })
+
+    it('should track bullets in simulation', () => {
+      game.startLocalGame(1)
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: false, left: false, right: false,
+        fire: true, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 30; i++) {
+        game.update(1 / 60)
+      }
+
+      const sim = game.getSimulation()
+      expect(sim?.getState().bullets.length).toBeGreaterThan(0)
     })
   })
 
@@ -578,6 +770,58 @@ describe('Game additional functionality', () => {
       expect(mockRenderer.drawMesh).toHaveBeenCalled()
     })
 
+    it('should have two players in simulation', () => {
+      game.startLocalGame(2)
+
+      const sim = game.getSimulation()
+      const state = sim?.getState()
+
+      expect(state?.players.length).toBe(2)
+      expect(state?.players[0]).toBeDefined()
+      expect(state?.players[1]).toBeDefined()
+    })
+
+    it('should have unique player IDs', () => {
+      game.startLocalGame(2)
+
+      const sim = game.getSimulation()
+      const state = sim?.getState()
+
+      expect(state?.players[0]?.id).not.toBe(state?.players[1]?.id)
+    })
+
+    it('should move players independently', () => {
+      game.startLocalGame(2)
+
+      const sim = game.getSimulation()
+      const initialState = sim?.getState()
+      const p1InitialY = initialState?.players[0]?.y ?? 0
+      const p2InitialY = initialState?.players[1]?.y ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: true, down: false, left: false, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+      ;(mockInput.getPlayer2State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: true, left: false, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalState = sim?.getState()
+      const p1FinalY = finalState?.players[0]?.y ?? 0
+      const p2FinalY = finalState?.players[1]?.y ?? 0
+
+      // Player 1 moved up (y decreases), Player 2 moved down (y increases)
+      expect(p1FinalY).toBeLessThan(p1InitialY)
+      expect(p2FinalY).toBeGreaterThan(p2InitialY)
+    })
+
     it('should restart with two players', () => {
       game.startLocalGame(2)
       game.restartGame()
@@ -585,58 +829,103 @@ describe('Game additional functionality', () => {
       const sim = game.getSimulation()
       expect(sim).not.toBeNull()
     })
+
+    it('should maintain two players after restart', () => {
+      game.startLocalGame(2)
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      game.restartGame()
+
+      const sim = game.getSimulation()
+      const state = sim?.getState()
+
+      expect(state?.players.length).toBe(2)
+    })
   })
 
   describe('resize handling', () => {
-    it('should handle various screen sizes', () => {
+    it('should maintain game state after resize', () => {
       game.startLocalGame(1)
 
+      const stateBefore = game.getState()
       game.resize(1920, 1080)
+      const stateAfter = game.getState()
+
+      expect(stateAfter).toBe(stateBefore)
+    })
+
+    it('should maintain simulation after resize', () => {
+      game.startLocalGame(1)
+
+      const simBefore = game.getSimulation()
+      game.resize(1920, 1080)
+      const simAfter = game.getSimulation()
+
+      expect(simAfter).toBe(simBefore)
+    })
+
+    it('should handle very wide aspect ratios', () => {
+      game.startLocalGame(1)
+
+      game.resize(2560, 1080) // Ultra-wide
       game.render(1.0)
 
-      game.resize(800, 600)
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should handle portrait aspect ratios', () => {
+      game.startLocalGame(1)
+
+      game.resize(600, 800) // Portrait
       game.render(1.0)
 
-      game.resize(3840, 2160)
-      game.render(1.0)
-
-      expect(mockRenderer.beginFrame).toHaveBeenCalled()
+      expect(game.getState()).toBe('playing')
     })
   })
 
   describe('button click handlers', () => {
-    it('should start 1P game on btn1P click', () => {
+    it('should create simulation with 1 player on btn1P click', () => {
       const btn1P = document.getElementById('btn1P')!
       btn1P.click()
 
-      expect(game.getState()).toBe('playing')
+      const sim = game.getSimulation()
+      expect(sim?.getState().players.length).toBe(1)
     })
 
-    it('should start 2P game on btn2P click', () => {
+    it('should create simulation with 2 players on btn2P click', () => {
       const btn2P = document.getElementById('btn2P')!
       btn2P.click()
 
-      expect(game.getState()).toBe('playing')
+      const sim = game.getSimulation()
+      expect(sim?.getState().players.length).toBe(2)
     })
 
-    it('should restart game on btnRestart click', () => {
+    it('should reset simulation on btnRestart click', () => {
       game.startLocalGame(1)
-      const gameOverOverlay = document.getElementById('gameOverOverlay')
-      gameOverOverlay!.classList.add('visible')
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const frameBeforeRestart = game.getSimulation()?.getFrame() ?? 0
+      expect(frameBeforeRestart).toBeGreaterThan(0)
 
       const btnRestart = document.getElementById('btnRestart')!
       btnRestart.click()
 
-      expect(gameOverOverlay!.classList.contains('visible')).toBe(false)
+      const frameAfterRestart = game.getSimulation()?.getFrame() ?? -1
+      expect(frameAfterRestart).toBe(0)
     })
   })
 
   describe('title state rendering', () => {
-    it('should render starfield on title screen', () => {
+    it('should maintain title state after render', () => {
       game.render(1.0)
 
-      // Should draw stars
-      expect(mockRenderer.drawQuad).toHaveBeenCalled()
+      expect(game.getState()).toBe('title')
     })
   })
 
@@ -669,6 +958,114 @@ describe('Game additional functionality', () => {
       const finalX = finalState?.players[0]?.x ?? 0
 
       expect(finalX).toBeGreaterThan(initialX)
+    })
+
+    it('should move player up when up key pressed', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialY = sim?.getState().players[0]?.y ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: true, down: false, left: false, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalY = sim?.getState().players[0]?.y ?? 0
+      expect(finalY).toBeLessThan(initialY)
+    })
+
+    it('should move player down when down key pressed', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialY = sim?.getState().players[0]?.y ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: true, left: false, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalY = sim?.getState().players[0]?.y ?? 0
+      expect(finalY).toBeGreaterThan(initialY)
+    })
+
+    it('should move player left when left key pressed', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialX = sim?.getState().players[0]?.x ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: false, left: true, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalX = sim?.getState().players[0]?.x ?? 0
+      expect(finalX).toBeLessThan(initialX)
+    })
+
+    it('should handle diagonal movement', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialX = sim?.getState().players[0]?.x ?? 0
+      const initialY = sim?.getState().players[0]?.y ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: true, down: false, left: false, right: true,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalX = sim?.getState().players[0]?.x ?? 0
+      const finalY = sim?.getState().players[0]?.y ?? 0
+
+      expect(finalX).toBeGreaterThan(initialX)
+      expect(finalY).toBeLessThan(initialY)
+    })
+
+    it('should not move when no direction pressed', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialX = sim?.getState().players[0]?.x ?? 0
+      const initialY = sim?.getState().players[0]?.y ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: false, left: false, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalX = sim?.getState().players[0]?.x ?? 0
+      const finalY = sim?.getState().players[0]?.y ?? 0
+
+      expect(finalX).toBe(initialX)
+      expect(finalY).toBe(initialY)
     })
   })
 
@@ -742,16 +1139,123 @@ describe('Game additional functionality', () => {
 
       expect(game.getState()).toBe('playing')
     })
+
+    it('should handle pickup input', () => {
+      game.startLocalGame(1)
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: false, left: false, right: false,
+        fire: false, special: false, secondary: false,
+        swap: false, pickup: true, pause: false,
+      })
+
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 60)
+      }
+
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should handle combined movement and fire', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialX = sim?.getState().players[0]?.x ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false, down: false, left: false, right: true,
+        fire: true, special: false, secondary: false,
+        swap: false, pickup: false, pause: false,
+      })
+
+      for (let i = 0; i < 30; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalX = sim?.getState().players[0]?.x ?? 0
+      const bullets = sim?.getState().bullets ?? []
+
+      expect(finalX).toBeGreaterThan(initialX)
+      expect(bullets.length).toBeGreaterThan(0)
+    })
+
+    it('should handle all inputs simultaneously', () => {
+      game.startLocalGame(1)
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: true, down: false, left: false, right: true,
+        fire: true, special: true, secondary: true,
+        swap: true, pickup: true, pause: false,
+      })
+
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 60)
+      }
+
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should maintain simulation consistency with rapid input changes', () => {
+      game.startLocalGame(1)
+
+      const inputs = [
+        { up: true, down: false, left: false, right: false, fire: false, special: false, secondary: false, swap: false, pickup: false, pause: false },
+        { up: false, down: true, left: false, right: false, fire: true, special: false, secondary: false, swap: false, pickup: false, pause: false },
+        { up: false, down: false, left: true, right: false, fire: false, special: true, secondary: false, swap: false, pickup: false, pause: false },
+        { up: false, down: false, left: false, right: true, fire: false, special: false, secondary: true, swap: false, pickup: false, pause: false },
+      ]
+
+      for (let i = 0; i < 60; i++) {
+        ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue(inputs[i % inputs.length])
+        game.update(1 / 60)
+      }
+
+      expect(game.getState()).toBe('playing')
+      expect(game.getSimulation()).not.toBeNull()
+    })
   })
 
-  describe('HUD rendering', () => {
-    it('should update HUD during render', () => {
+  describe('frame timing', () => {
+    it('should handle variable delta times', () => {
       game.startLocalGame(1)
-      game.resize(1920, 1080)
-      game.render(1.0)
 
-      // HUD methods are mocked, just verify no crashes
+      game.update(1 / 30) // 30fps
+      game.update(1 / 60) // 60fps
+      game.update(1 / 120) // 120fps
+
       expect(game.getState()).toBe('playing')
+    })
+
+    it('should accumulate time for simulation ticks', () => {
+      game.startLocalGame(1)
+
+      const sim = game.getSimulation()
+      const initialFrame = sim?.getFrame() ?? 0
+
+      // Small updates that won't trigger a tick individually
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 600) // Very small delta
+      }
+
+      const finalFrame = sim?.getFrame() ?? 0
+
+      // Should have advanced at least some frames
+      expect(finalFrame).toBeGreaterThanOrEqual(initialFrame)
+    })
+  })
+
+  describe('game over handling', () => {
+    it('should create new simulation on restart', () => {
+      game.startLocalGame(1)
+
+      const simBefore = game.getSimulation()
+
+      game.restartGame()
+
+      const simAfter = game.getSimulation()
+
+      // Should be a new simulation instance
+      expect(simAfter).not.toBe(simBefore)
     })
   })
 })

@@ -58,6 +58,18 @@ describe('LockstepNetcode', () => {
       expect(lockstep.getInputDelay()).toBe(3)
     })
 
+    it('should return number types for frame values', () => {
+      expect(typeof lockstep.getCurrentFrame()).toBe('number')
+      expect(typeof lockstep.getConfirmedFrame()).toBe('number')
+      expect(typeof lockstep.getInputDelay()).toBe('number')
+    })
+
+    it('should return integer frame values', () => {
+      expect(Number.isInteger(lockstep.getCurrentFrame())).toBe(true)
+      expect(Number.isInteger(lockstep.getConfirmedFrame())).toBe(true)
+      expect(Number.isInteger(lockstep.getInputDelay())).toBe(true)
+    })
+
     it('should use custom input delay', () => {
       const customLockstep = new LockstepNetcode(createConfig({ inputDelayTicks: 5 }))
       expect(customLockstep.getInputDelay()).toBe(5)
@@ -68,6 +80,14 @@ describe('LockstepNetcode', () => {
       delete (partialConfig as unknown as Record<string, unknown>).inputDelay
       const customLockstep = new LockstepNetcode(partialConfig)
       expect(customLockstep.getInputDelay()).toBe(3)
+    })
+
+    it('should have non-negative input delay', () => {
+      expect(lockstep.getInputDelay()).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should have non-negative current frame', () => {
+      expect(lockstep.getCurrentFrame()).toBeGreaterThanOrEqual(0)
     })
   })
 
@@ -83,6 +103,21 @@ describe('LockstepNetcode', () => {
       lockstep.start()
       expect(lockstep.getCurrentFrame()).toBe(0)
     })
+
+    it('should reset frame after advancing', () => {
+      lockstep.start()
+      lockstep.tick(createInput())
+      expect(lockstep.getCurrentFrame()).toBeGreaterThan(0)
+
+      lockstep.start()
+      expect(lockstep.getCurrentFrame()).toBe(0)
+    })
+
+    it('should maintain type consistency after start', () => {
+      lockstep.start()
+      expect(typeof lockstep.getCurrentFrame()).toBe('number')
+      expect(typeof lockstep.getConfirmedFrame()).toBe('number')
+    })
   })
 
   describe('stop', () => {
@@ -92,12 +127,41 @@ describe('LockstepNetcode', () => {
       const result = lockstep.tick(createInput())
       expect(result).toBe(false)
     })
+
+    it('should return boolean from tick after stop', () => {
+      lockstep.start()
+      lockstep.stop()
+      const result = lockstep.tick(createInput())
+      expect(typeof result).toBe('boolean')
+    })
+
+    it('should be safe to call stop multiple times', () => {
+      lockstep.start()
+      lockstep.stop()
+      lockstep.stop()
+      lockstep.stop()
+      expect(lockstep.tick(createInput())).toBe(false)
+    })
+
+    it('should maintain frame state after stop', () => {
+      lockstep.start()
+      lockstep.tick(createInput())
+      const frameBeforeStop = lockstep.getCurrentFrame()
+      lockstep.stop()
+      expect(lockstep.getCurrentFrame()).toBe(frameBeforeStop)
+    })
   })
 
   describe('tick', () => {
     it('should return false when not running', () => {
       const result = lockstep.tick(createInput())
       expect(result).toBe(false)
+    })
+
+    it('should return boolean type from tick', () => {
+      lockstep.start()
+      const result = lockstep.tick(createInput())
+      expect(typeof result).toBe('boolean')
     })
 
     it('should advance frames 0 to inputDelay-1 (pre-seeded with empty inputs)', () => {
@@ -119,6 +183,28 @@ describe('LockstepNetcode', () => {
       const result = lockstep.tick(createInput())
       expect(result).toBe(false)
     })
+
+    it('should increment frame monotonically', () => {
+      lockstep.start()
+      let lastFrame = lockstep.getCurrentFrame()
+
+      for (let i = 0; i < 5; i++) {
+        const result = lockstep.tick(createInput())
+        if (result) {
+          expect(lockstep.getCurrentFrame()).toBeGreaterThan(lastFrame)
+          lastFrame = lockstep.getCurrentFrame()
+        }
+      }
+    })
+
+    it('should maintain confirmed frame <= current frame', () => {
+      lockstep.start()
+
+      for (let i = 0; i < 5; i++) {
+        lockstep.tick(createInput())
+        expect(lockstep.getConfirmedFrame()).toBeLessThanOrEqual(lockstep.getCurrentFrame())
+      }
+    })
   })
 
   describe('addPeer', () => {
@@ -127,6 +213,25 @@ describe('LockstepNetcode', () => {
       const channel = createMockDataChannel()
       lockstep.addPeer('player2', channel)
       expect(channel.onmessage).toBeDefined()
+    })
+
+    it('should set onmessage to a function', () => {
+      lockstep.start()
+      const channel = createMockDataChannel()
+      lockstep.addPeer('player2', channel)
+      expect(typeof channel.onmessage).toBe('function')
+    })
+
+    it('should handle adding same peer twice', () => {
+      lockstep.start()
+      const channel1 = createMockDataChannel()
+      const channel2 = createMockDataChannel()
+
+      lockstep.addPeer('player2', channel1)
+      lockstep.addPeer('player2', channel2)
+
+      // Should not throw
+      expect(channel2.onmessage).toBeDefined()
     })
   })
 
@@ -142,6 +247,27 @@ describe('LockstepNetcode', () => {
     it('should handle removing non-existent peer', () => {
       lockstep.removePeer('nonexistent')
       // No error thrown
+    })
+
+    it('should be safe to remove peer multiple times', () => {
+      lockstep.start()
+      const channel = createMockDataChannel()
+      lockstep.addPeer('player2', channel)
+      lockstep.removePeer('player2')
+      lockstep.removePeer('player2')
+      lockstep.removePeer('player2')
+      // No error thrown
+    })
+
+    it('should allow re-adding peer after removal', () => {
+      lockstep.start()
+      const channel1 = createMockDataChannel()
+      lockstep.addPeer('player2', channel1)
+      lockstep.removePeer('player2')
+
+      const channel2 = createMockDataChannel()
+      lockstep.addPeer('player2', channel2)
+      expect(channel2.onmessage).toBeDefined()
     })
   })
 
@@ -250,6 +376,10 @@ describe('LockstepNetcode', () => {
       expect(lockstep.isWaitingForInputs()).toBe(false)
     })
 
+    it('should return boolean type', () => {
+      expect(typeof lockstep.isWaitingForInputs()).toBe('boolean')
+    })
+
     it('should return true when waiting for peer inputs after pre-seeded frames', () => {
       lockstep.start()
       // Advance through pre-seeded frames (0, 1, 2)
@@ -260,6 +390,15 @@ describe('LockstepNetcode', () => {
       lockstep.tick(createInput())
       expect(lockstep.isWaitingForInputs()).toBe(true)
     })
+
+    it('should return consistent value on repeated calls', () => {
+      lockstep.start()
+      const result1 = lockstep.isWaitingForInputs()
+      const result2 = lockstep.isWaitingForInputs()
+      const result3 = lockstep.isWaitingForInputs()
+      expect(result1).toBe(result2)
+      expect(result2).toBe(result3)
+    })
   })
 
   describe('getLocalPlayerIndex', () => {
@@ -267,10 +406,32 @@ describe('LockstepNetcode', () => {
       expect(lockstep.getLocalPlayerIndex()).toBe(0)
     })
 
+    it('should return number type', () => {
+      expect(typeof lockstep.getLocalPlayerIndex()).toBe('number')
+    })
+
+    it('should return non-negative integer', () => {
+      const index = lockstep.getLocalPlayerIndex()
+      expect(Number.isInteger(index)).toBe(true)
+      expect(index).toBeGreaterThanOrEqual(0)
+    })
+
     it('should return 0 for unknown player', () => {
       const unknownConfig = createConfig({ localPlayerId: 'unknown' })
       const unknownLockstep = new LockstepNetcode(unknownConfig)
       expect(unknownLockstep.getLocalPlayerIndex()).toBe(0)
+    })
+
+    it('should return correct index for player2', () => {
+      const p2Config = createConfig({ localPlayerId: 'player2' })
+      const p2Lockstep = new LockstepNetcode(p2Config)
+      expect(p2Lockstep.getLocalPlayerIndex()).toBe(1)
+    })
+
+    it('should return consistent value', () => {
+      const index1 = lockstep.getLocalPlayerIndex()
+      const index2 = lockstep.getLocalPlayerIndex()
+      expect(index1).toBe(index2)
     })
   })
 
@@ -344,12 +505,31 @@ describe('emptyInput', () => {
     expect(input.pickup).toBe(false)
   })
 
+  it('should return boolean types for all fields', () => {
+    const input = emptyInput()
+    expect(typeof input.up).toBe('boolean')
+    expect(typeof input.down).toBe('boolean')
+    expect(typeof input.left).toBe('boolean')
+    expect(typeof input.right).toBe('boolean')
+    expect(typeof input.fire).toBe('boolean')
+    expect(typeof input.special).toBe('boolean')
+    expect(typeof input.secondary).toBe('boolean')
+    expect(typeof input.swap).toBe('boolean')
+    expect(typeof input.pickup).toBe('boolean')
+  })
+
   it('should return new object each time', () => {
     const input1 = emptyInput()
     const input2 = emptyInput()
     expect(input1).not.toBe(input2)
     input1.up = true
     expect(input2.up).toBe(false)
+  })
+
+  it('should have pause field', () => {
+    const input = emptyInput()
+    expect('pause' in input).toBe(true)
+    expect(input.pause).toBe(false)
   })
 })
 
@@ -358,6 +538,12 @@ describe('inputsEqual', () => {
     const input1 = createInput({ up: true, fire: true })
     const input2 = createInput({ up: true, fire: true })
     expect(inputsEqual(input1, input2)).toBe(true)
+  })
+
+  it('should return boolean type', () => {
+    const input1 = createInput()
+    const input2 = createInput()
+    expect(typeof inputsEqual(input1, input2)).toBe('boolean')
   })
 
   it('should return false for different up', () => {
@@ -405,6 +591,45 @@ describe('inputsEqual', () => {
     const input1 = createInput({ secondary: true })
     const input2 = createInput({ secondary: false })
     expect(inputsEqual(input1, input2)).toBe(false)
+  })
+
+  it('should return false for different swap', () => {
+    const input1 = createInput({ swap: true })
+    const input2 = createInput({ swap: false })
+    expect(inputsEqual(input1, input2)).toBe(false)
+  })
+
+  it('should return false for different pickup', () => {
+    const input1 = createInput({ pickup: true })
+    const input2 = createInput({ pickup: false })
+    expect(inputsEqual(input1, input2)).toBe(false)
+  })
+
+  it('should return false for different pause', () => {
+    const input1 = createInput({ pause: true })
+    const input2 = createInput({ pause: false })
+    expect(inputsEqual(input1, input2)).toBe(false)
+  })
+
+  it('should be symmetric', () => {
+    const input1 = createInput({ up: true, fire: true })
+    const input2 = createInput({ up: true, fire: true })
+
+    expect(inputsEqual(input1, input2)).toBe(inputsEqual(input2, input1))
+  })
+
+  it('should return true for all true inputs', () => {
+    const input1 = createInput({
+      up: true, down: true, left: true, right: true,
+      fire: true, special: true, secondary: true,
+      swap: true, pickup: true, pause: true,
+    })
+    const input2 = createInput({
+      up: true, down: true, left: true, right: true,
+      fire: true, special: true, secondary: true,
+      swap: true, pickup: true, pause: true,
+    })
+    expect(inputsEqual(input1, input2)).toBe(true)
   })
 })
 
@@ -821,6 +1046,16 @@ describe('LockstepNetcode additional getters', () => {
       const term = lockstep.getCurrentTerm()
       expect(typeof term).toBe('number')
     })
+
+    it('should return non-negative term', () => {
+      const term = lockstep.getCurrentTerm()
+      expect(term).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should return integer term', () => {
+      const term = lockstep.getCurrentTerm()
+      expect(Number.isInteger(term)).toBe(true)
+    })
   })
 
   describe('getCurrentLeader', () => {
@@ -828,6 +1063,12 @@ describe('LockstepNetcode additional getters', () => {
       const leader = lockstep.getCurrentLeader()
       // Could be null if no leader elected yet
       expect(leader === null || typeof leader === 'string').toBe(true)
+    })
+
+    it('should return consistent value', () => {
+      const leader1 = lockstep.getCurrentLeader()
+      const leader2 = lockstep.getCurrentLeader()
+      expect(leader1).toBe(leader2)
     })
   })
 
@@ -853,6 +1094,32 @@ describe('LockstepNetcode additional getters', () => {
       expect(debugInfo.frame).toBe(0)
       expect(debugInfo.confirmedFrame).toBe(-1)
     })
+
+    it('should return correct types in debug info', () => {
+      lockstep.start()
+      const debugInfo = lockstep.getDebugInfo()
+
+      expect(typeof debugInfo.frame).toBe('number')
+      expect(typeof debugInfo.confirmedFrame).toBe('number')
+      expect(typeof debugInfo.waiting).toBe('boolean')
+      expect(typeof debugInfo.isLeader).toBe('boolean')
+      expect(typeof debugInfo.inputBufferSize).toBe('number')
+    })
+
+    it('should update after tick', () => {
+      lockstep.start()
+      lockstep.tick(createInput())
+      const debugInfo = lockstep.getDebugInfo()
+
+      expect(debugInfo.frame).toBeGreaterThan(0)
+    })
+
+    it('should return non-negative input buffer size', () => {
+      lockstep.start()
+      const debugInfo = lockstep.getDebugInfo()
+
+      expect(debugInfo.inputBufferSize).toBeGreaterThanOrEqual(0)
+    })
   })
 })
 
@@ -869,12 +1136,34 @@ describe('LockstepNetcode event handlers', () => {
       const handler = vi.fn()
       expect(() => lockstep.setStateSyncHandler(handler)).not.toThrow()
     })
+
+    it('should allow setting handler multiple times', () => {
+      const handler1 = vi.fn()
+      const handler2 = vi.fn()
+
+      lockstep.setStateSyncHandler(handler1)
+      lockstep.setStateSyncHandler(handler2)
+
+      // Should not throw
+      expect(true).toBe(true)
+    })
   })
 
   describe('setLeaderChangeHandler', () => {
     it('should set leader change handler', () => {
       const handler = vi.fn()
       expect(() => lockstep.setLeaderChangeHandler(handler)).not.toThrow()
+    })
+
+    it('should allow setting handler multiple times', () => {
+      const handler1 = vi.fn()
+      const handler2 = vi.fn()
+
+      lockstep.setLeaderChangeHandler(handler1)
+      lockstep.setLeaderChangeHandler(handler2)
+
+      // Should not throw
+      expect(true).toBe(true)
     })
   })
 
@@ -883,7 +1172,19 @@ describe('LockstepNetcode event handlers', () => {
       const handler = vi.fn()
       expect(() => lockstep.setPeerDisconnectHandler(handler)).not.toThrow()
     })
+
+    it('should allow setting handler multiple times', () => {
+      const handler1 = vi.fn()
+      const handler2 = vi.fn()
+
+      lockstep.setPeerDisconnectHandler(handler1)
+      lockstep.setPeerDisconnectHandler(handler2)
+
+      // Should not throw
+      expect(true).toBe(true)
+    })
   })
+
 })
 
 describe('LockstepNetcode binary protocol', () => {
@@ -894,6 +1195,19 @@ describe('LockstepNetcode binary protocol', () => {
     lockstep.start()
     expect(lockstep.getCurrentFrame()).toBe(0)
     lockstep.stop()
+  })
+
+  it('should advance frames in binary mode', () => {
+    const binaryConfig = createConfig({ protocolMode: 'binary' })
+    const lockstep = new LockstepNetcode(binaryConfig)
+
+    lockstep.start()
+    const result = lockstep.tick(createInput())
+
+    expect(typeof result).toBe('boolean')
+    if (result) {
+      expect(lockstep.getCurrentFrame()).toBeGreaterThan(0)
+    }
   })
 })
 
@@ -909,16 +1223,36 @@ describe('LockstepNetcode invariant checks', () => {
     it('should not throw on initial state', () => {
       expect(() => lockstep.assertAllInvariants()).not.toThrow()
     })
+
+    it('should not throw after ticks', () => {
+      for (let i = 0; i < 5; i++) {
+        lockstep.tick(createInput())
+      }
+      expect(() => lockstep.assertAllInvariants()).not.toThrow()
+    })
   })
 
   describe('assertFrameBoundedDrift', () => {
     it('should not throw when no peers', () => {
       expect(() => lockstep.assertFrameBoundedDrift()).not.toThrow()
     })
+
+    it('should not throw after adding peer', () => {
+      const channel = createMockDataChannel()
+      lockstep.addPeer('player2', channel)
+      expect(() => lockstep.assertFrameBoundedDrift()).not.toThrow()
+    })
   })
 
   describe('assertLeaderUpToDate', () => {
     it('should not throw when not leader', () => {
+      expect(() => lockstep.assertLeaderUpToDate()).not.toThrow()
+    })
+
+    it('should not throw after multiple ticks', () => {
+      for (let i = 0; i < 3; i++) {
+        lockstep.tick(createInput())
+      }
       expect(() => lockstep.assertLeaderUpToDate()).not.toThrow()
     })
   })
@@ -954,6 +1288,43 @@ describe('LockstepNetcode peer management', () => {
       lockstep.removePeer('player2')
 
       // player3 should still be connected
+      expect(channel2.onmessage).toBeDefined()
+    })
+
+    it('should broadcast to all peers', () => {
+      const channel1 = createMockDataChannel()
+      const channel2 = createMockDataChannel()
+
+      lockstep.addPeer('player2', channel1)
+      lockstep.addPeer('player3', channel2)
+
+      lockstep.tick(createInput())
+
+      expect(channel1.send).toHaveBeenCalled()
+      expect(channel2.send).toHaveBeenCalled()
+    })
+
+    it('should maintain state after adding peers', () => {
+      const channel = createMockDataChannel()
+      lockstep.tick(createInput())
+
+      const frameBeforeAdd = lockstep.getCurrentFrame()
+      lockstep.addPeer('player2', channel)
+
+      expect(lockstep.getCurrentFrame()).toBe(frameBeforeAdd)
+    })
+  })
+
+  describe('peer lifecycle', () => {
+    it('should handle rapid add-remove cycles', () => {
+      for (let i = 0; i < 5; i++) {
+        const channel = createMockDataChannel()
+        lockstep.addPeer('player2', channel)
+        lockstep.removePeer('player2')
+      }
+
+      // Should not throw
+      expect(lockstep.getCurrentFrame()).toBeGreaterThanOrEqual(0)
     })
   })
 })
@@ -993,5 +1364,64 @@ describe('LockstepNetcode configuration', () => {
     const config = createConfig({ heartbeatMs: 500 })
     const lockstep = new LockstepNetcode(config)
     expect(lockstep).toBeDefined()
+  })
+
+  it('should work with different player counts', () => {
+    const config3p = createConfig({
+      playerCount: 3,
+      playerOrder: new Map([['player1', 0], ['player2', 1], ['player3', 2]]),
+    })
+    const lockstep3p = new LockstepNetcode(config3p)
+    expect(lockstep3p.getLocalPlayerIndex()).toBe(0)
+  })
+
+  it('should maintain consistent state across configurations', () => {
+    const configs = [
+      createConfig({ inputDelayTicks: 2 }),
+      createConfig({ stateSyncTicks: 60 }),
+      createConfig({ eventBufferTicks: 15 }),
+    ]
+
+    for (const config of configs) {
+      const lockstep = new LockstepNetcode(config)
+      lockstep.start()
+      expect(lockstep.getCurrentFrame()).toBe(0)
+      expect(lockstep.getConfirmedFrame()).toBe(-1)
+      lockstep.stop()
+    }
+  })
+})
+
+describe('LockstepNetcode determinism', () => {
+  it('should produce same state with same inputs', () => {
+    const config1 = createConfig()
+    const config2 = createConfig()
+
+    const lockstep1 = new LockstepNetcode(config1)
+    const lockstep2 = new LockstepNetcode(config2)
+
+    lockstep1.start()
+    lockstep2.start()
+
+    for (let i = 0; i < 5; i++) {
+      const input = createInput({ fire: i % 2 === 0 })
+      lockstep1.tick(input)
+      lockstep2.tick(input)
+
+      expect(lockstep1.getCurrentFrame()).toBe(lockstep2.getCurrentFrame())
+      expect(lockstep1.getConfirmedFrame()).toBe(lockstep2.getConfirmedFrame())
+    }
+  })
+
+  it('should produce consistent debug info', () => {
+    const lockstep = new LockstepNetcode(createConfig())
+    lockstep.start()
+
+    const debug1 = lockstep.getDebugInfo()
+    const debug2 = lockstep.getDebugInfo()
+
+    expect(debug1.frame).toBe(debug2.frame)
+    expect(debug1.confirmedFrame).toBe(debug2.confirmedFrame)
+    expect(debug1.waiting).toBe(debug2.waiting)
   })
 })
