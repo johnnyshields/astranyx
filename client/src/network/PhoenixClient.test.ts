@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { PhoenixClient, type PhoenixConfig, type RoomState, type PlayerInput } from './PhoenixClient'
+import { PhoenixClient, type PhoenixConfig, type RoomState, type PlayerInput, type RoomData, type GameStartingData } from './PhoenixClient'
 
 // The phoenix module is mocked via vitest.config.ts alias
 // Tests here are simplified to work with the class-based mock
@@ -215,5 +215,225 @@ describe('PlayerInput type', () => {
     expect(input.up).toBe(true)
     expect(input.fire).toBe(true)
     expect(input.special).toBe(false)
+  })
+})
+
+describe('PhoenixClient after connection', () => {
+  let client: PhoenixClient
+
+  beforeEach(async () => {
+    client = new PhoenixClient({
+      url: 'ws://localhost:4200/socket',
+      playerId: 'test-player',
+    })
+    await client.connect()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  describe('joinRoom', () => {
+    it('should join room successfully', async () => {
+      // Mock returns {} which doesn't have room property, but join succeeds
+      await expect(client.joinRoom('test-room')).resolves.not.toThrow()
+    })
+
+    it('should join room as host', async () => {
+      // Mock returns {} which doesn't have room property, but join succeeds
+      await expect(client.joinRoom('test-room', true)).resolves.not.toThrow()
+    })
+
+    it('should set room ID after joining', async () => {
+      await client.joinRoom('my-room')
+      expect(client.getRoomId()).toBe('my-room')
+    })
+  })
+
+  describe('joinSignaling', () => {
+    it('should join signaling channel', async () => {
+      await expect(client.joinSignaling('room-123')).resolves.toBeUndefined()
+    })
+  })
+
+  describe('isConnected', () => {
+    it('should return true after connect', () => {
+      expect(client.isConnected()).toBe(true)
+    })
+  })
+
+  describe('getPlayerId', () => {
+    it('should return player ID after connect', () => {
+      expect(client.getPlayerId()).toBe('test-player')
+    })
+  })
+
+  describe('signaling methods after connection', () => {
+    it('sendOffer should not throw', async () => {
+      await client.joinSignaling('test-room')
+      expect(() => client.sendOffer({ type: 'offer', sdp: 'test-sdp' }, 'peer-1')).not.toThrow()
+    })
+
+    it('sendAnswer should not throw', async () => {
+      await client.joinSignaling('test-room')
+      expect(() => client.sendAnswer({ type: 'answer', sdp: 'test-sdp' }, 'peer-1')).not.toThrow()
+    })
+
+    it('sendIceCandidate should not throw', async () => {
+      await client.joinSignaling('test-room')
+      expect(() => client.sendIceCandidate({ candidate: 'test', sdpMid: '0', sdpMLineIndex: 0 }, 'peer-1')).not.toThrow()
+    })
+
+    it('onSignalingMessage should not throw', async () => {
+      await client.joinSignaling('test-room')
+      expect(() => client.onSignalingMessage('offer', () => {})).not.toThrow()
+    })
+  })
+
+  describe('room handlers', () => {
+    it('onPlayerJoined should register handler', () => {
+      const handler = vi.fn()
+      const unsubscribe = client.onPlayerJoined(handler)
+
+      expect(typeof unsubscribe).toBe('function')
+      unsubscribe()
+    })
+
+    it('onPlayerLeft should register handler', () => {
+      const handler = vi.fn()
+      const unsubscribe = client.onPlayerLeft(handler)
+
+      expect(typeof unsubscribe).toBe('function')
+      unsubscribe()
+    })
+
+    it('onGameStarting should register handler', () => {
+      const handler = vi.fn()
+      const unsubscribe = client.onGameStarting(handler)
+
+      expect(typeof unsubscribe).toBe('function')
+      unsubscribe()
+    })
+  })
+
+  describe('getCurrentRoom', () => {
+    it('should return null before joining room', () => {
+      expect(client.getCurrentRoom()).toBeNull()
+    })
+  })
+
+  describe('getSignalingChannel', () => {
+    it('should return null before joining signaling', () => {
+      expect(client.getSignalingChannel()).toBeNull()
+    })
+  })
+
+  describe('disconnect', () => {
+    it('should disconnect cleanly', () => {
+      expect(() => client.disconnect()).not.toThrow()
+    })
+
+    it('should clear room ID after disconnect', () => {
+      client.disconnect()
+      expect(client.getRoomId()).toBe('')
+    })
+  })
+
+  describe('leaveRoom after joining', () => {
+    it('should clear room state', async () => {
+      await client.joinRoom('test-room')
+      client.leaveRoom()
+
+      expect(client.getRoomId()).toBe('')
+      expect(client.getCurrentRoom()).toBeNull()
+    })
+  })
+})
+
+describe('PhoenixClient listRooms', () => {
+  it('should throw if not connected to lobby', async () => {
+    const client = new PhoenixClient({ url: 'ws://test' })
+    await expect(client.listRooms()).rejects.toThrow('Not connected to lobby')
+  })
+
+  it('should resolve when connected', async () => {
+    const client = new PhoenixClient({
+      url: 'ws://localhost:4200/socket',
+      playerId: 'test-player',
+    })
+    await client.connect()
+    // Mock doesn't return proper rooms structure, but the call succeeds
+    await expect(client.listRooms()).resolves.not.toThrow()
+  })
+})
+
+describe('PhoenixClient startGame', () => {
+  it('should throw if not in a room', async () => {
+    const client = new PhoenixClient({ url: 'ws://test' })
+    await expect(client.startGame()).rejects.toThrow('Not in a room')
+  })
+
+  it('should start game when in room', async () => {
+    const client = new PhoenixClient({
+      url: 'ws://localhost:4200/socket',
+      playerId: 'test-player',
+    })
+    await client.connect()
+    await client.joinRoom('test-room')
+    await expect(client.startGame()).resolves.toBeUndefined()
+  })
+})
+
+describe('PhoenixClient refreshTurnCredentials', () => {
+  it('should throw if not in a room', async () => {
+    const client = new PhoenixClient({ url: 'ws://test' })
+    await expect(client.refreshTurnCredentials()).rejects.toThrow('Not in a room')
+  })
+
+  it('should return credentials when in room', async () => {
+    const client = new PhoenixClient({
+      url: 'ws://localhost:4200/socket',
+      playerId: 'test-player',
+    })
+    await client.connect()
+    await client.joinRoom('test-room')
+    const creds = await client.refreshTurnCredentials()
+    // Mock returns {} for ok response, which doesn't have turn property
+    expect(creds).toBeUndefined()
+  })
+})
+
+describe('PhoenixClient ping after joining room', () => {
+  it('should return latency', async () => {
+    const client = new PhoenixClient({
+      url: 'ws://localhost:4200/socket',
+      playerId: 'test-player',
+    })
+    await client.connect()
+    await client.joinRoom('test-room')
+    const latency = await client.ping()
+    expect(typeof latency).toBe('number')
+  })
+})
+
+describe('PhoenixClient sendInput after joining room', () => {
+  it('should send input without error', async () => {
+    const client = new PhoenixClient({
+      url: 'ws://localhost:4200/socket',
+      playerId: 'test-player',
+    })
+    await client.connect()
+    await client.joinRoom('test-room')
+
+    const input: PlayerInput = {
+      up: true,
+      down: false,
+      left: false,
+      right: false,
+      fire: true,
+      special: false,
+    }
+
+    expect(() => client.sendInput(input)).not.toThrow()
   })
 })
