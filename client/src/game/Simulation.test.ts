@@ -973,7 +973,7 @@ describe('Simulation state sync', () => {
       const debug = sim.getDebugState()
 
       // Positions should be floats, not fixed-point
-      expect(debug.players[0].x).toBeLessThan(1000) // Fixed point would be much larger
+      expect(debug.players[0]!.x).toBeLessThan(1000) // Fixed point would be much larger
     })
   })
 
@@ -1112,7 +1112,7 @@ describe('Simulation firing', () => {
     // Fire
     sim.tick(new Map([['player_1', fireInput]]))
     const state1 = sim.getState()
-    const bulletX1 = state1.bullets.length > 0 ? state1.bullets[0].x : null
+    const bulletX1 = state1.bullets.length > 0 ? state1.bullets[0]!.x : null
 
     if (bulletX1 !== null) {
       // Continue simulation
@@ -1120,7 +1120,7 @@ describe('Simulation firing', () => {
       const state2 = sim.getState()
 
       if (state2.bullets.length > 0) {
-        expect(state2.bullets[0].x).toBeGreaterThan(bulletX1)
+        expect(state2.bullets[0]!.x).toBeGreaterThan(bulletX1)
       }
     }
   })

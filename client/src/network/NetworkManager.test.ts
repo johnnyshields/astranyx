@@ -38,7 +38,7 @@ describe('NetworkManager', () => {
     networkManager = new NetworkManager('ws://localhost:4000')
 
     // Capture the message handler
-    messageHandler = mockClientInstance.onMessage.mock.calls[0][0]
+    messageHandler = mockClientInstance.onMessage.mock.calls[0]![0]
   })
 
   afterEach(() => {
@@ -148,8 +148,8 @@ describe('NetworkManager', () => {
 
       const pending = networkManager.getPendingInputs()
       expect(pending.length).toBe(2)
-      expect(pending[0].tick).toBe(0)
-      expect(pending[1].tick).toBe(1)
+      expect(pending[0]!.tick).toBe(0)
+      expect(pending[1]!.tick).toBe(1)
     })
 
     it('trims old inputs when buffer exceeds max', () => {
@@ -172,7 +172,7 @@ describe('NetworkManager', () => {
 
       const pending = networkManager.getPendingInputs()
       expect(pending.length).toBe(120)
-      expect(pending[0].tick).toBe(5) // First 5 trimmed
+      expect(pending[0]!.tick).toBe(5) // First 5 trimmed
     })
   })
 
@@ -266,8 +266,8 @@ describe('NetworkManager', () => {
       // Should have ticks 3 and 4 remaining
       const pending = networkManager.getPendingInputs()
       expect(pending.length).toBe(2)
-      expect(pending[0].tick).toBe(3)
-      expect(pending[1].tick).toBe(4)
+      expect(pending[0]!.tick).toBe(3)
+      expect(pending[1]!.tick).toBe(4)
     })
   })
 
@@ -288,7 +288,7 @@ describe('NetworkManager', () => {
 
       const result = networkManager.getInterpolatedState()
       expect(result).toBeTruthy()
-      expect(result?.entities[0].id).toBe('e1')
+      expect(result?.entities[0]!.id).toBe('e1')
     })
 
     it('interpolates between two states', () => {
@@ -319,8 +319,8 @@ describe('NetworkManager', () => {
       // Which falls between timestamps (now-200) and (now-50)
       expect(result).toBeTruthy()
       // The x value should be somewhere between 0 and 100
-      expect(result!.entities[0].x).toBeGreaterThanOrEqual(0)
-      expect(result!.entities[0].x).toBeLessThanOrEqual(100)
+      expect(result!.entities[0]!.x).toBeGreaterThanOrEqual(0)
+      expect(result!.entities[0]!.x).toBeLessThanOrEqual(100)
     })
 
     it('handles new entities without interpolation', () => {
@@ -345,7 +345,7 @@ describe('NetworkManager', () => {
 
       const result = networkManager.getInterpolatedState()
       expect(result).toBeTruthy()
-      expect(result!.entities[0].x).toBe(50) // No interpolation for new entity
+      expect(result!.entities[0]!.x).toBe(50) // No interpolation for new entity
     })
 
     it('falls back to latest state when render time is outside range', () => {
@@ -372,7 +372,7 @@ describe('NetworkManager', () => {
       const result = networkManager.getInterpolatedState()
       expect(result).toBeTruthy()
       // Should fall back to latest state (snapshot2)
-      expect(result!.entities[0].x).toBe(100)
+      expect(result!.entities[0]!.x).toBe(100)
     })
 
     it('filters old states from buffer', () => {
@@ -430,8 +430,8 @@ describe('NetworkManager', () => {
       const result = networkManager.getInterpolatedState()
       expect(result).toBeTruthy()
       // Rotation should be between 0 and PI/2
-      expect(result!.entities[0].rotation).toBeGreaterThanOrEqual(0)
-      expect(result!.entities[0].rotation).toBeLessThanOrEqual(Math.PI / 2)
+      expect(result!.entities[0]!.rotation).toBeGreaterThanOrEqual(0)
+      expect(result!.entities[0]!.rotation).toBeLessThanOrEqual(Math.PI / 2)
     })
 
     it('handles angle wrapping (crosses PI boundary)', () => {
@@ -459,7 +459,7 @@ describe('NetworkManager', () => {
       const result = networkManager.getInterpolatedState()
       expect(result).toBeTruthy()
       // Rotation should handle wrapping gracefully
-      expect(typeof result!.entities[0].rotation).toBe('number')
+      expect(typeof result!.entities[0]!.rotation).toBe('number')
     })
   })
 

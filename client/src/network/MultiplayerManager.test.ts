@@ -398,6 +398,7 @@ describe('MultiplayerManager', () => {
           urls: ['turn:localhost:3478'],
           username: 'user',
           credential: 'cred',
+          ttl: 3600,
         },
       }
 
@@ -421,6 +422,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0 },
         seed: 12345,
+        turn: null,
       }
 
       gameStartingHandler!(gameStartData)
@@ -447,6 +449,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0 },
         seed: 123,
+        turn: null,
       }
 
       gameStartingHandler!(gameStartData)
@@ -473,6 +476,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0, 'peer-1': 1 },
         seed: 123,
+        turn: null,
       }
 
       gameStartingHandler!(gameStartData)
@@ -516,6 +520,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0, 'peer-1': 1 },
         seed: 123,
+        turn: null,
       }
 
       gameStartingHandler!(gameStartData)
@@ -607,6 +612,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0 },
         seed: 123,
+        turn: null,
       }
 
       gameStartingHandler!(gameStartData)
@@ -679,6 +685,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0, 'peer-1': 1 },
         seed: 123,
+        turn: null,
       }
 
       gameStartingHandler!(gameStartData)
@@ -706,7 +713,7 @@ describe('MultiplayerManager', () => {
         },
         player_order: { 'local-player': 0 },
         seed: 123,
-        turn: { urls: ['turn:localhost'], username: 'u', credential: 'p' },
+        turn: { urls: ['turn:localhost'], username: 'u', credential: 'p', ttl: 3600 },
       }
 
       gameStartingHandler!(gameStartData)

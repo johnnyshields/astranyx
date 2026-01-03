@@ -92,7 +92,7 @@ describe('shaderUtils', () => {
     })
 
     it('throws error when program creation fails', () => {
-      vi.mocked(mockGl.createProgram).mockReturnValue(null)
+      vi.mocked(mockGl.createProgram).mockReturnValue(null as unknown as WebGLProgram)
 
       expect(() => {
         createProgram(mockGl, mockVertexShader, mockFragmentShader)
