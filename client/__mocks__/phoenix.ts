@@ -4,14 +4,23 @@
 import { vi } from 'vitest'
 
 // Create mock channel that can be customized per test
-const createMockChannel = () => {
+const createMockChannel = (topic?: string) => {
   const channel = {
     on: vi.fn().mockReturnThis(),
     join: vi.fn().mockReturnValue({
       receive: vi.fn().mockImplementation(function(this: { receive: (event: string, cb: (resp: unknown) => void) => unknown }, event: string, cb: (resp: unknown) => void) {
         if (event === 'ok') {
           // Use queueMicrotask for immediate async execution that works with fake timers
-          queueMicrotask(() => cb({}))
+          // Return appropriate response based on channel topic
+          if (topic?.startsWith('room:')) {
+            const roomId = topic.split(':')[1]
+            queueMicrotask(() => cb({
+              room: { id: roomId, host: 'test-host', players: ['test-player'], status: 'waiting' },
+              player_id: 'test-player-123'
+            }))
+          } else {
+            queueMicrotask(() => cb({}))
+          }
         }
         return this
       }),
@@ -43,7 +52,7 @@ export class Socket {
     this.params = params
   }
 
-  channel = vi.fn().mockImplementation(() => createMockChannel())
+  channel = vi.fn().mockImplementation((topic: string) => createMockChannel(topic))
 
   connect() {
     this._connected = true

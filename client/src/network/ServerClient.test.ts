@@ -600,11 +600,13 @@ describe('ServerClient after connection', () => {
       expect(client.getCurrentRoom()).toBeNull()
     })
 
-    it('should return value after joining', async () => {
+    it('should return RoomData after joining', async () => {
       await client.joinRoom('test-room')
-      // Returns the channel object, string, or null
       const room = client.getCurrentRoom()
-      expect(room === null || typeof room === 'object' || typeof room === 'string').toBe(true)
+      expect(room).not.toBeNull()
+      expect(room?.id).toBe('test-room')
+      expect(room?.status).toBe('waiting')
+      expect(Array.isArray(room?.players)).toBe(true)
     })
   })
 
