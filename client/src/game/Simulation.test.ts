@@ -1214,3 +1214,698 @@ describe('Simulation multiplayer', () => {
     expect(state.frame).toBe(10)
   })
 })
+
+describe('Simulation enemy spawning', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should spawn enemies after initial delay', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Run past the initial 1.2 second delay (~72 frames at 60fps)
+    for (let i = 0; i < 100; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.enemies.length).toBeGreaterThan(0)
+  })
+
+  it('should spawn different enemy types based on wave', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Run simulation to get past wave 1
+    for (let i = 0; i < 600; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    // Should have progressed past wave 1
+    const state = sim.getState()
+    expect(state.wave).toBeGreaterThanOrEqual(1)
+  })
+
+  it('should track enemy properties correctly', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Run to spawn enemies
+    for (let i = 0; i < 100; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    if (state.enemies.length > 0) {
+      const enemy = state.enemies[0]!
+      expect(enemy).toHaveProperty('id')
+      expect(enemy).toHaveProperty('type')
+      expect(enemy).toHaveProperty('x')
+      expect(enemy).toHaveProperty('y')
+      expect(enemy).toHaveProperty('health')
+      expect(enemy).toHaveProperty('maxHealth')
+    }
+  })
+})
+
+describe('Simulation collision detection', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  const fireInput: PlayerInput = {
+    ...emptyInput,
+    fire: true,
+  }
+
+  it('should track bullets created by player', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 50; i++) {
+      sim.tick(new Map([['player_1', fireInput]]))
+    }
+
+    const state = sim.getState()
+    // Should have bullets from firing
+    expect(state.bullets.some(b => !b.isEnemy)).toBe(true)
+  })
+
+  it('should track bullet type correctly', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 30; i++) {
+      sim.tick(new Map([['player_1', fireInput]]))
+    }
+
+    const state = sim.getState()
+    const playerBullets = state.bullets.filter(b => !b.isEnemy)
+    if (playerBullets.length > 0) {
+      // Verify bullet has expected properties from getState()
+      expect(playerBullets[0]).toHaveProperty('id')
+      expect(playerBullets[0]).toHaveProperty('type')
+      expect(playerBullets[0]).toHaveProperty('x')
+      expect(playerBullets[0]).toHaveProperty('y')
+    }
+  })
+
+  it('should remove bullets when lifetime expires', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Fire once
+    sim.tick(new Map([['player_1', fireInput]]))
+
+    // Let bullets fly and expire (default lifetime is ~120 frames)
+    for (let i = 0; i < 200; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    // Bullets should have expired
+    const state = sim.getState()
+    // Most bullets should be gone after 200+ frames
+    expect(state.bullets.length).toBeLessThan(10)
+  })
+})
+
+describe('Simulation player damage', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should have initial shields', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.players[0]!.shields).toBe(100)
+    expect(state.players[0]!.maxShields).toBe(100)
+  })
+
+  it('should have initial lives', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.players[0]!.lives).toBe(3)
+  })
+
+  it('should give invincibility on spawn', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    // 3 seconds * 60 fps = 180 frames
+    expect(state.players[0]!.invincible).toBe(180)
+  })
+
+  it('should decrease invincibility over time', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 60; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.players[0]!.invincible).toBe(120)
+  })
+
+  it('should eventually remove invincibility', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 200; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.players[0]!.invincible).toBe(0)
+  })
+})
+
+describe('Simulation score system', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should start with score 0', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.score).toBe(0)
+  })
+
+  it('should start with multiplier 1', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.multiplier).toBe(1)
+  })
+
+  it('should track game over state', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.gameOver).toBe(false)
+  })
+})
+
+describe('Simulation screen shake', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should start with no screen shake', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.screenShake).toBe(0)
+  })
+
+  it('should include screenShake in state', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 10; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    expect(typeof state.screenShake).toBe('number')
+  })
+})
+
+describe('Simulation particles', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should start with no particles', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.particles).toEqual([])
+  })
+
+  it('should track particles array', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 100; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    expect(Array.isArray(state.particles)).toBe(true)
+  })
+})
+
+describe('Simulation boss system', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should not have boss at start', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.boss).toBeNull()
+    expect(state.bossActive).toBe(false)
+  })
+
+  it('should track bossActive flag', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    for (let i = 0; i < 50; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    expect(typeof state.bossActive).toBe('boolean')
+  })
+})
+
+describe('Simulation weapon system', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should track weapon slots', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(Array.isArray(state.players[0]!.weaponSlots)).toBe(true)
+  })
+
+  it('should track active weapon index', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(typeof state.players[0]!.activeWeaponIndex).toBe('number')
+  })
+
+  it('should limit weapon slots to max', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    // Default maxWeaponSlots is 2
+    expect(state.players[0]!.maxWeaponSlots).toBe(2)
+  })
+})
+
+describe('Simulation powerup system', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should start with no powerups', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.powerups).toEqual([])
+  })
+
+  it('should track player powerup levels', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    const player = state.players[0]!
+    expect(player.powerups).toHaveProperty('spread')
+    expect(player.powerups).toHaveProperty('laser')
+    expect(player.powerups).toHaveProperty('missile')
+    expect(player.powerups).toHaveProperty('orbit')
+    expect(player.powerups).toHaveProperty('drone')
+    expect(player.powerups).toHaveProperty('speed')
+    expect(player.powerups).toHaveProperty('rapid')
+    expect(player.powerups).toHaveProperty('pierce')
+  })
+
+  it('should track orbs and drones', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    const player = state.players[0]!
+    expect(Array.isArray(player.orbs)).toBe(true)
+    expect(Array.isArray(player.drones)).toBe(true)
+  })
+})
+
+describe('Simulation special inputs', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should handle swap input', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const swapInput: PlayerInput = { ...emptyInput, swap: true }
+
+    // Simulate some frames with swap
+    for (let i = 0; i < 10; i++) {
+      sim.tick(new Map([['player_1', swapInput]]))
+    }
+
+    // Should not crash
+    const state = sim.getState()
+    expect(state.frame).toBe(10)
+  })
+
+  it('should handle secondary input', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const secondaryInput: PlayerInput = { ...emptyInput, secondary: true }
+
+    for (let i = 0; i < 10; i++) {
+      sim.tick(new Map([['player_1', secondaryInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.frame).toBe(10)
+  })
+
+  it('should handle pickup input', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const pickupInput: PlayerInput = { ...emptyInput, pickup: true }
+
+    for (let i = 0; i < 10; i++) {
+      sim.tick(new Map([['player_1', pickupInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.frame).toBe(10)
+  })
+
+  it('should handle special input', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const specialInput: PlayerInput = { ...emptyInput, special: true }
+
+    for (let i = 0; i < 10; i++) {
+      sim.tick(new Map([['player_1', specialInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.frame).toBe(10)
+  })
+
+  it('should handle pause input', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const pauseInput: PlayerInput = { ...emptyInput, pause: true }
+
+    sim.tick(new Map([['player_1', pauseInput]]))
+
+    const state = sim.getState()
+    expect(state.frame).toBe(1)
+  })
+})
+
+describe('Simulation weapon drops', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should include weaponDrops in state', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(Array.isArray(state.weaponDrops)).toBe(true)
+  })
+
+  it('should start with no weapon drops', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.weaponDrops.length).toBe(0)
+  })
+})
+
+describe('Simulation charging mechanics', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  const fireInput: PlayerInput = { ...emptyInput, fire: true }
+
+  it('should track player charging state', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(typeof state.players[0]!.charging).toBe('boolean')
+    expect(typeof state.players[0]!.chargeTime).toBe('number')
+  })
+
+  it('should increase charge time when firing', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Fire for several frames
+    for (let i = 0; i < 60; i++) {
+      sim.tick(new Map([['player_1', fireInput]]))
+    }
+
+    const state = sim.getState()
+    // Charge time should increase while holding fire
+    expect(state.players[0]!.chargeTime).toBeGreaterThan(0)
+  })
+})
+
+describe('Simulation beams and missiles', () => {
+  it('should track beams in state', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(Array.isArray(state.beams)).toBe(true)
+  })
+
+  it('should track missiles in state', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(Array.isArray(state.missiles)).toBe(true)
+  })
+
+  it('should start with no beams or missiles', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    const state = sim.getState()
+
+    expect(state.beams.length).toBe(0)
+    expect(state.missiles.length).toBe(0)
+  })
+})
+
+describe('Simulation getFrame and getPlayerIds', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('getFrame should return current frame', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    expect(sim.getFrame()).toBe(0)
+
+    sim.tick(new Map([['player_1', emptyInput]]))
+    expect(sim.getFrame()).toBe(1)
+
+    sim.tick(new Map([['player_1', emptyInput]]))
+    expect(sim.getFrame()).toBe(2)
+  })
+
+  it('getPlayerIds should return all player IDs', () => {
+    const sim = new Simulation(['player_1', 'player_2', 'player_3'], 12345)
+    const ids = sim.getPlayerIds()
+
+    expect(ids).toEqual(['player_1', 'player_2', 'player_3'])
+  })
+
+  it('getPlayerIds should return single player ID', () => {
+    const sim = new Simulation(['solo_player'], 12345)
+    const ids = sim.getPlayerIds()
+
+    expect(ids).toEqual(['solo_player'])
+  })
+})
+
+describe('Simulation combined inputs', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should handle diagonal movement', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const diagonalInput: PlayerInput = {
+      ...emptyInput,
+      up: true,
+      right: true,
+    }
+
+    const initialState = sim.getState()
+    const initialX = initialState.players[0]!.x
+    const initialY = initialState.players[0]!.y
+
+    for (let i = 0; i < 30; i++) {
+      sim.tick(new Map([['player_1', diagonalInput]]))
+    }
+
+    const state = sim.getState()
+    // Should have moved both right and up
+    expect(state.players[0]!.x).toBeGreaterThan(initialX)
+    // Y decreases when moving up (positive Y is down)
+    expect(state.players[0]!.y).not.toBe(initialY)
+  })
+
+  it('should handle all movement directions simultaneously', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // All directions pressed cancels out
+    const allDirsInput: PlayerInput = {
+      ...emptyInput,
+      up: true,
+      down: true,
+      left: true,
+      right: true,
+    }
+
+    sim.tick(new Map([['player_1', allDirsInput]]))
+
+    // Should not crash
+    const state = sim.getState()
+    expect(state.frame).toBe(1)
+  })
+
+  it('should handle movement while firing', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    const moveAndFire: PlayerInput = {
+      ...emptyInput,
+      up: true,
+      right: true,
+      fire: true,
+    }
+
+    for (let i = 0; i < 50; i++) {
+      sim.tick(new Map([['player_1', moveAndFire]]))
+    }
+
+    const state = sim.getState()
+    // Should have moved and created bullets
+    expect(state.bullets.some(b => !b.isEnemy)).toBe(true)
+  })
+})

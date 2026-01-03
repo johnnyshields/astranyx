@@ -10,15 +10,8 @@
  * - Player ID <-> index mapping
  */
 
-import type {
-  NetMessage,
-  FrameInput,
-  StateSyncMessage,
-  RequestVoteMessage,
-  VoteResponseMessage,
-  HeartbeatMessage,
-  HeartbeatAckMessage,
-} from '../types.ts'
+import type { NetMessage } from '../types.ts'
+import { SafeConsole } from '../../core/SafeConsole.ts'
 import {
   isFrameInput,
   isStateSyncMessage,
@@ -30,7 +23,6 @@ import {
   MessageType,
   decodeHeader,
   encodeHeader,
-  isBinaryMessage,
   getMessageTypeName,
 } from './BinaryProtocol.ts'
 import { encodeFrameInput, decodeFrameInput } from './InputEncoder.ts'
@@ -86,19 +78,13 @@ export class MessageCodec {
       return JSON.stringify(message)
     }
 
-    try {
-      const binary = this.encodeBinary(message)
-      if (this.debug) {
-        const jsonSize = JSON.stringify(message).length
-        this.stats.encoded++
-        this.stats.bytesSaved += jsonSize - binary.byteLength
-      }
-      return binary
-    } catch (error) {
-      // Fallback to JSON on encoding error
-      console.warn('Binary encoding failed, falling back to JSON:', error)
-      return JSON.stringify(message)
+    const binary = this.encodeBinary(message)
+    if (this.debug) {
+      const jsonSize = JSON.stringify(message).length
+      this.stats.encoded++
+      this.stats.bytesSaved += jsonSize - binary.byteLength
     }
+    return binary
   }
 
   /**
@@ -160,7 +146,7 @@ export class MessageCodec {
     const header = decodeHeader(view.getUint8(0))
 
     if (header.version !== PROTOCOL_VERSION) {
-      console.warn(`Protocol version mismatch: expected ${PROTOCOL_VERSION}, got ${header.version}`)
+      SafeConsole.warn(`Protocol version mismatch: expected ${PROTOCOL_VERSION}, got ${header.version}`)
     }
 
     switch (header.type) {
