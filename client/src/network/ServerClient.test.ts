@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { PhoenixClient, type PhoenixConfig, type RoomState, type PlayerInput, type RoomData, type GameStartingData } from './PhoenixClient'
+import { ServerClient, type ServerConfig, type RoomState, type PlayerInput } from './ServerClient'
 
 // The phoenix module is mocked via vitest.config.ts alias
 // Tests here are simplified to work with the class-based mock
 
-describe('PhoenixClient', () => {
-  let client: PhoenixClient
-  const config: PhoenixConfig = {
+describe('ServerClient', () => {
+  let client: ServerClient
+  const config: ServerConfig = {
     url: 'ws://localhost:4200/socket',
     playerId: 'test-player-123',
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
-    client = new PhoenixClient(config)
+    client = new ServerClient(config)
   })
 
   afterEach(() => {
@@ -22,7 +22,7 @@ describe('PhoenixClient', () => {
 
   describe('constructor', () => {
     it('should create client with config', () => {
-      expect(client).toBeInstanceOf(PhoenixClient)
+      expect(client).toBeInstanceOf(ServerClient)
     })
   })
 
@@ -38,7 +38,7 @@ describe('PhoenixClient', () => {
     })
 
     it('should generate player ID if not provided', async () => {
-      const clientNoId = new PhoenixClient({ url: 'ws://test' })
+      const clientNoId = new ServerClient({ url: 'ws://test' })
       const playerId = await clientNoId.connect()
       expect(playerId).toMatch(/^player_\d+_/)
     })
@@ -46,14 +46,14 @@ describe('PhoenixClient', () => {
 
   describe('joinRoom', () => {
     it('should throw if not connected', async () => {
-      const newClient = new PhoenixClient({ url: 'ws://test' })
+      const newClient = new ServerClient({ url: 'ws://test' })
       await expect(newClient.joinRoom('room1')).rejects.toThrow('Not connected')
     })
   })
 
   describe('joinSignaling', () => {
     it('should throw if not connected', async () => {
-      const newClient = new PhoenixClient({ url: 'ws://test' })
+      const newClient = new ServerClient({ url: 'ws://test' })
       await expect(newClient.joinSignaling('room1')).rejects.toThrow('Not connected')
     })
   })
@@ -218,11 +218,11 @@ describe('PlayerInput type', () => {
   })
 })
 
-describe('PhoenixClient after connection', () => {
-  let client: PhoenixClient
+describe('ServerClient after connection', () => {
+  let client: ServerClient
 
   beforeEach(async () => {
-    client = new PhoenixClient({
+    client = new ServerClient({
       url: 'ws://localhost:4200/socket',
       playerId: 'test-player',
     })
@@ -350,14 +350,14 @@ describe('PhoenixClient after connection', () => {
   })
 })
 
-describe('PhoenixClient listRooms', () => {
+describe('ServerClient listRooms', () => {
   it('should throw if not connected to lobby', async () => {
-    const client = new PhoenixClient({ url: 'ws://test' })
+    const client = new ServerClient({ url: 'ws://test' })
     await expect(client.listRooms()).rejects.toThrow('Not connected to lobby')
   })
 
   it('should resolve when connected', async () => {
-    const client = new PhoenixClient({
+    const client = new ServerClient({
       url: 'ws://localhost:4200/socket',
       playerId: 'test-player',
     })
@@ -367,14 +367,14 @@ describe('PhoenixClient listRooms', () => {
   })
 })
 
-describe('PhoenixClient startGame', () => {
+describe('ServerClient startGame', () => {
   it('should throw if not in a room', async () => {
-    const client = new PhoenixClient({ url: 'ws://test' })
+    const client = new ServerClient({ url: 'ws://test' })
     await expect(client.startGame()).rejects.toThrow('Not in a room')
   })
 
   it('should start game when in room', async () => {
-    const client = new PhoenixClient({
+    const client = new ServerClient({
       url: 'ws://localhost:4200/socket',
       playerId: 'test-player',
     })
@@ -384,14 +384,14 @@ describe('PhoenixClient startGame', () => {
   })
 })
 
-describe('PhoenixClient refreshTurnCredentials', () => {
+describe('ServerClient refreshTurnCredentials', () => {
   it('should throw if not in a room', async () => {
-    const client = new PhoenixClient({ url: 'ws://test' })
+    const client = new ServerClient({ url: 'ws://test' })
     await expect(client.refreshTurnCredentials()).rejects.toThrow('Not in a room')
   })
 
   it('should return credentials when in room', async () => {
-    const client = new PhoenixClient({
+    const client = new ServerClient({
       url: 'ws://localhost:4200/socket',
       playerId: 'test-player',
     })
@@ -403,9 +403,9 @@ describe('PhoenixClient refreshTurnCredentials', () => {
   })
 })
 
-describe('PhoenixClient ping after joining room', () => {
+describe('ServerClient ping after joining room', () => {
   it('should return latency', async () => {
-    const client = new PhoenixClient({
+    const client = new ServerClient({
       url: 'ws://localhost:4200/socket',
       playerId: 'test-player',
     })
@@ -416,9 +416,9 @@ describe('PhoenixClient ping after joining room', () => {
   })
 })
 
-describe('PhoenixClient sendInput after joining room', () => {
+describe('ServerClient sendInput after joining room', () => {
   it('should send input without error', async () => {
-    const client = new PhoenixClient({
+    const client = new ServerClient({
       url: 'ws://localhost:4200/socket',
       playerId: 'test-player',
     })

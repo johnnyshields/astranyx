@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi, afterEach, type Mock } from 'vitest'
 import { MultiplayerManager, type MultiplayerConfig, type MultiplayerState } from './MultiplayerManager'
-import type { RoomInfo, GameStartingData } from './PhoenixClient'
+import type { RoomInfo, GameStartingData } from './ServerClient'
 
-// Mock callback functions for PhoenixClient
-let phoenixClientInstance: {
+// Mock callback functions for ServerClient
+let serverClientInstance: {
   connect: Mock
   disconnect: Mock
   joinRoom: Mock
@@ -43,21 +43,21 @@ let gameStartingHandler: ((data: GameStartingData) => void) | null = null
 let p2pConnectedHandler: ((playerId: string, channel: RTCDataChannel) => void) | null = null
 let p2pDisconnectedHandler: ((playerId: string) => void) | null = null
 
-// Mock PhoenixClient
-vi.mock('./PhoenixClient.ts', () => {
+// Mock ServerClient
+vi.mock('./ServerClient.ts', () => {
   return {
-    PhoenixClient: class MockPhoenixClient {
-      connect = phoenixClientInstance.connect
-      disconnect = phoenixClientInstance.disconnect
-      joinRoom = phoenixClientInstance.joinRoom
-      leaveRoom = phoenixClientInstance.leaveRoom
-      listRooms = phoenixClientInstance.listRooms
-      startGame = phoenixClientInstance.startGame
-      joinSignaling = phoenixClientInstance.joinSignaling
-      getPlayerId = phoenixClientInstance.getPlayerId
-      getSignalingChannel = phoenixClientInstance.getSignalingChannel
-      getCurrentRoom = phoenixClientInstance.getCurrentRoom
-      refreshTurnCredentials = phoenixClientInstance.refreshTurnCredentials
+    ServerClient: class MockServerClient {
+      connect = serverClientInstance.connect
+      disconnect = serverClientInstance.disconnect
+      joinRoom = serverClientInstance.joinRoom
+      leaveRoom = serverClientInstance.leaveRoom
+      listRooms = serverClientInstance.listRooms
+      startGame = serverClientInstance.startGame
+      joinSignaling = serverClientInstance.joinSignaling
+      getPlayerId = serverClientInstance.getPlayerId
+      getSignalingChannel = serverClientInstance.getSignalingChannel
+      getCurrentRoom = serverClientInstance.getCurrentRoom
+      refreshTurnCredentials = serverClientInstance.refreshTurnCredentials
       onPlayerJoined(handler: (payload: { players: string[] }) => void) {
         playerJoinedHandler = handler
       }
@@ -119,7 +119,7 @@ describe('MultiplayerManager', () => {
     p2pDisconnectedHandler = null
 
     // Create fresh mock instances
-    phoenixClientInstance = {
+    serverClientInstance = {
       connect: vi.fn().mockResolvedValue(undefined),
       disconnect: vi.fn(),
       joinRoom: vi.fn().mockResolvedValue({
@@ -189,7 +189,7 @@ describe('MultiplayerManager', () => {
 
       await manager.connect()
 
-      expect(phoenixClientInstance.connect).toHaveBeenCalled()
+      expect(serverClientInstance.connect).toHaveBeenCalled()
       expect(manager.getState()).toBe('connected')
       expect(stateHandler).toHaveBeenCalledWith('connecting')
       expect(stateHandler).toHaveBeenCalledWith('connected')
@@ -203,7 +203,7 @@ describe('MultiplayerManager', () => {
 
     it('should handle connection error', async () => {
       const error = new Error('Connection failed')
-      phoenixClientInstance.connect.mockRejectedValue(error)
+      serverClientInstance.connect.mockRejectedValue(error)
 
       const errorHandler = vi.fn()
       manager.onError(errorHandler)
@@ -219,7 +219,7 @@ describe('MultiplayerManager', () => {
       await manager.connect()
       manager.disconnect()
 
-      expect(phoenixClientInstance.disconnect).toHaveBeenCalled()
+      expect(serverClientInstance.disconnect).toHaveBeenCalled()
       expect(manager.getState()).toBe('disconnected')
     })
 
@@ -234,7 +234,7 @@ describe('MultiplayerManager', () => {
       const rooms: RoomInfo[] = [
         { id: 'room-1', host: 'player-1', player_count: 1, max_players: 4, status: 'waiting' },
       ]
-      phoenixClientInstance.listRooms.mockResolvedValue(rooms)
+      serverClientInstance.listRooms.mockResolvedValue(rooms)
 
       await manager.connect()
       const result = await manager.listRooms()
@@ -249,7 +249,7 @@ describe('MultiplayerManager', () => {
 
     it('should return empty array on error', async () => {
       await manager.connect()
-      phoenixClientInstance.listRooms.mockRejectedValue(new Error('Network error'))
+      serverClientInstance.listRooms.mockRejectedValue(new Error('Network error'))
 
       const result = await manager.listRooms()
       expect(result).toEqual([])
@@ -261,8 +261,8 @@ describe('MultiplayerManager', () => {
       await manager.connect()
       await manager.createRoom('my-room')
 
-      expect(phoenixClientInstance.joinRoom).toHaveBeenCalledWith('my-room', true)
-      expect(phoenixClientInstance.joinSignaling).toHaveBeenCalledWith('my-room')
+      expect(serverClientInstance.joinRoom).toHaveBeenCalledWith('my-room', true)
+      expect(serverClientInstance.joinSignaling).toHaveBeenCalledWith('my-room')
       expect(manager.getState()).toBe('in_lobby')
       expect(manager.isHost()).toBe(true)
     })
@@ -273,7 +273,7 @@ describe('MultiplayerManager', () => {
 
     it('should handle join error and transition to error state', async () => {
       await manager.connect()
-      phoenixClientInstance.joinRoom.mockRejectedValue(new Error('Room exists'))
+      serverClientInstance.joinRoom.mockRejectedValue(new Error('Room exists'))
 
       await expect(manager.createRoom('test')).rejects.toThrow('Room exists')
       // handleError sets state to 'error'
@@ -283,7 +283,7 @@ describe('MultiplayerManager', () => {
 
   describe('joinRoom', () => {
     it('should join room and signaling', async () => {
-      phoenixClientInstance.joinRoom.mockResolvedValue({
+      serverClientInstance.joinRoom.mockResolvedValue({
         id: 'existing-room',
         players: ['host', 'local-player'],
         host: 'host',
@@ -293,7 +293,7 @@ describe('MultiplayerManager', () => {
       await manager.connect()
       await manager.joinRoom('existing-room')
 
-      expect(phoenixClientInstance.joinRoom).toHaveBeenCalledWith('existing-room', false)
+      expect(serverClientInstance.joinRoom).toHaveBeenCalledWith('existing-room', false)
       expect(manager.getState()).toBe('in_lobby')
       expect(manager.isHost()).toBe(false)
     })
@@ -308,7 +308,7 @@ describe('MultiplayerManager', () => {
       await manager.connect()
       await manager.quickmatch()
 
-      expect(phoenixClientInstance.joinRoom).toHaveBeenCalled()
+      expect(serverClientInstance.joinRoom).toHaveBeenCalled()
       expect(manager.getState()).toBe('in_lobby')
     })
 
@@ -324,7 +324,7 @@ describe('MultiplayerManager', () => {
 
       manager.leaveRoom()
 
-      expect(phoenixClientInstance.leaveRoom).toHaveBeenCalled()
+      expect(serverClientInstance.leaveRoom).toHaveBeenCalled()
       expect(manager.getState()).toBe('connected')
       expect(manager.getLobbyState().currentRoom).toBeNull()
     })
@@ -341,12 +341,12 @@ describe('MultiplayerManager', () => {
 
       await manager.startGame()
 
-      expect(phoenixClientInstance.startGame).toHaveBeenCalled()
+      expect(serverClientInstance.startGame).toHaveBeenCalled()
       expect(manager.getState()).toBe('starting')
     })
 
     it('should throw if not host', async () => {
-      phoenixClientInstance.joinRoom.mockResolvedValue({
+      serverClientInstance.joinRoom.mockResolvedValue({
         id: 'existing-room',
         players: ['host', 'local-player'],
         host: 'host',
@@ -366,7 +366,7 @@ describe('MultiplayerManager', () => {
     it('should handle start error and transition to error state', async () => {
       await manager.connect()
       await manager.createRoom('test-room')
-      phoenixClientInstance.startGame.mockRejectedValue(new Error('Not enough players'))
+      serverClientInstance.startGame.mockRejectedValue(new Error('Not enough players'))
 
       const errorHandler = vi.fn()
       manager.onError(errorHandler)
@@ -546,7 +546,7 @@ describe('MultiplayerManager', () => {
       await manager.connect()
       await manager.createRoom('test-room')
 
-      phoenixClientInstance.getCurrentRoom.mockReturnValue({ players: ['player-1'] })
+      serverClientInstance.getCurrentRoom.mockReturnValue({ players: ['player-1'] })
       playerLeftHandler!({ player_id: 'player-2' })
 
       expect(manager.getLobbyState().currentRoom?.players).toEqual(['player-1'])
@@ -715,7 +715,7 @@ describe('MultiplayerManager', () => {
       // Advance to credential refresh interval (45 minutes)
       vi.advanceTimersByTime(45 * 60 * 1000)
 
-      expect(phoenixClientInstance.refreshTurnCredentials).toHaveBeenCalled()
+      expect(serverClientInstance.refreshTurnCredentials).toHaveBeenCalled()
     })
   })
 })

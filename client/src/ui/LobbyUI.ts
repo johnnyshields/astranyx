@@ -4,7 +4,7 @@
  * Manages DOM interactions for the multiplayer lobby screen.
  */
 
-import type { RoomInfo } from '../network/PhoenixClient.ts'
+import type { RoomInfo } from '../network/ServerClient.ts'
 
 export interface LobbyUICallbacks {
   onQuickmatch: () => void

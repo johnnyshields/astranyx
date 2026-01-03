@@ -1403,19 +1403,6 @@ describe('Simulation player damage', () => {
 })
 
 describe('Simulation score system', () => {
-  const emptyInput: PlayerInput = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    fire: false,
-    special: false,
-    secondary: false,
-    swap: false,
-    pickup: false,
-    pause: false,
-  }
-
   it('should start with score 0', () => {
     const sim = new Simulation(['player_1'], 12345)
     const state = sim.getState()
@@ -1539,19 +1526,6 @@ describe('Simulation boss system', () => {
 })
 
 describe('Simulation weapon system', () => {
-  const emptyInput: PlayerInput = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    fire: false,
-    special: false,
-    secondary: false,
-    swap: false,
-    pickup: false,
-    pause: false,
-  }
-
   it('should track weapon slots', () => {
     const sim = new Simulation(['player_1'], 12345)
     const state = sim.getState()
@@ -1576,19 +1550,6 @@ describe('Simulation weapon system', () => {
 })
 
 describe('Simulation powerup system', () => {
-  const emptyInput: PlayerInput = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    fire: false,
-    special: false,
-    secondary: false,
-    swap: false,
-    pickup: false,
-    pause: false,
-  }
-
   it('should start with no powerups', () => {
     const sim = new Simulation(['player_1'], 12345)
     const state = sim.getState()
@@ -1702,19 +1663,6 @@ describe('Simulation special inputs', () => {
 })
 
 describe('Simulation weapon drops', () => {
-  const emptyInput: PlayerInput = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    fire: false,
-    special: false,
-    secondary: false,
-    swap: false,
-    pickup: false,
-    pause: false,
-  }
-
   it('should include weaponDrops in state', () => {
     const sim = new Simulation(['player_1'], 12345)
     const state = sim.getState()
