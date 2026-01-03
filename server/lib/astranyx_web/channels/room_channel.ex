@@ -110,14 +110,8 @@ defmodule AstranyxWeb.RoomChannel do
   @impl true
   def handle_in("refresh_turn_credentials", _payload, socket) do
     room_id = socket.assigns.room_id
-
-    case TurnCredentials.generate(room_id) do
-      credentials when is_map(credentials) ->
-        {:reply, {:ok, %{turn: credentials}}, socket}
-
-      _ ->
-        {:reply, {:error, %{reason: "Failed to generate credentials"}}, socket}
-    end
+    credentials = TurnCredentials.generate(room_id)
+    {:reply, {:ok, %{turn: credentials}}, socket}
   rescue
     _ -> {:reply, {:error, %{reason: "TURN not configured"}}, socket}
   end

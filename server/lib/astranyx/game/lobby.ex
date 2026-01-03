@@ -43,6 +43,13 @@ defmodule Astranyx.Game.Lobby do
     GenServer.call(__MODULE__, {:start_game, room_id, player_id})
   end
 
+  @doc """
+  Reset all lobby state. Only for testing.
+  """
+  def reset do
+    GenServer.call(__MODULE__, :reset)
+  end
+
   # Server callbacks
 
   @impl true
@@ -120,6 +127,11 @@ defmodule Astranyx.Game.Lobby do
   end
 
   @impl true
+  def handle_call(:reset, _from, _state) do
+    {:reply, :ok, %{rooms: %{}}}
+  end
+
+  @impl true
   def handle_call({:start_game, room_id, player_id}, _from, state) do
     case Map.get(state.rooms, room_id) do
       nil ->
@@ -128,10 +140,11 @@ defmodule Astranyx.Game.Lobby do
       %{host: host} when host != player_id ->
         {:reply, {:error, :not_host}, state}
 
-      %{players: []} ->
-        {:reply, {:error, :not_enough_players}, state}
+      # %{players: []} ->
+      #   {:reply, {:error, :not_enough_players}, state}
 
       room ->
+        # Room always has at least one player (the host) since create_room adds them
         room = %{room | status: :playing}
         state = put_in(state, [:rooms, room_id], room)
         Logger.info("Game started in room #{room_id}")
