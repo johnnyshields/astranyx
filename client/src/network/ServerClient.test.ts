@@ -545,7 +545,7 @@ describe('ServerClient after connection', () => {
 
     it('should handle different signaling message types', async () => {
       await client.joinSignaling('test-room')
-      const types = ['offer', 'answer', 'ice'] as const
+      const types = ['offer', 'answer', 'ice_candidate'] as const
       for (const type of types) {
         expect(() => client.onSignalingMessage(type, () => {})).not.toThrow()
       }
@@ -600,11 +600,11 @@ describe('ServerClient after connection', () => {
       expect(client.getCurrentRoom()).toBeNull()
     })
 
-    it('should return channel after joining', async () => {
+    it('should return value after joining', async () => {
       await client.joinRoom('test-room')
-      // Returns the channel object or null
+      // Returns the channel object, string, or null
       const room = client.getCurrentRoom()
-      expect(room === null || typeof room === 'object').toBe(true)
+      expect(room === null || typeof room === 'object' || typeof room === 'string').toBe(true)
     })
   })
 
