@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NetworkManager, type GameStateSnapshot, type GameEvent, type PlayerInput, type EntityState } from './NetworkManager'
 
 // Create a mock instance that will be shared

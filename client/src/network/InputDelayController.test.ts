@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { InputDelayController, type InputDelayConfig } from './InputDelayController'
+import { InputDelayController } from './InputDelayController'
 import { SIM_TICK_MS } from './types'
 
 describe('InputDelayController', () => {

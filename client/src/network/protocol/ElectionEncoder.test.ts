@@ -132,7 +132,7 @@ describe('ElectionEncoder', () => {
         type: 'request_vote',
         term: 1,
         candidateId: 'player1',
-        lastFrame: undefined as any,
+        lastFrame: undefined as unknown as number,
       }
 
       const buffer = encodeRequestVote(message, playerOrder)

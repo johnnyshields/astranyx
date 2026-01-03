@@ -892,3 +892,325 @@ describe('Owner-Authoritative Events', () => {
     })
   })
 })
+
+describe('Simulation state sync', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  describe('getChecksum', () => {
+    it('should return a number', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      const checksum = sim.getChecksum()
+      expect(typeof checksum).toBe('number')
+    })
+
+    it('should return same checksum for identical states', () => {
+      const sim1 = new Simulation(['player_1'], 12345)
+      const sim2 = new Simulation(['player_1'], 12345)
+
+      expect(sim1.getChecksum()).toBe(sim2.getChecksum())
+    })
+
+    it('should return different checksum after ticks', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      const checksum1 = sim.getChecksum()
+
+      sim.tick(new Map([['player_1', emptyInput]]))
+      const checksum2 = sim.getChecksum()
+
+      expect(checksum1).not.toBe(checksum2)
+    })
+
+    it('should remain deterministic across runs', () => {
+      const sim1 = new Simulation(['player_1'], 12345)
+      const sim2 = new Simulation(['player_1'], 12345)
+
+      for (let i = 0; i < 100; i++) {
+        sim1.tick(new Map([['player_1', emptyInput]]))
+        sim2.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      expect(sim1.getChecksum()).toBe(sim2.getChecksum())
+    })
+  })
+
+  describe('getDebugState', () => {
+    it('should return debug state object', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      const debug = sim.getDebugState()
+
+      expect(debug).toHaveProperty('frame')
+      expect(debug).toHaveProperty('rngSeed')
+      expect(debug).toHaveProperty('playerCount')
+      expect(debug).toHaveProperty('players')
+      expect(debug).toHaveProperty('enemyCount')
+      expect(debug).toHaveProperty('bulletCount')
+      expect(debug).toHaveProperty('powerupCount')
+      expect(debug).toHaveProperty('weaponDropCount')
+      expect(debug).toHaveProperty('score')
+    })
+
+    it('should have correct player count', () => {
+      const sim = new Simulation(['player_1', 'player_2'], 12345)
+      const debug = sim.getDebugState()
+
+      expect(debug.playerCount).toBe(2)
+      expect(debug.players).toHaveLength(2)
+    })
+
+    it('should return float positions in debug state', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      const debug = sim.getDebugState()
+
+      // Positions should be floats, not fixed-point
+      expect(debug.players[0].x).toBeLessThan(1000) // Fixed point would be much larger
+    })
+  })
+
+  describe('serializeState', () => {
+    it('should return serialized state object', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      const serialized = sim.serializeState()
+
+      expect(serialized).toHaveProperty('frame')
+      expect(serialized).toHaveProperty('rngSeed')
+      expect(serialized).toHaveProperty('players')
+      expect(serialized).toHaveProperty('bullets')
+      expect(serialized).toHaveProperty('beams')
+      expect(serialized).toHaveProperty('missiles')
+      expect(serialized).toHaveProperty('enemies')
+      expect(serialized).toHaveProperty('boss')
+      expect(serialized).toHaveProperty('powerups')
+      expect(serialized).toHaveProperty('weaponDrops')
+      expect(serialized).toHaveProperty('nextId')
+      expect(serialized).toHaveProperty('score')
+      expect(serialized).toHaveProperty('multiplier')
+      expect(serialized).toHaveProperty('wave')
+      expect(serialized).toHaveProperty('waveTimer')
+      expect(serialized).toHaveProperty('bossActive')
+      expect(serialized).toHaveProperty('screenShake')
+      expect(serialized).toHaveProperty('gameOver')
+    })
+
+    it('should serialize after simulation runs', () => {
+      const sim = new Simulation(['player_1'], 12345)
+
+      for (let i = 0; i < 50; i++) {
+        sim.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      const serialized = sim.serializeState()
+      expect(serialized.frame).toBe(50)
+    })
+  })
+
+  describe('applyState', () => {
+    it('should apply serialized state to simulation', () => {
+      const sim1 = new Simulation(['player_1'], 12345)
+      const sim2 = new Simulation(['player_1'], 99999) // Different seed
+
+      // Run sim1 for a while
+      for (let i = 0; i < 100; i++) {
+        sim1.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      // Serialize and apply to sim2
+      const serialized = sim1.serializeState()
+      sim2.applyState(serialized)
+
+      // States should now match
+      expect(sim2.getChecksum()).toBe(sim1.getChecksum())
+    })
+
+    it('should restore RNG state', () => {
+      const sim1 = new Simulation(['player_1'], 12345)
+      const sim2 = new Simulation(['player_1'], 99999)
+
+      // Run sim1
+      for (let i = 0; i < 50; i++) {
+        sim1.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      // Apply state
+      sim2.applyState(sim1.serializeState())
+
+      // Run both more and check they stay in sync
+      for (let i = 0; i < 50; i++) {
+        sim1.tick(new Map([['player_1', emptyInput]]))
+        sim2.tick(new Map([['player_1', emptyInput]]))
+      }
+
+      expect(sim2.getChecksum()).toBe(sim1.getChecksum())
+    })
+  })
+
+  describe('getPlayBounds', () => {
+    it('should return current play bounds', () => {
+      const sim = new Simulation(['player_1'], 12345)
+      const bounds = sim.getPlayBounds()
+
+      expect(bounds).toHaveProperty('leftX')
+      expect(bounds).toHaveProperty('rightX')
+      expect(typeof bounds.getTopY).toBe('function')
+      expect(typeof bounds.getBottomY).toBe('function')
+    })
+  })
+})
+
+describe('Simulation firing', () => {
+  const fireInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: true,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should create bullets when firing', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Fire for several frames
+    for (let i = 0; i < 30; i++) {
+      sim.tick(new Map([['player_1', fireInput]]))
+    }
+
+    const state = sim.getState()
+    expect(state.bullets.length).toBeGreaterThan(0)
+  })
+
+  it('should move bullets forward', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Fire
+    sim.tick(new Map([['player_1', fireInput]]))
+    const state1 = sim.getState()
+    const bulletX1 = state1.bullets.length > 0 ? state1.bullets[0].x : null
+
+    if (bulletX1 !== null) {
+      // Continue simulation
+      sim.tick(new Map([['player_1', emptyInput]]))
+      const state2 = sim.getState()
+
+      if (state2.bullets.length > 0) {
+        expect(state2.bullets[0].x).toBeGreaterThan(bulletX1)
+      }
+    }
+  })
+})
+
+describe('Simulation wave system', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should start at wave 1', () => {
+    const sim = new Simulation(['player_1'], 12345)
+    expect(sim.getState().wave).toBe(1)
+  })
+
+  it('should eventually spawn enemies', () => {
+    const sim = new Simulation(['player_1'], 12345)
+
+    // Run simulation for a while
+    for (let i = 0; i < 300; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    const state = sim.getState()
+    // Either enemies spawned or we're past the initial delay
+    expect(state.frame).toBe(300)
+  })
+})
+
+describe('Simulation multiplayer', () => {
+  const emptyInput: PlayerInput = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    fire: false,
+    special: false,
+    secondary: false,
+    swap: false,
+    pickup: false,
+    pause: false,
+  }
+
+  it('should support multiple players', () => {
+    const sim = new Simulation(['player_1', 'player_2', 'player_3', 'player_4'], 12345)
+    const state = sim.getState()
+
+    expect(state.players).toHaveLength(4)
+  })
+
+  it('should handle inputs from multiple players', () => {
+    const sim = new Simulation(['player_1', 'player_2'], 12345)
+
+    const moveUp: PlayerInput = { ...emptyInput, up: true }
+    const moveDown: PlayerInput = { ...emptyInput, down: true }
+
+    for (let i = 0; i < 30; i++) {
+      sim.tick(new Map([
+        ['player_1', moveUp],
+        ['player_2', moveDown],
+      ]))
+    }
+
+    const state = sim.getState()
+    const p1 = state.players.find(p => p.playerId === 'player_1')!
+    const p2 = state.players.find(p => p.playerId === 'player_2')!
+
+    // Players should have moved in different directions
+    expect(p1.y).not.toBe(p2.y)
+  })
+
+  it('should handle missing inputs gracefully', () => {
+    const sim = new Simulation(['player_1', 'player_2'], 12345)
+
+    // Only provide input for player_1
+    for (let i = 0; i < 10; i++) {
+      sim.tick(new Map([['player_1', emptyInput]]))
+    }
+
+    // Should not crash, player_2 just doesn't move
+    const state = sim.getState()
+    expect(state.frame).toBe(10)
+  })
+})

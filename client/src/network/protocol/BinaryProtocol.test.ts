@@ -81,7 +81,7 @@ describe('BinaryProtocol', () => {
 
     it('should decode all encoded headers correctly', () => {
       // Round-trip test for all message types
-      for (const [name, type] of Object.entries(MessageType)) {
+      for (const [_name, type] of Object.entries(MessageType)) {
         if (typeof type === 'number') {
           const encoded = encodeHeader(PROTOCOL_VERSION, type)
           const decoded = decodeHeader(encoded)
@@ -126,24 +126,24 @@ describe('BinaryProtocol', () => {
     })
 
     it('should return false for null', () => {
-      expect(isBinaryMessage(null as any)).toBe(false)
+      expect(isBinaryMessage(null as unknown as ArrayBuffer | string)).toBe(false)
     })
 
     it('should return false for undefined', () => {
-      expect(isBinaryMessage(undefined as any)).toBe(false)
+      expect(isBinaryMessage(undefined as unknown as ArrayBuffer | string)).toBe(false)
     })
 
     it('should return false for number', () => {
-      expect(isBinaryMessage(42 as any)).toBe(false)
+      expect(isBinaryMessage(42 as unknown as ArrayBuffer | string)).toBe(false)
     })
 
     it('should return false for object', () => {
-      expect(isBinaryMessage({ type: 'test' } as any)).toBe(false)
+      expect(isBinaryMessage({ type: 'test' } as unknown as ArrayBuffer | string)).toBe(false)
     })
 
     it('should return false for Uint8Array (not ArrayBuffer)', () => {
       const arr = new Uint8Array(10)
-      expect(isBinaryMessage(arr as any)).toBe(false)
+      expect(isBinaryMessage(arr as unknown as ArrayBuffer | string)).toBe(false)
     })
   })
 
@@ -161,9 +161,9 @@ describe('BinaryProtocol', () => {
     })
 
     it('should return Unknown for invalid types', () => {
-      expect(getMessageTypeName(99 as any)).toBe('Unknown(99)')
-      expect(getMessageTypeName(-1 as any)).toBe('Unknown(-1)')
-      expect(getMessageTypeName(8 as any)).toBe('Unknown(8)') // Gap in enum
+      expect(getMessageTypeName(99 as unknown as typeof MessageType[keyof typeof MessageType])).toBe('Unknown(99)')
+      expect(getMessageTypeName(-1 as unknown as typeof MessageType[keyof typeof MessageType])).toBe('Unknown(-1)')
+      expect(getMessageTypeName(8 as unknown as typeof MessageType[keyof typeof MessageType])).toBe('Unknown(8)') // Gap in enum
     })
   })
 })

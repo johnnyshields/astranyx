@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { InputBatcher, type InputBatcherConfig } from './InputBatcher'
+import { InputBatcher } from './InputBatcher'
 import type { FrameInput, PlayerInput } from './types'
 
 function createEmptyInput(): PlayerInput {
@@ -326,7 +326,7 @@ describe('InputBatcher', () => {
       const batcher = new InputBatcher()
       batcher.updateBatchSize(50) // Batch 2
 
-      const result1 = batcher.add(createFrameInput(1), 100)
+      batcher.add(createFrameInput(1), 100)
       const result2 = batcher.add(createFrameInput(2), 100)
 
       expect(result2).not.toBeNull()

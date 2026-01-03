@@ -38,7 +38,7 @@ export function encodeStateSync(message: StateSyncMessage): ArrayBuffer {
   // Try to use pako for compression (check if available)
   if (typeof globalThis !== 'undefined' && 'pako' in globalThis) {
     try {
-      // @ts-ignore - pako may be loaded globally
+      // @ts-expect-error - pako may be loaded globally
       payload = globalThis.pako.deflate(jsonBytes)
       isCompressed = true
     } catch {
@@ -89,7 +89,7 @@ export function decodeStateSync(buffer: ArrayBuffer): StateSyncMessage {
   let jsonBytes: Uint8Array
   if (isCompressed && typeof globalThis !== 'undefined' && 'pako' in globalThis) {
     try {
-      // @ts-ignore - pako may be loaded globally
+      // @ts-expect-error - pako may be loaded globally
       jsonBytes = globalThis.pako.inflate(payload)
     } catch {
       // Fallback: assume uncompressed

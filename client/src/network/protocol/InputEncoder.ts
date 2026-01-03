@@ -19,8 +19,7 @@
  */
 
 import type { PlayerInput, FrameInput, GameEvent } from '../types.ts'
-import { emptyInput } from '../types.ts'
-import { PROTOCOL_VERSION, MessageType, encodeHeader, decodeHeader } from './BinaryProtocol.ts'
+import { PROTOCOL_VERSION, MessageType, encodeHeader } from './BinaryProtocol.ts'
 import { encodeEvents, decodeEvents, calculateEventsSize } from './EventEncoder.ts'
 
 /**

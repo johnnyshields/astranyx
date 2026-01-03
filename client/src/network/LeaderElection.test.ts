@@ -3,7 +3,6 @@ import { LeaderElection, type LeaderElectionConfig } from './LeaderElection'
 import type {
   HeartbeatMessage,
   HeartbeatAckMessage,
-  RequestVoteMessage,
   VoteResponseMessage,
 } from './types'
 
@@ -29,7 +28,7 @@ describe('LeaderElection', () => {
     vi.useFakeTimers()
     sendMessageMock = vi.fn()
     election = new LeaderElection(createConfig())
-    election.setSendMessage(sendMessageMock as unknown as (peerId: string, message: any) => void)
+    election.setSendMessage(sendMessageMock as unknown as (peerId: string, message: unknown) => void)
   })
 
   afterEach(() => {
@@ -77,7 +76,7 @@ describe('LeaderElection', () => {
     it('should start election when leader disconnects', () => {
       const config = createConfig({ localPlayerId: 'player2' })
       const e = new LeaderElection(config)
-      e.setSendMessage(sendMessageMock as unknown as (peerId: string, message: any) => void)
+      e.setSendMessage(sendMessageMock as unknown as (peerId: string, message: unknown) => void)
       e.start()
 
       e.addPeer('player1') // Leader
@@ -347,7 +346,7 @@ describe('LeaderElection', () => {
     it('should start election on timeout', () => {
       const config = createConfig({ localPlayerId: 'player2' })
       const follower = new LeaderElection(config)
-      follower.setSendMessage(sendMessageMock as unknown as (peerId: string, message: any) => void)
+      follower.setSendMessage(sendMessageMock as unknown as (peerId: string, message: unknown) => void)
       follower.addPeer('player1')
       follower.addPeer('player3')
       follower.start()
@@ -370,7 +369,7 @@ describe('LeaderElection', () => {
       const config = createConfig({ localPlayerId: 'player2' })
       const candidate = new LeaderElection(config)
       const leaderHandler = vi.fn()
-      candidate.setSendMessage(sendMessageMock as unknown as (peerId: string, message: any) => void)
+      candidate.setSendMessage(sendMessageMock as unknown as (peerId: string, message: unknown) => void)
       candidate.setLeaderChangeHandler(leaderHandler)
       candidate.addPeer('player1')
       candidate.addPeer('player3')
