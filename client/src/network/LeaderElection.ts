@@ -36,8 +36,8 @@ import { SafeConsole } from '../core/SafeConsole.ts'
 export interface LeaderElectionConfig {
   localPlayerId: string
   playerOrder: Map<string, number>  // player_id -> index
-  electionTimeout: number           // Ms before timeout (default: 1500)
-  heartbeatInterval: number         // Ms between heartbeats (default: 500)
+  electionTimeoutMs: number         // Ms before timeout (default: 1500)
+  heartbeatMs: number               // Ms between heartbeats (default: 500)
 }
 
 type ElectionMessage = RequestVoteMessage | VoteResponseMessage | HeartbeatMessage | HeartbeatAckMessage
@@ -61,6 +61,13 @@ export class LeaderElection {
   private connectedPeers: Set<string> = new Set()
   private peerLastSeen: Map<string, number> = new Map()
 
+  // RTT tracking for dynamic input delay
+  private peerRtt: Map<string, number[]> = new Map()
+  private readonly RTT_SAMPLE_COUNT = 10
+
+  // Callback for RTT updates
+  private onRttUpdate: ((peerId: string, rttMs: number) => void) | null = null
+
   // Current frame (for log comparison)
   private currentFrame = 0
 
@@ -81,6 +88,8 @@ export class LeaderElection {
     this.currentLeader = this.getInitialLeader()
     if (this.currentLeader === config.localPlayerId) {
       this.state = 'leader'
+      // Initial leader "voted for self" to satisfy TLA+ invariant
+      this.votedFor = config.localPlayerId
     }
   }
 
@@ -120,10 +129,16 @@ export class LeaderElection {
     this.lastHeartbeat = Date.now()
     this.connectedPeers.clear()
     this.peerLastSeen.clear()
+    this.peerRtt.clear()
 
     // Re-initialize leader
     this.currentLeader = this.getInitialLeader()
-    this.state = this.currentLeader === this.config.localPlayerId ? 'leader' : 'follower'
+    if (this.currentLeader === this.config.localPlayerId) {
+      this.state = 'leader'
+      this.votedFor = this.config.localPlayerId // Initial leader voted for self
+    } else {
+      this.state = 'follower'
+    }
   }
 
   /**
@@ -196,7 +211,7 @@ export class LeaderElection {
     this.stopElectionTimer()
 
     // Randomize timeout to avoid split votes (Raft technique)
-    const timeout = this.config.electionTimeout + Math.random() * this.config.electionTimeout * 0.5
+    const timeout = this.config.electionTimeoutMs + Math.random() * this.config.electionTimeoutMs * 0.5
 
     this.electionTimer = setTimeout(() => {
       if (!this.running) return
@@ -204,7 +219,7 @@ export class LeaderElection {
       const now = Date.now()
       const timeSinceHeartbeat = now - this.lastHeartbeat
 
-      if (timeSinceHeartbeat >= this.config.electionTimeout) {
+      if (timeSinceHeartbeat >= this.config.electionTimeoutMs) {
         SafeConsole.log(`LeaderElection: Election timeout (${timeSinceHeartbeat}ms since last heartbeat)`)
         this.startElection()
       } else {
@@ -236,7 +251,7 @@ export class LeaderElection {
         return
       }
       this.broadcastHeartbeat()
-    }, this.config.heartbeatInterval)
+    }, this.config.heartbeatMs)
 
     // Send immediate heartbeat
     this.broadcastHeartbeat()
@@ -426,6 +441,7 @@ export class LeaderElection {
       term: this.currentTerm,
       leaderId: this.config.localPlayerId,
       frame: this.currentFrame,
+      timestamp: Date.now(), // For RTT measurement
     }
 
     for (const peerId of this.connectedPeers) {
@@ -467,12 +483,13 @@ export class LeaderElection {
       this.startElectionTimer()
     }
 
-    // Send ack
+    // Send ack (echo back timestamp for RTT calculation)
     const ack: HeartbeatAckMessage = {
       type: 'heartbeat_ack',
       term: this.currentTerm,
       peerId: this.config.localPlayerId,
       frame: this.currentFrame,
+      timestamp: message.timestamp, // Echo back for RTT calculation
     }
 
     this.sendMessage?.(fromPeerId, ack)
@@ -484,7 +501,35 @@ export class LeaderElection {
   private handleHeartbeatAck(message: HeartbeatAckMessage): void {
     if (this.state !== 'leader') return
 
-    this.peerLastSeen.set(message.peerId, Date.now())
+    const now = Date.now()
+    this.peerLastSeen.set(message.peerId, now)
+
+    // Calculate RTT from echoed timestamp
+    if (message.timestamp !== undefined) {
+      const rtt = now - message.timestamp
+      this.recordRtt(message.peerId, rtt)
+    }
+  }
+
+  /**
+   * Record an RTT sample for a peer
+   */
+  private recordRtt(peerId: string, rttMs: number): void {
+    let samples = this.peerRtt.get(peerId)
+    if (!samples) {
+      samples = []
+      this.peerRtt.set(peerId, samples)
+    }
+
+    samples.push(rttMs)
+
+    // Keep only recent samples
+    if (samples.length > this.RTT_SAMPLE_COUNT) {
+      samples.shift()
+    }
+
+    // Notify listener
+    this.onRttUpdate?.(peerId, rttMs)
   }
 
   // ===========================================================================
@@ -539,6 +584,13 @@ export class LeaderElection {
   }
 
   /**
+   * Set RTT update handler (called when new RTT sample is received)
+   */
+  setRttUpdateHandler(handler: (peerId: string, rttMs: number) => void): void {
+    this.onRttUpdate = handler
+  }
+
+  /**
    * Update current frame (for log comparison)
    */
   setCurrentFrame(frame: number): void {
@@ -578,6 +630,36 @@ export class LeaderElection {
    */
   getLocalPlayerIndex(): number {
     return this.config.playerOrder.get(this.config.localPlayerId) ?? 0
+  }
+
+  /**
+   * Get average RTT to a specific peer
+   */
+  getPeerRtt(peerId: string): number {
+    const samples = this.peerRtt.get(peerId)
+    if (!samples || samples.length === 0) return 0
+    return samples.reduce((a, b) => a + b, 0) / samples.length
+  }
+
+  /**
+   * Get maximum RTT across all peers
+   */
+  getMaxRtt(): number {
+    let maxRtt = 0
+    for (const samples of this.peerRtt.values()) {
+      if (samples.length > 0) {
+        const avg = samples.reduce((a, b) => a + b, 0) / samples.length
+        maxRtt = Math.max(maxRtt, avg)
+      }
+    }
+    return maxRtt
+  }
+
+  /**
+   * Get RTT samples for all peers
+   */
+  getAllRttSamples(): Map<string, number[]> {
+    return new Map(this.peerRtt)
   }
 
   /**

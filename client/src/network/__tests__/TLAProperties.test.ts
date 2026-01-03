@@ -62,8 +62,8 @@ function createElections(peerIds: string[]): LeaderElection[] {
   return peerIds.map(id => new LeaderElection({
     localPlayerId: id,
     playerOrder,
-    electionTimeout: 1500,
-    heartbeatInterval: 500,
+    electionTimeoutMs: 1500,
+    heartbeatMs: 500,
   }))
 }
 
@@ -309,7 +309,7 @@ describe('TLA+ LockstepNetwork Properties', () => {
         (playerCount, frame, submitters) => {
           const peerIds = Array.from({ length: playerCount }, (_, i) => `p${i}`)
           const buffer = new InputBuffer({
-            inputDelay: 3,
+            inputDelayTicks: 3,
             playerCount,
             playerOrder: createPlayerOrder(peerIds),
           })
@@ -362,7 +362,7 @@ describe('TLA+ LockstepNetwork Properties', () => {
         frameArb,
         (frame) => {
           const buffer = new InputBuffer({
-            inputDelay: 3,
+            inputDelayTicks: 3,
             playerCount: 2,
             playerOrder: createPlayerOrder(['p1', 'p2']),
           })

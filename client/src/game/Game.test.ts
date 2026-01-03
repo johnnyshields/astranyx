@@ -408,3 +408,350 @@ describe('GameState type', () => {
     expect(states).toHaveLength(6)
   })
 })
+
+describe('Game additional functionality', () => {
+  let game: Game
+  let mockInput: Input
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+
+    document.body.innerHTML = `
+      <div id="game-container"></div>
+      <div id="titleScreen"></div>
+      <div id="pauseOverlay"></div>
+      <div id="gameOverOverlay"></div>
+      <div id="finalScore"></div>
+      <button id="btn1P"></button>
+      <button id="btn2P"></button>
+      <button id="btnRestart"></button>
+    `
+
+    mockInput = createMockInput()
+    game = new Game(mockRenderer, mockInput)
+    await game.init()
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+  })
+
+  describe('setChatHandler', () => {
+    it('should accept chat handler function', () => {
+      const handler = vi.fn()
+      expect(() => game.setChatHandler(handler)).not.toThrow()
+    })
+  })
+
+  describe('setVoiceToggleHandler', () => {
+    it('should accept voice toggle handler function', () => {
+      const handler = vi.fn()
+      expect(() => game.setVoiceToggleHandler(handler)).not.toThrow()
+    })
+  })
+
+  describe('isVoiceEnabled', () => {
+    it('should return false by default', () => {
+      expect(game.isVoiceEnabled()).toBe(false)
+    })
+  })
+
+  describe('multiple frame updates', () => {
+    it('should handle multiple update calls', () => {
+      game.startLocalGame(1)
+
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 60)
+      }
+
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should handle multiple render calls', () => {
+      game.startLocalGame(1)
+      game.resize(1920, 1080)
+
+      for (let i = 0; i < 10; i++) {
+        game.render(i / 10)
+      }
+
+      expect(mockRenderer.beginFrame).toHaveBeenCalledTimes(10)
+      expect(mockRenderer.endFrame).toHaveBeenCalledTimes(10)
+    })
+  })
+
+  describe('game over state', () => {
+    it('should restart from game over state', () => {
+      game.startLocalGame(1)
+
+      const gameOverOverlay = document.getElementById('gameOverOverlay')
+      gameOverOverlay!.classList.add('visible')
+
+      game.restartGame()
+
+      expect(game.getState()).toBe('playing')
+      expect(gameOverOverlay!.classList.contains('visible')).toBe(false)
+    })
+  })
+
+  describe('render with enemies', () => {
+    it('should render enemies when present', () => {
+      game.startLocalGame(1)
+
+      // Run simulation until enemies spawn
+      for (let i = 0; i < 100; i++) {
+        game.update(1 / 60)
+      }
+
+      game.render(1.0)
+
+      expect(mockRenderer.drawMesh).toHaveBeenCalled()
+    })
+  })
+
+  describe('render with bullets', () => {
+    it('should render bullets when player fires', () => {
+      game.startLocalGame(1)
+
+      // Simulate fire input
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: true,
+        special: false,
+        secondary: false,
+        swap: false,
+        pickup: false,
+        pause: false,
+      })
+
+      for (let i = 0; i < 30; i++) {
+        game.update(1 / 60)
+      }
+
+      game.render(1.0)
+
+      expect(mockRenderer.drawMesh).toHaveBeenCalled()
+    })
+  })
+
+  describe('two player mode', () => {
+    it('should update both players in two player mode', () => {
+      game.startLocalGame(2)
+
+      // Different inputs for both players
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: true,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        special: false,
+        secondary: false,
+        swap: false,
+        pickup: false,
+        pause: false,
+      })
+      ;(mockInput.getPlayer2State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false,
+        down: true,
+        left: false,
+        right: false,
+        fire: false,
+        special: false,
+        secondary: false,
+        swap: false,
+        pickup: false,
+        pause: false,
+      })
+
+      for (let i = 0; i < 30; i++) {
+        game.update(1 / 60)
+      }
+
+      game.render(1.0)
+
+      // Should render both players
+      expect(mockRenderer.drawMesh).toHaveBeenCalled()
+    })
+
+    it('should restart with two players', () => {
+      game.startLocalGame(2)
+      game.restartGame()
+
+      const sim = game.getSimulation()
+      expect(sim).not.toBeNull()
+    })
+  })
+
+  describe('resize handling', () => {
+    it('should handle various screen sizes', () => {
+      game.startLocalGame(1)
+
+      game.resize(1920, 1080)
+      game.render(1.0)
+
+      game.resize(800, 600)
+      game.render(1.0)
+
+      game.resize(3840, 2160)
+      game.render(1.0)
+
+      expect(mockRenderer.beginFrame).toHaveBeenCalled()
+    })
+  })
+
+  describe('button click handlers', () => {
+    it('should start 1P game on btn1P click', () => {
+      const btn1P = document.getElementById('btn1P')!
+      btn1P.click()
+
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should start 2P game on btn2P click', () => {
+      const btn2P = document.getElementById('btn2P')!
+      btn2P.click()
+
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should restart game on btnRestart click', () => {
+      game.startLocalGame(1)
+      const gameOverOverlay = document.getElementById('gameOverOverlay')
+      gameOverOverlay!.classList.add('visible')
+
+      const btnRestart = document.getElementById('btnRestart')!
+      btnRestart.click()
+
+      expect(gameOverOverlay!.classList.contains('visible')).toBe(false)
+    })
+  })
+
+  describe('title state rendering', () => {
+    it('should render starfield on title screen', () => {
+      game.render(1.0)
+
+      // Should draw stars
+      expect(mockRenderer.drawQuad).toHaveBeenCalled()
+    })
+  })
+
+  describe('player movement', () => {
+    it('should move player when direction keys pressed', () => {
+      game.startLocalGame(1)
+
+      const initialSim = game.getSimulation()
+      const initialState = initialSim?.getState()
+      const initialX = initialState?.players[0]?.x ?? 0
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false,
+        down: false,
+        left: false,
+        right: true,
+        fire: false,
+        special: false,
+        secondary: false,
+        swap: false,
+        pickup: false,
+        pause: false,
+      })
+
+      for (let i = 0; i < 60; i++) {
+        game.update(1 / 60)
+      }
+
+      const finalState = initialSim?.getState()
+      const finalX = finalState?.players[0]?.x ?? 0
+
+      expect(finalX).toBeGreaterThan(initialX)
+    })
+  })
+
+  describe('special and secondary inputs', () => {
+    it('should handle special input', () => {
+      game.startLocalGame(1)
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        special: true,
+        secondary: false,
+        swap: false,
+        pickup: false,
+        pause: false,
+      })
+
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 60)
+      }
+
+      // Should not crash
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should handle secondary input', () => {
+      game.startLocalGame(1)
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        special: false,
+        secondary: true,
+        swap: false,
+        pickup: false,
+        pause: false,
+      })
+
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 60)
+      }
+
+      expect(game.getState()).toBe('playing')
+    })
+
+    it('should handle swap input', () => {
+      game.startLocalGame(1)
+
+      ;(mockInput.getPlayer1State as ReturnType<typeof vi.fn>).mockReturnValue({
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        fire: false,
+        special: false,
+        secondary: false,
+        swap: true,
+        pickup: false,
+        pause: false,
+      })
+
+      for (let i = 0; i < 10; i++) {
+        game.update(1 / 60)
+      }
+
+      expect(game.getState()).toBe('playing')
+    })
+  })
+
+  describe('HUD rendering', () => {
+    it('should update HUD during render', () => {
+      game.startLocalGame(1)
+      game.resize(1920, 1080)
+      game.render(1.0)
+
+      // HUD methods are mocked, just verify no crashes
+      expect(game.getState()).toBe('playing')
+    })
+  })
+})

@@ -8,7 +8,7 @@
  * 4. Set up LockstepNetcode when all peers connect
  */
 
-import { PhoenixClient, type RoomInfo, type GameStartingData } from './PhoenixClient.ts'
+import { ServerClient, type RoomInfo, type GameStartingData } from './ServerClient.ts'
 import { P2PManager } from './P2PManager.ts'
 import { LockstepNetcode } from './LockstepNetcode.ts'
 import { SafeConsole } from '../core/SafeConsole.ts'
@@ -52,7 +52,7 @@ export class MultiplayerManager {
   private config: MultiplayerConfig
   private state: MultiplayerState = 'disconnected'
 
-  private phoenix: PhoenixClient | null = null
+  private server: ServerClient | null = null
   private p2p: P2PManager | null = null
   private netcode: LockstepNetcode | null = null
 
@@ -95,10 +95,10 @@ export class MultiplayerManager {
     this.setState('connecting')
 
     try {
-      this.phoenix = new PhoenixClient({ url: this.config.serverUrl })
-      await this.phoenix.connect()
+      this.server = new ServerClient({ url: this.config.serverUrl })
+      await this.server.connect()
 
-      this.setupPhoenixHandlers()
+      this.setupServerHandlers()
       this.setState('connected')
     } catch (error) {
       this.handleError(error as Error)
@@ -111,29 +111,29 @@ export class MultiplayerManager {
     this.setState('disconnected')
   }
 
-  private setupPhoenixHandlers(): void {
-    if (!this.phoenix) return
+  private setupServerHandlers(): void {
+    if (!this.server) return
 
-    this.phoenix.onPlayerJoined((payload) => {
+    this.server.onPlayerJoined((payload) => {
       if (this.lobbyState.currentRoom) {
         this.lobbyState.currentRoom.players = payload.players
         this.notifyLobbyUpdate()
       }
     })
 
-    this.phoenix.onPlayerLeft((_payload) => {
-      // PhoenixClient already filters currentRoom.players
-      // Sync our lobby state from PhoenixClient's state
+    this.server.onPlayerLeft((_payload) => {
+      // ServerClient already filters currentRoom.players
+      // Sync our lobby state from ServerClient's state
       if (this.lobbyState.currentRoom) {
-        const phoenixRoom = this.phoenix?.getCurrentRoom()
-        if (phoenixRoom) {
-          this.lobbyState.currentRoom.players = phoenixRoom.players
+        const serverRoom = this.server?.getCurrentRoom()
+        if (serverRoom) {
+          this.lobbyState.currentRoom.players = serverRoom.players
         }
         this.notifyLobbyUpdate()
       }
     })
 
-    this.phoenix.onGameStarting((data) => {
+    this.server.onGameStarting((data) => {
       this.handleGameStarting(data)
     })
   }
@@ -143,12 +143,12 @@ export class MultiplayerManager {
   // ==========================================================================
 
   async listRooms(): Promise<RoomInfo[]> {
-    if (!this.phoenix || this.state === 'disconnected') {
+    if (!this.server || this.state === 'disconnected') {
       throw new Error('Not connected')
     }
 
     try {
-      const rooms = await this.phoenix.listRooms()
+      const rooms = await this.server.listRooms()
       this.lobbyState.rooms = rooms
       this.notifyLobbyUpdate()
       return rooms
@@ -159,15 +159,15 @@ export class MultiplayerManager {
   }
 
   async createRoom(roomId: string): Promise<void> {
-    if (!this.phoenix || this.state !== 'connected') {
+    if (!this.server || this.state !== 'connected') {
       throw new Error(`Cannot create room from state: ${this.state}`)
     }
 
     this.setState('joining_room')
 
     try {
-      const room = await this.phoenix.joinRoom(roomId, true)
-      await this.phoenix.joinSignaling(roomId)
+      const room = await this.server.joinRoom(roomId, true)
+      await this.server.joinSignaling(roomId)
 
       this.lobbyState.currentRoom = {
         id: room.id,
@@ -187,21 +187,21 @@ export class MultiplayerManager {
   }
 
   async joinRoom(roomId: string): Promise<void> {
-    if (!this.phoenix || this.state !== 'connected') {
+    if (!this.server || this.state !== 'connected') {
       throw new Error(`Cannot join room from state: ${this.state}`)
     }
 
     this.setState('joining_room')
 
     try {
-      const room = await this.phoenix.joinRoom(roomId, false)
-      await this.phoenix.joinSignaling(roomId)
+      const room = await this.server.joinRoom(roomId, false)
+      await this.server.joinSignaling(roomId)
 
       this.lobbyState.currentRoom = {
         id: room.id,
         players: room.players,
         host: room.host,
-        isHost: room.host === this.phoenix.getPlayerId(),
+        isHost: room.host === this.server.getPlayerId(),
         status: room.status,
       }
 
@@ -215,7 +215,7 @@ export class MultiplayerManager {
   }
 
   async quickmatch(): Promise<void> {
-    if (!this.phoenix || this.state !== 'connected') {
+    if (!this.server || this.state !== 'connected') {
       throw new Error(`Cannot quickmatch from state: ${this.state}`)
     }
 
@@ -233,9 +233,9 @@ export class MultiplayerManager {
   }
 
   leaveRoom(): void {
-    if (!this.phoenix) return
+    if (!this.server) return
 
-    this.phoenix.leaveRoom()
+    this.server.leaveRoom()
     this.lobbyState.currentRoom = null
 
     if (this.p2p) {
@@ -257,7 +257,7 @@ export class MultiplayerManager {
   // ==========================================================================
 
   async startGame(): Promise<void> {
-    if (!this.phoenix || this.state !== 'in_lobby') {
+    if (!this.server || this.state !== 'in_lobby') {
       throw new Error(`Cannot start game from state: ${this.state}`)
     }
 
@@ -268,7 +268,7 @@ export class MultiplayerManager {
     this.setState('starting')
 
     try {
-      await this.phoenix.startGame()
+      await this.server.startGame()
       // The actual game start is handled via the game_starting event
     } catch (error) {
       this.setState('in_lobby')
@@ -285,7 +285,7 @@ export class MultiplayerManager {
     this.connectedPeers.clear()
 
     // Create P2P manager
-    const localPlayerId = this.phoenix!.getPlayerId()
+    const localPlayerId = this.server!.getPlayerId()
     this.p2p = new P2PManager(localPlayerId)
 
     // Set TURN credentials if provided (secure, only at game start)
@@ -297,7 +297,7 @@ export class MultiplayerManager {
     }
 
     // Set up signaling channel
-    const signalingChannel = this.phoenix!.getSignalingChannel()
+    const signalingChannel = this.server!.getSignalingChannel()
     if (signalingChannel) {
       this.p2p.setSignalingChannel(signalingChannel)
     }
@@ -309,7 +309,7 @@ export class MultiplayerManager {
     }
 
     this.netcode = new LockstepNetcode({
-      inputDelay: 3,
+      inputDelayTicks: 2, // 2 ticks = 66ms at 30Hz
       playerCount: this.expectedPlayers.length,
       localPlayerId: localPlayerId,
       playerOrder: playerOrder,
@@ -367,7 +367,7 @@ export class MultiplayerManager {
       }
 
       try {
-        const credentials = await this.phoenix?.refreshTurnCredentials()
+        const credentials = await this.server?.refreshTurnCredentials()
         if (credentials && this.p2p) {
           SafeConsole.log('Refreshed TURN credentials')
           this.p2p.updateIceServers(credentials.urls, credentials.username, credentials.credential)
@@ -386,7 +386,7 @@ export class MultiplayerManager {
   }
 
   private checkAllPeersConnected(): void {
-    const localPlayerId = this.phoenix?.getPlayerId()
+    const localPlayerId = this.server?.getPlayerId()
     const otherPlayers = this.expectedPlayers.filter(p => p !== localPlayerId)
 
     // Check if we have all peer connections
@@ -421,7 +421,7 @@ export class MultiplayerManager {
   }
 
   getLocalPlayerId(): string {
-    return this.phoenix?.getPlayerId() ?? ''
+    return this.server?.getPlayerId() ?? ''
   }
 
   getPlayerIds(): string[] {
@@ -522,8 +522,8 @@ export class MultiplayerManager {
     this.netcode?.stop()
     this.netcode = null
 
-    this.phoenix?.disconnect()
-    this.phoenix = null
+    this.server?.disconnect()
+    this.server = null
 
     this.lobbyState = {
       rooms: [],

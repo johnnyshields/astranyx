@@ -20,7 +20,7 @@ import type { PlayerInput, FrameInput, GameEvent } from './types.ts'
 import { emptyInput } from './types.ts'
 
 export interface InputBufferConfig {
-  inputDelay: number
+  inputDelayTicks: number
   playerCount: number
   playerOrder: Map<string, number>
   retentionFrames?: number  // How many frames to keep (default: 60)
@@ -50,9 +50,9 @@ export class InputBuffer {
     this.buffer.clear()
     this.checksumBuffer.clear()
 
-    // Pre-seed frames 0 to inputDelay-1 with empty inputs
+    // Pre-seed frames 0 to inputDelayTicks-1 with empty inputs
     const empty = emptyInput()
-    for (let frame = 0; frame < this.config.inputDelay; frame++) {
+    for (let frame = 0; frame < this.config.inputDelayTicks; frame++) {
       const frameInputs = new Map<string, FrameInput>()
       for (const [playerId] of this.config.playerOrder) {
         frameInputs.set(playerId, {

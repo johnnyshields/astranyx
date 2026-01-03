@@ -15,8 +15,10 @@ export class Engine {
   private running = false
   private frameId = 0
 
-  // Fixed timestep for game logic (60 Hz)
-  private readonly TICK_RATE = 1000 / 60
+  // Fixed timestep for simulation (30 Hz) - deterministic lockstep ticks
+  // Rendering runs at 60+ FPS with interpolation between simulation states
+  private readonly SIM_TICK_RATE = 30 // ticks per second
+  private readonly SIM_TICK_MS = 1000 / 30 // 33.33ms per tick
   private accumulator = 0
 
   private onInit: InitCallback | null = null
@@ -111,14 +113,16 @@ export class Engine {
       this.accumulator = 200
     }
 
-    // Fixed timestep game logic updates
-    while (this.accumulator >= this.TICK_RATE) {
-      this.game.update(this.TICK_RATE / 1000)
-      this.accumulator -= this.TICK_RATE
+    // Fixed timestep simulation updates (30 Hz)
+    // Multiple ticks may run per render frame if needed
+    while (this.accumulator >= this.SIM_TICK_MS) {
+      this.game.update(this.SIM_TICK_MS / 1000)
+      this.accumulator -= this.SIM_TICK_MS
     }
 
-    // Render with interpolation factor
-    const alpha = this.accumulator / this.TICK_RATE
+    // Render with interpolation factor (0.0 to 1.0)
+    // Used to interpolate entity positions between simulation states
+    const alpha = this.accumulator / this.SIM_TICK_MS
     this.game.render(alpha)
 
     this.frameId = requestAnimationFrame(this.loop)

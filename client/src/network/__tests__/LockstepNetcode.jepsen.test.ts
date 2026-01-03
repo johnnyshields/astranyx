@@ -42,7 +42,7 @@ function createTestInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
 describe('InputBuffer', () => {
   it('stores and retrieves inputs correctly', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -61,7 +61,7 @@ describe('InputBuffer', () => {
 
   it('detects when all inputs are ready', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -76,7 +76,7 @@ describe('InputBuffer', () => {
 
   it('returns inputs in deterministic order', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 3,
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
     })
@@ -97,7 +97,7 @@ describe('InputBuffer', () => {
 
   it('detects checksum mismatches', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -115,7 +115,7 @@ describe('InputBuffer', () => {
 
   it('cleans up old frames', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 1,
       playerOrder: createPlayerOrder(['p1']),
       retentionFrames: 10,
@@ -139,7 +139,7 @@ describe('InputBuffer', () => {
 
   it('pre-seeds initial frames with empty inputs on reset', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -161,7 +161,7 @@ describe('InputBuffer', () => {
 
   it('returns null for getOrderedInputs on partially filled frame', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 3,
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
     })
@@ -184,7 +184,7 @@ describe('InputBuffer', () => {
 
   it('handles high frame numbers correctly', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
       retentionFrames: 60,
@@ -212,7 +212,7 @@ describe('InputBuffer', () => {
 
   it('collects events from all players in deterministic order', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -238,7 +238,7 @@ describe('InputBuffer', () => {
 
   it('handles checksum comparison with missing checksums', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -255,7 +255,7 @@ describe('InputBuffer', () => {
 
   it('returns empty array when checking desync on non-existent frame', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -267,7 +267,7 @@ describe('InputBuffer', () => {
 
   it('overwrites duplicate inputs for same frame/player', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })
@@ -425,8 +425,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     expect(election.isLeader()).toBe(true)
@@ -437,8 +437,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     expect(election.isLeader()).toBe(false)
@@ -449,15 +449,15 @@ describe('LeaderElection', () => {
     const _e1 = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const e2 = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     let voteResponse: VoteResponseMessage | null = null
@@ -486,8 +486,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     // Manually set term higher
@@ -516,8 +516,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     expect(election.isLeader()).toBe(true)
@@ -540,8 +540,8 @@ describe('LeaderElection', () => {
     const e1 = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e1.addPeer('p1')
@@ -565,8 +565,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p3',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const voteResponses: Array<{ peerId: string; msg: VoteResponseMessage }> = []
@@ -599,8 +599,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const voteResponses: VoteResponseMessage[] = []
@@ -629,8 +629,8 @@ describe('LeaderElection', () => {
     const e1 = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e1.addPeer('p1')
@@ -667,8 +667,8 @@ describe('LeaderElection', () => {
     const e1 = new LeaderElection({
       localPlayerId: 'p3',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3', 'p4', 'p5']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e1.addPeer('p1')
@@ -708,8 +708,8 @@ describe('LeaderElection', () => {
     const e1 = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e1.addPeer('p1')
@@ -737,8 +737,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p3',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const voteResponses: Array<{ peerId: string; msg: VoteResponseMessage }> = []
@@ -767,8 +767,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     election.addPeer('p1')
@@ -800,8 +800,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     // p1 starts as leader in term 0
@@ -832,8 +832,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     // Advance local frame
@@ -860,8 +860,8 @@ describe('LeaderElection', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const leaderChanges: Array<{ leaderId: string; term: number }> = []
@@ -941,8 +941,8 @@ describe('Jepsen Failure Scenarios', () => {
       const e1 = new LeaderElection({
         localPlayerId: 'p1',
         playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-        electionTimeout: 100,
-        heartbeatInterval: 50,
+        electionTimeoutMs: 100,
+        heartbeatMs: 50,
       })
 
       // Simulate p1 receiving vote request and trying to start election
@@ -958,8 +958,8 @@ describe('Jepsen Failure Scenarios', () => {
       const e2 = new LeaderElection({
         localPlayerId: 'p2',
         playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-        electionTimeout: 100,
-        heartbeatInterval: 50,
+        electionTimeoutMs: 100,
+        heartbeatMs: 50,
       })
 
       // p2 is follower, thinks p1 is leader
@@ -1034,8 +1034,8 @@ describe('Jepsen Failure Scenarios', () => {
       const e2 = new LeaderElection({
         localPlayerId: 'p2',
         playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-        electionTimeout: 50, // Short for testing
-        heartbeatInterval: 20,
+        electionTimeoutMs: 50, // Short for testing
+        heartbeatMs: 20,
       })
 
       e2.reset()
@@ -1059,15 +1059,15 @@ describe('Jepsen Failure Scenarios', () => {
       const e1 = new LeaderElection({
         localPlayerId: 'p1', // Old leader
         playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-        electionTimeout: 1500,
-        heartbeatInterval: 500,
+        electionTimeoutMs: 1500,
+        heartbeatMs: 500,
       })
 
       const e2 = new LeaderElection({
         localPlayerId: 'p2',
         playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
-        electionTimeout: 1500,
-        heartbeatInterval: 500,
+        electionTimeoutMs: 1500,
+        heartbeatMs: 500,
       })
 
       e1.reset()
@@ -1151,7 +1151,7 @@ describe('Integration: Full Lockstep with Faults', () => {
     const playerOrder = createPlayerOrder(['p1', 'p2'])
 
     const netcode = new LockstepNetcode({
-      inputDelay: 2,
+      inputDelayTicks: 2,
       playerCount: 2,
       localPlayerId: 'p1',
       playerOrder,
@@ -1181,7 +1181,7 @@ describe('Integration: Full Lockstep with Faults', () => {
     const playerOrder = createPlayerOrder(['p1', 'p2'])
 
     const netcode = new LockstepNetcode({
-      inputDelay: 2,
+      inputDelayTicks: 2,
       playerCount: 2,
       localPlayerId: 'p2', // Not initial leader
       playerOrder,
@@ -1215,8 +1215,8 @@ describe('Safety Properties', () => {
         new LeaderElection({
           localPlayerId: id,
           playerOrder,
-          electionTimeout: 1500,
-          heartbeatInterval: 500,
+          electionTimeoutMs: 1500,
+          heartbeatMs: 500,
         })
     )
 
@@ -1245,8 +1245,8 @@ describe('Safety Properties', () => {
     const election = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder: createPlayerOrder(['p1', 'p2']),
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     election.reset()
@@ -1283,8 +1283,8 @@ describe('Safety Properties', () => {
     const e2 = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e2.addPeer('p1')
@@ -1326,7 +1326,7 @@ describe('Safety Properties', () => {
 
   it('PROPERTY: Events are applied in deterministic order', () => {
     const buffer = new InputBuffer({
-      inputDelay: 2,
+      inputDelayTicks: 2,
       playerCount: 3,
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
     })
@@ -1371,8 +1371,8 @@ describe('Extended Chaos Tests', () => {
         new LeaderElection({
           localPlayerId: id,
           playerOrder,
-          electionTimeout: 100,
-          heartbeatInterval: 50,
+          electionTimeoutMs: 100,
+          heartbeatMs: 50,
         })
     )
 
@@ -1461,7 +1461,7 @@ describe('Extended Chaos Tests', () => {
 
     for (let iter = 0; iter < iterations; iter++) {
       const buffer = new InputBuffer({
-        inputDelay: 3,
+        inputDelayTicks: 3,
         playerCount: 3,
         playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
       })
@@ -1597,8 +1597,8 @@ describe('TLA+ Invariant Tests', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     election.addPeer('p1')
@@ -1628,8 +1628,8 @@ describe('TLA+ Invariant Tests', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     // Initial state: p2 is follower, votedFor should be null or p1 (initial leader)
@@ -1650,8 +1650,8 @@ describe('TLA+ Invariant Tests', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     election.addPeer('p1')
@@ -1698,7 +1698,7 @@ describe('TLA+ Invariant Tests', () => {
   it('INVARIANT: FrameBoundedDrift - frames within 1 of each other (simulated)', () => {
     // This tests the concept - actual multi-peer test would need full integration
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 3,
       playerOrder: createPlayerOrder(['p1', 'p2', 'p3']),
     })
@@ -1721,7 +1721,7 @@ describe('TLA+ Invariant Tests', () => {
   it('INVARIANT: InputsFromValidPeers - assertInvariants catches invalid peers', () => {
     const playerOrder = createPlayerOrder(['p1', 'p2', 'p3'])
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 3,
       playerOrder,
     })
@@ -1745,8 +1745,8 @@ describe('TLA+ Invariant Tests', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     election.addPeer('p1')
@@ -1774,8 +1774,8 @@ describe('TLA+ Invariant Tests', () => {
     const election = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     election.addPeer('p1')
@@ -1817,15 +1817,15 @@ describe('Split-Brain Prevention', () => {
     const e1 = new LeaderElection({
       localPlayerId: 'p1',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const e2 = new LeaderElection({
       localPlayerId: 'p3',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e1.reset()
@@ -1864,15 +1864,15 @@ describe('Split-Brain Prevention', () => {
     const e2 = new LeaderElection({
       localPlayerId: 'p2',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     const e3 = new LeaderElection({
       localPlayerId: 'p3',
       playerOrder,
-      electionTimeout: 1500,
-      heartbeatInterval: 500,
+      electionTimeoutMs: 1500,
+      heartbeatMs: 500,
     })
 
     e2.addPeer('p1')
@@ -2003,7 +2003,7 @@ describe('State Sync Ordering', () => {
 describe('Frame and Event Integrity', () => {
   it('SCENARIO: Frame rollback prevention - frames never decrease', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
       retentionFrames: 3,  // Small retention to test cleanup
@@ -2054,7 +2054,7 @@ describe('Frame and Event Integrity', () => {
 
   it('SCENARIO: Events from unknown players rejected', () => {
     const buffer = new InputBuffer({
-      inputDelay: 3,
+      inputDelayTicks: 3,
       playerCount: 2,
       playerOrder: createPlayerOrder(['p1', 'p2']),
     })

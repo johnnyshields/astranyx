@@ -154,9 +154,12 @@ export class Game {
   // Starfield background
   private stars: Array<{ x: number; y: number; z: number; speed: number }> = []
 
-  // Rendering interpolation
+  // Rendering interpolation (for 30Hz sim -> 60Hz render)
+  // lastState = previous tick's state, currentState = latest tick's state
+  // render() interpolates between them using alpha (0.0-1.0)
   private lastState: ReturnType<Simulation['getState']> | null = null
   private currentState: ReturnType<Simulation['getState']> | null = null
+  private renderAlpha = 0 // Set each render call for interpolation
 
   // Screen shake tracking
   private shakeOffset = { x: 0, y: 0 }
@@ -547,7 +550,8 @@ export class Game {
     this.input.clearFrameState()
   }
 
-  render(_alpha: number): void {
+  render(alpha: number): void {
+    this.renderAlpha = alpha
     const state = this.currentState
 
     // Calculate screen shake
@@ -647,6 +651,98 @@ export class Game {
   }
 
   // ==========================================================================
+  // Interpolation Helpers (for 30Hz sim -> 60Hz render)
+  // ==========================================================================
+
+  /**
+   * Linear interpolation between two values
+   */
+  private lerp(a: number, b: number): number {
+    return a + (b - a) * this.renderAlpha
+  }
+
+  /**
+   * Get interpolated position for a player entity
+   * Falls back to current position if no previous state
+   */
+  private getInterpolatedPlayerPos(playerId: string): { x: number; y: number } | null {
+    const curr = this.currentState?.players.find(p => p.playerId === playerId)
+    if (!curr) return null
+
+    const prev = this.lastState?.players.find(p => p.playerId === playerId)
+    if (!prev) return { x: curr.x, y: curr.y }
+
+    return {
+      x: this.lerp(prev.x, curr.x),
+      y: this.lerp(prev.y, curr.y),
+    }
+  }
+
+  /**
+   * Get interpolated position for an enemy by ID
+   */
+  private getInterpolatedEnemyPos(enemyId: number): { x: number; y: number } | null {
+    const curr = this.currentState?.enemies.find(e => e.id === enemyId)
+    if (!curr) return null
+
+    const prev = this.lastState?.enemies.find(e => e.id === enemyId)
+    if (!prev) return { x: curr.x, y: curr.y }
+
+    return {
+      x: this.lerp(prev.x, curr.x),
+      y: this.lerp(prev.y, curr.y),
+    }
+  }
+
+  /**
+   * Get interpolated position for a bullet by ID
+   */
+  private getInterpolatedBulletPos(bulletId: number): { x: number; y: number } | null {
+    const curr = this.currentState?.bullets.find(b => b.id === bulletId)
+    if (!curr) return null
+
+    const prev = this.lastState?.bullets.find(b => b.id === bulletId)
+    if (!prev) return { x: curr.x, y: curr.y }
+
+    return {
+      x: this.lerp(prev.x, curr.x),
+      y: this.lerp(prev.y, curr.y),
+    }
+  }
+
+  /**
+   * Get interpolated position for a missile by ID
+   */
+  private getInterpolatedMissilePos(missileId: number): { x: number; y: number } | null {
+    const curr = this.currentState?.missiles.find(m => m.id === missileId)
+    if (!curr) return null
+
+    const prev = this.lastState?.missiles.find(m => m.id === missileId)
+    if (!prev) return { x: curr.x, y: curr.y }
+
+    return {
+      x: this.lerp(prev.x, curr.x),
+      y: this.lerp(prev.y, curr.y),
+    }
+  }
+
+  /**
+   * Get interpolated position for the boss
+   */
+  private getInterpolatedBossPos(): { x: number; y: number } | null {
+    const curr = this.currentState?.boss
+    if (!curr) return null
+
+    const prev = this.lastState?.boss
+    if (!prev) return { x: curr.x, y: curr.y }
+
+    return {
+      x: this.lerp(prev.x, curr.x),
+      y: this.lerp(prev.y, curr.y),
+    }
+  }
+
+  // ==========================================================================
   // Entity Renderers
   // ==========================================================================
 
@@ -656,8 +752,10 @@ export class Game {
     // Invincibility flash
     if (player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0) return
 
-    const x = player.x + this.shakeOffset.x
-    const y = player.y + this.shakeOffset.y
+    // Get interpolated position for smooth 60fps rendering
+    const interpolated = this.getInterpolatedPlayerPos(player.playerId)
+    const x = (interpolated?.x ?? player.x) + this.shakeOffset.x
+    const y = (interpolated?.y ?? player.y) + this.shakeOffset.y
     const isLocal = player.playerId === this.localPlayerId
     const lvl = player.shipLevel - 1
 
@@ -757,8 +855,10 @@ export class Game {
   }
 
   private renderEnemy(enemy: ReturnType<Simulation['getState']>['enemies'][0]): void {
-    const x = enemy.x + this.shakeOffset.x
-    const y = enemy.y + this.shakeOffset.y
+    // Get interpolated position for smooth 60fps rendering
+    const interpolated = this.getInterpolatedEnemyPos(enemy.id)
+    const x = (interpolated?.x ?? enemy.x) + this.shakeOffset.x
+    const y = (interpolated?.y ?? enemy.y) + this.shakeOffset.y
     const color = COLORS[enemy.type as keyof typeof COLORS] as [number, number, number, number] || COLORS.grunt
 
     // Size from config
@@ -827,8 +927,10 @@ export class Game {
   private renderBoss(boss: ReturnType<Simulation['getState']>['boss']): void {
     if (!boss) return
 
-    const x = boss.x + this.shakeOffset.x
-    const y = boss.y + this.shakeOffset.y
+    // Get interpolated position for smooth 60fps rendering
+    const interpolated = this.getInterpolatedBossPos()
+    const x = (interpolated?.x ?? boss.x) + this.shakeOffset.x
+    const y = (interpolated?.y ?? boss.y) + this.shakeOffset.y
     const color = COLORS.boss[boss.type] ?? COLORS.boss[0]!
     const size = BOSS_SIZES[boss.type] ?? BOSS_SIZES[0]!
 
@@ -975,8 +1077,10 @@ export class Game {
   }
 
   private renderBullet(bullet: ReturnType<Simulation['getState']>['bullets'][0]): void {
-    const x = bullet.x + this.shakeOffset.x
-    const y = bullet.y + this.shakeOffset.y
+    // Get interpolated position for smooth 60fps rendering
+    const interpolated = this.getInterpolatedBulletPos(bullet.id)
+    const x = (interpolated?.x ?? bullet.x) + this.shakeOffset.x
+    const y = (interpolated?.y ?? bullet.y) + this.shakeOffset.y
 
     let color = COLORS[bullet.type as keyof typeof COLORS] as [number, number, number, number] || COLORS.shot
     let width = 15
@@ -1035,8 +1139,10 @@ export class Game {
   }
 
   private renderMissile(missile: ReturnType<Simulation['getState']>['missiles'][0]): void {
-    const x = missile.x + this.shakeOffset.x
-    const y = missile.y + this.shakeOffset.y
+    // Get interpolated position for smooth 60fps rendering
+    const interpolated = this.getInterpolatedMissilePos(missile.id)
+    const x = (interpolated?.x ?? missile.x) + this.shakeOffset.x
+    const y = (interpolated?.y ?? missile.y) + this.shakeOffset.y
     const angle = Math.atan2(missile.vy, missile.vx)
 
     // Missile trail

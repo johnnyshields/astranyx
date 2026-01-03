@@ -35,7 +35,7 @@ Inspired by popular arcade and console shooters:
 ```
 Client A ◄══════════════════════════════════════► Client B
          │       WebRTC DataChannel (P2P)        │
-         │       (inputs only, 60Hz)             │
+         │       Binary protocol (30Hz sim)      │
          │                                       │
          │       Deterministic Simulation        │
          │       (same on both clients)          │
@@ -46,6 +46,13 @@ Client A ◄══════════════════════�
                    Phoenix Server
                    (lobby only)
 ```
+
+### Network Optimizations (SC2-inspired)
+
+- **Binary Protocol**: 95% bandwidth reduction (6B vs 120B per input)
+- **Input Batching**: Adaptive batching based on RTT (1-4 inputs per packet)
+- **Dynamic Input Delay**: 2-6 ticks based on measured latency
+- **RTT Measurement**: Via heartbeat timestamps for accurate latency tracking
 
 ## Directory Structure
 
@@ -78,6 +85,10 @@ astranyx/
 - **`LockstepNetcode`** - Frame synchronization, input exchange
 - **`P2PManager`** - WebRTC peer connections
 - **`PhoenixClient`** - Lobby/signaling via WebSocket
+- **`MessageCodec`** - Binary protocol encoder/decoder (95% bandwidth reduction)
+- **`InputBatcher`** - Adaptive input batching based on RTT
+- **`InputDelayController`** - Dynamic input delay from measured latency
+- **`LeaderElection`** - Raft-inspired leader election with RTT measurement
 
 ### Server
 

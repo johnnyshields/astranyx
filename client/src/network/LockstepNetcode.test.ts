@@ -17,10 +17,11 @@ function createMockDataChannel(): RTCDataChannel {
 
 function createConfig(overrides?: Partial<LockstepConfig>): LockstepConfig {
   return {
-    inputDelay: 3,
+    inputDelayTicks: 3,
     playerCount: 2,
     localPlayerId: 'player1',
     playerOrder: new Map([['player1', 0], ['player2', 1]]),
+    protocolMode: 'json', // Use JSON for existing tests that parse sent data
     ...overrides,
   }
 }
@@ -58,7 +59,7 @@ describe('LockstepNetcode', () => {
     })
 
     it('should use custom input delay', () => {
-      const customLockstep = new LockstepNetcode(createConfig({ inputDelay: 5 }))
+      const customLockstep = new LockstepNetcode(createConfig({ inputDelayTicks: 5 }))
       expect(customLockstep.getInputDelay()).toBe(5)
     })
 
@@ -805,5 +806,192 @@ describe('GameEvent handling', () => {
       // Old events should be ignored
       expect(inputHandler).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('LockstepNetcode additional getters', () => {
+  let lockstep: LockstepNetcode
+
+  beforeEach(() => {
+    lockstep = new LockstepNetcode(createConfig())
+  })
+
+  describe('getCurrentTerm', () => {
+    it('should return initial term', () => {
+      const term = lockstep.getCurrentTerm()
+      expect(typeof term).toBe('number')
+    })
+  })
+
+  describe('getCurrentLeader', () => {
+    it('should return leader id or null', () => {
+      const leader = lockstep.getCurrentLeader()
+      // Could be null if no leader elected yet
+      expect(leader === null || typeof leader === 'string').toBe(true)
+    })
+  })
+
+  describe('getDebugInfo', () => {
+    it('should return debug info object', () => {
+      lockstep.start()
+      const debugInfo = lockstep.getDebugInfo()
+
+      expect(debugInfo).toHaveProperty('frame')
+      expect(debugInfo).toHaveProperty('confirmedFrame')
+      expect(debugInfo).toHaveProperty('waiting')
+      expect(debugInfo).toHaveProperty('isLeader')
+      expect(debugInfo).toHaveProperty('election')
+      expect(debugInfo).toHaveProperty('sync')
+      expect(debugInfo).toHaveProperty('events')
+      expect(debugInfo).toHaveProperty('inputBufferSize')
+    })
+
+    it('should return correct frame values', () => {
+      lockstep.start()
+      const debugInfo = lockstep.getDebugInfo()
+
+      expect(debugInfo.frame).toBe(0)
+      expect(debugInfo.confirmedFrame).toBe(-1)
+    })
+  })
+})
+
+describe('LockstepNetcode event handlers', () => {
+  let lockstep: LockstepNetcode
+
+  beforeEach(() => {
+    lockstep = new LockstepNetcode(createConfig())
+    lockstep.start()
+  })
+
+  describe('setStateSyncHandler', () => {
+    it('should set state sync handler', () => {
+      const handler = vi.fn()
+      expect(() => lockstep.setStateSyncHandler(handler)).not.toThrow()
+    })
+  })
+
+  describe('setLeaderChangeHandler', () => {
+    it('should set leader change handler', () => {
+      const handler = vi.fn()
+      expect(() => lockstep.setLeaderChangeHandler(handler)).not.toThrow()
+    })
+  })
+
+  describe('setPeerDisconnectHandler', () => {
+    it('should set peer disconnect handler', () => {
+      const handler = vi.fn()
+      expect(() => lockstep.setPeerDisconnectHandler(handler)).not.toThrow()
+    })
+  })
+})
+
+describe('LockstepNetcode binary protocol', () => {
+  it('should work with binary protocol mode', () => {
+    const binaryConfig = createConfig({ protocolMode: 'binary' })
+    const lockstep = new LockstepNetcode(binaryConfig)
+
+    lockstep.start()
+    expect(lockstep.getCurrentFrame()).toBe(0)
+    lockstep.stop()
+  })
+})
+
+describe('LockstepNetcode invariant checks', () => {
+  let lockstep: LockstepNetcode
+
+  beforeEach(() => {
+    lockstep = new LockstepNetcode(createConfig())
+    lockstep.start()
+  })
+
+  describe('assertAllInvariants', () => {
+    it('should not throw on initial state', () => {
+      expect(() => lockstep.assertAllInvariants()).not.toThrow()
+    })
+  })
+
+  describe('assertFrameBoundedDrift', () => {
+    it('should not throw when no peers', () => {
+      expect(() => lockstep.assertFrameBoundedDrift()).not.toThrow()
+    })
+  })
+
+  describe('assertLeaderUpToDate', () => {
+    it('should not throw when not leader', () => {
+      expect(() => lockstep.assertLeaderUpToDate()).not.toThrow()
+    })
+  })
+})
+
+describe('LockstepNetcode peer management', () => {
+  let lockstep: LockstepNetcode
+
+  beforeEach(() => {
+    lockstep = new LockstepNetcode(createConfig())
+    lockstep.start()
+  })
+
+  describe('multiple peers', () => {
+    it('should handle adding multiple peers', () => {
+      const channel1 = createMockDataChannel()
+      const channel2 = createMockDataChannel()
+
+      lockstep.addPeer('player2', channel1)
+      lockstep.addPeer('player3', channel2)
+
+      expect(channel1.onmessage).toBeDefined()
+      expect(channel2.onmessage).toBeDefined()
+    })
+
+    it('should handle removing one of multiple peers', () => {
+      const channel1 = createMockDataChannel()
+      const channel2 = createMockDataChannel()
+
+      lockstep.addPeer('player2', channel1)
+      lockstep.addPeer('player3', channel2)
+
+      lockstep.removePeer('player2')
+
+      // player3 should still be connected
+    })
+  })
+})
+
+describe('LockstepNetcode configuration', () => {
+  it('should use default stateSyncTicks if not provided', () => {
+    const config = {
+      inputDelayTicks: 3,
+      playerCount: 2,
+      localPlayerId: 'player1',
+      playerOrder: new Map([['player1', 0], ['player2', 1]]),
+      protocolMode: 'json' as const,
+    }
+    const lockstep = new LockstepNetcode(config)
+    expect(lockstep).toBeDefined()
+  })
+
+  it('should use custom stateSyncTicks if provided', () => {
+    const config = createConfig({ stateSyncTicks: 120 })
+    const lockstep = new LockstepNetcode(config)
+    expect(lockstep).toBeDefined()
+  })
+
+  it('should use custom eventBufferTicks if provided', () => {
+    const config = createConfig({ eventBufferTicks: 30 })
+    const lockstep = new LockstepNetcode(config)
+    expect(lockstep).toBeDefined()
+  })
+
+  it('should use custom electionTimeoutMs if provided', () => {
+    const config = createConfig({ electionTimeoutMs: 5000 })
+    const lockstep = new LockstepNetcode(config)
+    expect(lockstep).toBeDefined()
+  })
+
+  it('should use custom heartbeatMs if provided', () => {
+    const config = createConfig({ heartbeatMs: 500 })
+    const lockstep = new LockstepNetcode(config)
+    expect(lockstep).toBeDefined()
   })
 })

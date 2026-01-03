@@ -1,11 +1,11 @@
 /**
- * Phoenix WebSocket client for lobby/rooms/signaling
+ * Server WebSocket client for lobby/rooms/signaling
  */
 
 import { Socket, Channel } from 'phoenix'
 import { SafeConsole } from '../core/SafeConsole.ts'
 
-export interface PhoenixConfig {
+export interface ServerConfig {
   url: string
   playerId?: string
   connectionTimeout?: number
@@ -82,7 +82,7 @@ type PlayerJoinedHandler = (payload: { player_id: string; players: string[] }) =
 type PlayerLeftHandler = (payload: { player_id: string }) => void
 type GameStartingHandler = (data: GameStartingData) => void
 
-export class PhoenixClient {
+export class ServerClient {
   private socket: Socket | null = null
   private lobbyChannel: Channel | null = null
   private roomChannel: Channel | null = null
@@ -99,7 +99,7 @@ export class PhoenixClient {
 
   private currentRoom: RoomData | null = null
 
-  constructor(private config: PhoenixConfig) {}
+  constructor(private config: ServerConfig) {}
 
   async connect(): Promise<string> {
     return new Promise((resolve, reject) => {
