@@ -246,6 +246,7 @@ export interface LockstepConfig {
   eventBufferTicks?: number    // Max ticks of events to buffer (default: 450 = 15 seconds)
   electionTimeoutMs?: number   // Ms before election timeout (default: 1500)
   heartbeatMs?: number         // Ms between heartbeats (default: 500)
+  protocolMode?: 'binary' | 'json'  // Protocol mode (default: 'binary')
 }
 
 /**

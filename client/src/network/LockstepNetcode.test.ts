@@ -21,6 +21,7 @@ function createConfig(overrides?: Partial<LockstepConfig>): LockstepConfig {
     playerCount: 2,
     localPlayerId: 'player1',
     playerOrder: new Map([['player1', 0], ['player2', 1]]),
+    protocolMode: 'json', // Use JSON for existing tests that parse sent data
     ...overrides,
   }
 }

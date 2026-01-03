@@ -115,6 +115,7 @@ export class LockstepNetcode {
       eventBufferTicks: config.eventBufferTicks ?? DEFAULT_CONFIG.eventBufferTicks,
       electionTimeoutMs: config.electionTimeoutMs ?? DEFAULT_CONFIG.electionTimeoutMs,
       heartbeatMs: config.heartbeatMs ?? DEFAULT_CONFIG.heartbeatMs,
+      protocolMode: config.protocolMode,
     }
 
     // Initialize components
@@ -141,10 +142,10 @@ export class LockstepNetcode {
       heartbeatMs: this.config.heartbeatMs!,
     })
 
-    // Initialize binary protocol codec
+    // Initialize protocol codec
     this.codec = new MessageCodec({
       playerOrder: this.config.playerOrder,
-      useBinaryProtocol: true,
+      useBinaryProtocol: (this.config.protocolMode ?? 'binary') === 'binary',
     })
 
     // Wire up election message sending

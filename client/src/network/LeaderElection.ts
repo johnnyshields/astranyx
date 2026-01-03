@@ -88,6 +88,8 @@ export class LeaderElection {
     this.currentLeader = this.getInitialLeader()
     if (this.currentLeader === config.localPlayerId) {
       this.state = 'leader'
+      // Initial leader "voted for self" to satisfy TLA+ invariant
+      this.votedFor = config.localPlayerId
     }
   }
 
@@ -131,7 +133,12 @@ export class LeaderElection {
 
     // Re-initialize leader
     this.currentLeader = this.getInitialLeader()
-    this.state = this.currentLeader === this.config.localPlayerId ? 'leader' : 'follower'
+    if (this.currentLeader === this.config.localPlayerId) {
+      this.state = 'leader'
+      this.votedFor = this.config.localPlayerId // Initial leader voted for self
+    } else {
+      this.state = 'follower'
+    }
   }
 
   /**
