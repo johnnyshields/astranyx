@@ -376,6 +376,17 @@ run_model() {
          "MC${SPEC_NAME}.tla" 2>&1 | tee /dev/stderr)
     local TLC_EXIT=${PIPESTATUS[0]}
 
+    # Check for errors in output even if exit code is 0
+    # TLC doesn't always return non-zero on errors
+    if echo "$TLC_OUTPUT" | grep -qE "Error:|Invariant.*violated|violated.*Invariant"; then
+        echo "[$SPEC_NAME] FAILED - error found in output"
+        FAILED_MODELS+=("$SPEC_NAME")
+        if [[ "$FAIL_FAST" == "true" ]]; then
+            exit 1
+        fi
+        return 1
+    fi
+
     if [[ $TLC_EXIT -eq 0 ]]; then
         # Parse state counts from TLC output
         # Format: "46895806 states generated, 5602527 distinct states found, 0 states left on queue."
