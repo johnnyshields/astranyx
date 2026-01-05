@@ -152,7 +152,7 @@ I'll invest it back 100% into improving and running the game.
 
 ## License
 
-Astranyx is libre software licensed under the AGPL (code), CC-BY-SA (assets), and OFL (fonts).
+Astranyx is libre software licensed under the GPL (code), CC-BY-SA (assets), and OFL (fonts).
 Refer to [LICENSE](LICENSE) for details.
 
 ## Contributing
