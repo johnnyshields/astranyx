@@ -6,9 +6,8 @@
 \* 2. Raft-inspired leader election
 \* 3. Owner-authoritative events with tuple tracking
 \* 4. Async state sync with term validation
-\* 5. Message network with loss
-\* 6. Network partitions (symmetric)
-\* 7. Peer disconnect/reconnect
+\* 5. Message network with loss (subsumes partitions)
+\* 6. Peer disconnect/reconnect
 \*
 \* Implementation: client/src/network/
 \*
@@ -24,7 +23,7 @@
 \*
 \* INCLUDED (network layer):
 \* - Message loss: Messages can be dropped (unreliable DataChannel)
-\* - Partitions: Symmetric partitions between peer pairs
+\*   NOTE: This subsumes partitions - a partition is sustained message loss
 \* - Composite mode: 5 explicit states (Disconnected/Syncing/Active/Electing/Leading)
 \*
 \* EXCLUDED (intentional simplifications):
@@ -112,10 +111,7 @@ VARIABLE inputsReceived
 \* Set of in-flight messages
 VARIABLE network
 
-\* Symmetric partition: partitioned[{p,q}] = TRUE
-VARIABLE partitioned
-
-networkVars == <<network, partitioned>>
+networkVars == <<network>>
 
 \* All variables
 protocolVars == <<electionVars, frameVars, syncVars, inputsReceived>>
@@ -157,14 +153,10 @@ IsActive(p) == mode[p] = "Active"
 \* Connected peers only
 ConnectedPeers == {p \in Peer : IsConnected(p)}
 
-\* Check if two peers can communicate (both connected, not partitioned)
+\* Check if two peers can communicate (both connected)
 CanCommunicate(p, q) ==
     /\ IsConnected(p)
     /\ IsConnected(q)
-    /\ ~partitioned[{p, q}]
-
-\* All partition pairs (unordered)
-PartitionPairs == {{p, q} : p, q \in Peer}
 
 ----
 (**************************************************************************************************)
@@ -188,7 +180,6 @@ Init ==
     /\ inputsReceived = {}
     \* Network state
     /\ network = {}
-    /\ partitioned = [pair \in PartitionPairs |-> FALSE]
 
 ----
 (**************************************************************************************************)
@@ -206,7 +197,6 @@ Disconnect(p) ==
     \* Drop all messages to/from this peer
     /\ network' = {m \in network : MsgFrom(m) # p /\ MsgTo(m) # p}
     /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, syncVars, inputsReceived>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -218,44 +208,19 @@ Reconnect(p) ==
     \* Reconnecting peer needs state sync
     /\ mode' = [mode EXCEPT ![p] = "Syncing"]
     /\ UNCHANGED <<currentTerm, votedFor, votesReceived, frameVars, syncVars, inputsReceived>>
-    /\ UNCHANGED <<network, partitioned>>
-
-(******************************************************************************)
-(* [ACTION]                                                                   *)
-(*                                                                            *)
-(* Create partition between two peers (symmetric).                            *)
-(******************************************************************************)
-CreatePartition(p, q) ==
-    /\ p # q
-    /\ ~partitioned[{p, q}]
-    /\ partitioned' = [partitioned EXCEPT ![{p, q}] = TRUE]
-    \* Drop messages between partitioned peers
-    /\ network' = {m \in network :
-         ~((MsgFrom(m) = p /\ MsgTo(m) = q) \/ (MsgFrom(m) = q /\ MsgTo(m) = p))}
-    /\ UNCHANGED protocolVars
-
-(******************************************************************************)
-(* [ACTION]                                                                   *)
-(*                                                                            *)
-(* Heal partition between two peers.                                          *)
-(******************************************************************************)
-HealPartition(p, q) ==
-    /\ p # q
-    /\ partitioned[{p, q}]
-    /\ partitioned' = [partitioned EXCEPT ![{p, q}] = FALSE]
-    /\ UNCHANGED protocolVars
     /\ UNCHANGED network
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
 (*                                                                            *)
 (* Message is lost (unreliable network).                                      *)
+(* NOTE: This subsumes network partitions - a partition is just sustained     *)
+(* message loss between two peers. LoseMessage can model this.                *)
 (******************************************************************************)
 LoseMessage(m) ==
     /\ m \in network
     /\ network' = network \ {m}
     /\ UNCHANGED protocolVars
-    /\ UNCHANGED partitioned
 
 ----
 (**************************************************************************************************)
@@ -277,7 +242,6 @@ SubmitInput(p) ==
     /\ LET newMsgs == {<<"input", p, q, frame[p]>> : q \in ConnectedPeers \ {p}}
        IN network' = network \union newMsgs
     /\ UNCHANGED <<electionVars, frameVars, syncVars>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -298,7 +262,6 @@ ReceiveInput(m) ==
           /\ inputsReceived' = inputsReceived \union {sender}
     /\ network' = network \ {m}
     /\ UNCHANGED <<electionVars, frameVars, syncVars>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -353,7 +316,6 @@ SendStateSync(leader) ==
                        : q \in ConnectedPeers \ {leader}}
        IN network' = network \union newMsgs
     /\ UNCHANGED protocolVars
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -388,7 +350,6 @@ ReceiveStateSync(m) ==
                ![receiver] = {e \in pendingEvents[receiver] : e[1] = receiver}]
     /\ network' = network \ {m}
     /\ UNCHANGED <<frame, inputsReceived, heartbeatReceived>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -422,7 +383,6 @@ BroadcastHeartbeat(leader) ==
     \* Leader's own heartbeat is always "received"
     /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![leader] = TRUE]
     /\ UNCHANGED <<electionVars, frame, syncVars, inputsReceived>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -449,7 +409,6 @@ ReceiveHeartbeat(m) ==
           /\ heartbeatReceived' = [heartbeatReceived EXCEPT ![receiver] = TRUE]
     /\ network' = network \ {m}
     /\ UNCHANGED <<frame, votedFor, votesReceived, inputsReceived, syncVars>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -489,7 +448,6 @@ StartElection(p) ==
                        : q \in ConnectedPeers \ {p}}
        IN network' = network \union newMsgs
     /\ UNCHANGED <<frame, syncVars, inputsReceived>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -523,7 +481,6 @@ ReceiveVoteRequest(m) ==
           /\ network' = (network \ {m}) \union
                {<<"vote_resp", voter, candidate, msgTerm, TRUE>>}
     /\ UNCHANGED <<frame, votesReceived, syncVars, inputsReceived>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -546,7 +503,6 @@ ReceiveVoteResponse(m) ==
                ![candidate] = votesReceived[candidate] \union {voter}]
     /\ network' = network \ {m}
     /\ UNCHANGED <<currentTerm, mode, votedFor, frameVars, syncVars, inputsReceived>>
-    /\ UNCHANGED partitioned
 
 (******************************************************************************)
 (* [ACTION]                                                                   *)
@@ -592,7 +548,6 @@ RetryElection(p) ==
                        : q \in ConnectedPeers \ {p}}
        IN network' = network \union newMsgs
     /\ UNCHANGED <<mode, frameVars, syncVars, inputsReceived>>
-    /\ UNCHANGED partitioned
 
 ----
 (**************************************************************************************************)
@@ -603,8 +558,6 @@ Next ==
     \* Network layer
     \/ \E p \in Peer : Disconnect(p)
     \/ \E p \in Peer : Reconnect(p)
-    \/ \E p, q \in Peer : CreatePartition(p, q)
-    \/ \E p, q \in Peer : HealPartition(p, q)
     \/ \E m \in network : LoseMessage(m)
     \* Lockstep
     \/ \E p \in Peer : SubmitInput(p)
@@ -636,7 +589,6 @@ Fairness ==
     /\ WF_vars(\E m \in network : ReceiveHeartbeat(m))
     /\ WF_vars(\E p \in Peer : BecomeLeader(p))
     /\ WF_vars(\E m \in network : ReceiveStateSync(m))
-    /\ WF_vars(\E p, q \in Peer : HealPartition(p, q))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -689,10 +641,6 @@ LeaderVotedForSelf ==
 MessagesValid ==
     \A m \in network : MsgFrom(m) \in Peer /\ MsgTo(m) \in Peer
 
-\* No self-partition (sanity check)
-NoSelfPartition ==
-    \A p \in Peer : ~partitioned[{p, p}]
-
 \* votedFor is either 0 (none) or a valid peer
 VotedForValid ==
     \A p \in Peer : votedFor[p] = 0 \/ votedFor[p] \in Peer
@@ -724,10 +672,6 @@ EventuallyLeader ==
 DesyncEventuallyCorrected ==
     (\E p \in Peer : IsLeader(p)) =>
         <>(\A p \in ConnectedPeers : ~IsSyncing(p))
-
-\* Partitions eventually heal
-PartitionsEventuallyHeal ==
-    <>(\A pair \in PartitionPairs : ~partitioned[pair])
 
 ----
 (**************************************************************************************************)
