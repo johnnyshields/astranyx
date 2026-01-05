@@ -614,7 +614,7 @@ TypeInvariant ==
     /\ \A p \in Peer : syncTerm[p] >= 0 /\ syncTerm[p] <= MaxTerm
     /\ \A p \in Peer : mode[p] \in Mode
     /\ \A p \in Peer : Cardinality(pendingEvents[p]) <= MaxEvents
-    /\ Cardinality(network) <= MaxMessages
+    /\ Cardinality(network) <= MaxMessages  \* Catches missing CONSTRAINT or action guards
 
 \* Leader is at most 1 frame behind connected peers
 LeaderUpToDate ==
