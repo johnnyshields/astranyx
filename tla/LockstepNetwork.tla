@@ -271,6 +271,7 @@ SubmitInput(p) ==
     /\ IsConnected(p)
     /\ p \notin inputsReceived
     /\ frame[p] = MinFrame
+    /\ Cardinality(network) < MaxMessages
     /\ inputsReceived' = inputsReceived \union {p}
     \* Broadcast input message to all connected peers
     /\ LET newMsgs == {<<"input", p, q, frame[p]>> : q \in ConnectedPeers \ {p}}
@@ -477,6 +478,7 @@ StartElection(p) ==
     /\ IsFollower(p)  \* Active or Syncing
     /\ heartbeatReceived[p] = FALSE
     /\ currentTerm[p] < MaxTerm
+    /\ Cardinality(network) < MaxMessages
     /\ mode' = [mode EXCEPT ![p] = "Electing"]
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
@@ -581,6 +583,7 @@ StepDown(p) ==
 RetryElection(p) ==
     /\ IsCandidate(p)
     /\ currentTerm[p] < MaxTerm
+    /\ Cardinality(network) < MaxMessages
     /\ currentTerm' = [currentTerm EXCEPT ![p] = currentTerm[p] + 1]
     /\ votedFor' = [votedFor EXCEPT ![p] = p]
     /\ votesReceived' = [votesReceived EXCEPT ![p] = {p}]
