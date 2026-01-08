@@ -22,7 +22,7 @@ TMP_DIR="$SCRIPT_DIR/tmp"
 mkdir -p "$TMP_DIR"
 
 # Auto-detect all models by finding MC*.tla files (strips MC prefix and .tla suffix)
-# Searches current dir and subdirs
+# Searches current dir and subdirs, excluding archive/ and _TTrace_ files
 detect_models() {
     local models=""
     while IFS= read -r -d '' mc_file; do
@@ -33,7 +33,7 @@ detect_models() {
         else
             models="$models,$model_name"
         fi
-    done < <(find "$SCRIPT_DIR" -name "MC*.tla" -print0 2>/dev/null | sort -z)
+    done < <(find "$SCRIPT_DIR" -name "MC*.tla" -not -path "*/archive/*" -not -name "*_TTrace_*" -print0 2>/dev/null | sort -z)
     echo "$models"
 }
 
