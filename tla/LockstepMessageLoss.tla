@@ -133,10 +133,10 @@ LoseMessage(m) ==
 BroadcastInput(p) ==
     /\ connected[p] = TRUE
     /\ frame[p] = MinFrame
-    /\ Cardinality(network) < MaxMessages
     \* Broadcast to all other connected peers (re-broadcast allowed)
     /\ LET newMsgs == {<<p, q, frame[p]>> : q \in ConnectedPeers \ {p}}
-       IN network' = network \union newMsgs
+       IN /\ Cardinality(network \union newMsgs) <= MaxMessages
+          /\ network' = network \union newMsgs
     /\ UNCHANGED <<connected, frame>>
 
 (******************************************************************************)
