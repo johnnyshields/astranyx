@@ -154,12 +154,19 @@ export class StateSyncManager {
   /**
    * Handle incoming state sync (follower only)
    * Returns events that should be re-applied after sync
-   * TLA+: ReceiveStateSync action - validates term, preserves local events
+   * TLA+: ReceiveStateSync action - validates term AND frame freshness, preserves local events
    */
   receiveSyncMessage(message: StateSyncMessage): GameEvent[] {
     // Validate term - only accept syncs from current or higher term
     if (message.term < this.currentTerm) {
       SafeConsole.warn(`StateSyncManager: Ignoring sync from old term ${message.term} (current: ${this.currentTerm})`)
+      return []
+    }
+
+    // Reject out-of-order syncs: don't regress to an older sync frame
+    // This handles the edge case of delayed/reordered sync messages
+    if (message.frame < this.lastSyncFrame) {
+      SafeConsole.warn(`StateSyncManager: Ignoring out-of-order sync at frame ${message.frame} (last sync: ${this.lastSyncFrame})`)
       return []
     }
 
