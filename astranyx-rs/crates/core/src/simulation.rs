@@ -13,6 +13,7 @@ use crate::entities::{
 use crate::input::PlayerInput;
 use crate::physics::{circles_collide, WorldBounds};
 use crate::random::SeededRandom;
+use crate::scripting::{ScriptEngine, ScriptEnemy};
 
 /// Configuration for the simulation.
 #[derive(Debug, Clone)]
@@ -76,6 +77,7 @@ impl GameState {
 pub struct Simulation {
     pub config: SimulationConfig,
     pub state: GameState,
+    pub scripts: ScriptEngine,
 }
 
 impl Simulation {
@@ -83,7 +85,38 @@ impl Simulation {
         Self {
             config,
             state: GameState::new(seed, player_count),
+            scripts: ScriptEngine::new(),
         }
+    }
+
+    /// Load scripts from a directory.
+    pub fn load_scripts(&mut self, scripts_path: &std::path::Path) -> Result<(), String> {
+        self.scripts.load_scripts_from_dir(scripts_path)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Load scripts from embedded strings (for WASM builds).
+    pub fn load_embedded_scripts(&mut self) {
+        // Enemy scripts
+        let _ = self.scripts.load_enemy_script_from_str("grunt", include_str!("../../../scripts/enemies/grunt.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("shooter", include_str!("../../../scripts/enemies/shooter.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("swerver", include_str!("../../../scripts/enemies/swerver.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("tank", include_str!("../../../scripts/enemies/tank.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("speeder", include_str!("../../../scripts/enemies/speeder.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("bomber", include_str!("../../../scripts/enemies/bomber.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("sniper", include_str!("../../../scripts/enemies/sniper.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("carrier", include_str!("../../../scripts/enemies/carrier.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("mine", include_str!("../../../scripts/enemies/mine.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("spiral", include_str!("../../../scripts/enemies/spiral.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("shield", include_str!("../../../scripts/enemies/shield.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("splitter", include_str!("../../../scripts/enemies/splitter.rhai"));
+
+        // Wave system
+        let _ = self.scripts.load_wave_script_from_str(include_str!("../../../scripts/waves/wave_system.rhai"));
+
+        // Weapons and powerups
+        let _ = self.scripts.load_weapons_script_from_str(include_str!("../../../scripts/weapons/weapons.rhai"));
+        let _ = self.scripts.load_powerups_script_from_str(include_str!("../../../scripts/powerups/powerups.rhai"));
     }
 
     /// Advance the simulation by one frame with the given player inputs.
@@ -188,31 +221,25 @@ impl Simulation {
         for enemy in &mut self.state.enemies {
             enemy.state_timer += 1;
 
-            // Simple AI based on type - JS-style movement
-            match enemy.enemy_type {
-                EnemyType::Basic => {
-                    // Straight left movement
-                    enemy.velocity = Vec2::new(-120.0, 0.0);
-                }
-                EnemyType::Fast => {
-                    // Fast with sine wave
-                    let wave = (enemy.state_timer as f32 * 0.15).sin() * 80.0;
-                    enemy.velocity = Vec2::new(-250.0, wave);
-                }
-                EnemyType::Heavy => {
-                    // Slow but steady
-                    enemy.velocity = Vec2::new(-60.0, 0.0);
-                }
-                EnemyType::Boss => {
-                    // Boss moves vertically, stays on right side
-                    let wave = (enemy.state_timer as f32 * 0.08).sin() * 150.0;
-                    enemy.velocity = Vec2::new(-30.0, wave);
+            // Convert to script enemy
+            let script_enemy = ScriptEnemy {
+                id: enemy.id.0,
+                x: enemy.position.x,
+                y: enemy.position.y,
+                vx: enemy.velocity.x,
+                vy: enemy.velocity.y,
+                health: enemy.health,
+                frame: enemy.state_timer,
+            };
 
-                    // Boss stays within bounds
-                    if enemy.position.x < bounds.max.x * 0.6 {
-                        enemy.velocity.x = 0.0;
-                    }
-                }
+            let script_name = enemy.enemy_type.script_name();
+
+            // Get velocity from script
+            if let Some((vx, vy)) = self.scripts.update_enemy(script_name, &script_enemy, dt) {
+                enemy.velocity = Vec2::new(vx, vy);
+            } else {
+                // Minimal fallback - just move left
+                enemy.velocity = Vec2::new(-80.0, 0.0);
             }
 
             enemy.position += enemy.velocity * dt;
@@ -224,19 +251,17 @@ impl Simulation {
             if enemy.fire_cooldown > 0 {
                 enemy.fire_cooldown -= 1;
             } else if enemy.position.x < bounds.max.x - 100.0 {
-                // Only shoot when visible
-                let shoot_rate = match enemy.enemy_type {
-                    EnemyType::Basic => 90,   // Every 3 seconds
-                    EnemyType::Fast => 120,   // Every 4 seconds
-                    EnemyType::Heavy => 45,   // Every 1.5 seconds
-                    EnemyType::Boss => 30,    // Every 1 second
-                };
+                // Get fire rate from script stats
+                let shoot_rate = self.scripts.get_enemy_stats(script_name)
+                    .map(|s| s.fire_rate)
+                    .unwrap_or(90);
+
                 enemy.fire_cooldown = shoot_rate;
 
                 // Queue a shot toward the left
                 shots_to_fire.push((
                     enemy.position + Vec2::new(-20.0, 0.0),
-                    Vec2::new(-400.0, 0.0),
+                    Vec2::new(-300.0, 0.0),
                 ));
             }
         }
@@ -288,12 +313,11 @@ impl Simulation {
                     proj.lifetime = 0; // Mark for removal
 
                     if !enemy.is_alive() {
-                        self.state.score += match enemy.enemy_type {
-                            EnemyType::Basic => 100,
-                            EnemyType::Fast => 150,
-                            EnemyType::Heavy => 500,
-                            EnemyType::Boss => 10000,
-                        };
+                        // Get points from script stats
+                        let points = self.scripts.get_enemy_stats(enemy.enemy_type.script_name())
+                            .map(|s| s.points)
+                            .unwrap_or(100);
+                        self.state.score += points;
                     }
                     break;
                 }
@@ -387,22 +411,17 @@ impl Simulation {
             // Spawn 1-3 enemies at a time
             let count = 1 + (self.state.rng.next() * 2.0) as usize;
 
+            // Calculate "wave" based on time for progressive unlocks
+            let wave = (self.state.frame / 300) as u32; // New wave every 10 seconds
+
             for _ in 0..count {
                 let id = self.state.entity_ids.next();
                 // Spawn at right edge of screen, random Y within play area
                 let y = self.state.rng.next_range(100.0, self.config.world_bounds.height() - 100.0);
 
-                // Pick enemy type based on wave/randomness
+                // Pick enemy type based on wave progression
                 let roll = self.state.rng.next();
-                let enemy_type = if roll < 0.5 {
-                    EnemyType::Basic
-                } else if roll < 0.75 {
-                    EnemyType::Fast
-                } else if roll < 0.9 {
-                    EnemyType::Heavy
-                } else {
-                    EnemyType::Boss // Rare boss-type enemy
-                };
+                let enemy_type = self.pick_enemy_type(wave, roll);
 
                 // Spawn at right edge (within bounds so they don't get culled)
                 self.state.enemies.push(Enemy::new(
@@ -412,6 +431,17 @@ impl Simulation {
                 ));
             }
         }
+    }
+
+    /// Pick an enemy type based on wave and random roll.
+    fn pick_enemy_type(&self, wave: u32, roll: f32) -> EnemyType {
+        // Use wave system script to get available enemies
+        let available = self.scripts.get_available_enemies(wave);
+
+        // Pick from available types
+        let idx = (roll * available.len() as f32) as usize;
+        let name = &available[idx.min(available.len() - 1)];
+        EnemyType::from_script_name(name)
     }
 
     fn cleanup(&mut self) {

@@ -16,7 +16,9 @@ pub mod simulation;
 pub mod entities;
 pub mod physics;
 pub mod input;
+pub mod scripting;
 
 pub use random::SeededRandom;
 pub use simulation::{Simulation, SimulationConfig};
 pub use input::PlayerInput;
+pub use scripting::ScriptEngine;

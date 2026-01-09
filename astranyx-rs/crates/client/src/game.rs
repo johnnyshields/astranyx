@@ -187,9 +187,24 @@ fn render_enemy(
     let pos = game_to_world(enemy.position);
 
     let (mesh_name, color, base_scale) = match enemy.enemy_type {
-        EnemyType::Basic => (mesh_names::ENEMY_BASIC, colors::ENEMY_BASIC, 25.0),
-        EnemyType::Fast => (mesh_names::ENEMY_FAST, colors::ENEMY_FAST, 20.0),
-        EnemyType::Heavy => (mesh_names::ENEMY_HEAVY, colors::ENEMY_HEAVY, 40.0),
+        // Basic/Grunt - standard red enemy
+        EnemyType::Basic | EnemyType::Grunt | EnemyType::Shooter | EnemyType::Swerver => {
+            (mesh_names::ENEMY_BASIC, colors::ENEMY_BASIC, 25.0)
+        }
+        // Fast types - orange drones
+        EnemyType::Fast | EnemyType::Speeder | EnemyType::Bomber => {
+            (mesh_names::ENEMY_FAST, colors::ENEMY_FAST, 20.0)
+        }
+        // Heavy types - gray tanks
+        EnemyType::Heavy | EnemyType::Tank | EnemyType::Carrier | EnemyType::Shield => {
+            (mesh_names::ENEMY_HEAVY, colors::ENEMY_HEAVY, 40.0)
+        }
+        // Special types
+        EnemyType::Sniper => (mesh_names::ENEMY_BASIC, colors::ENEMY_FAST, 22.0),
+        EnemyType::Mine => (mesh_names::ENEMY_BASIC, colors::ENEMY_HEAVY, 20.0),
+        EnemyType::Spiral => (mesh_names::ENEMY_FAST, colors::ENEMY_BOSS, 24.0),
+        EnemyType::Splitter => (mesh_names::ENEMY_BASIC, colors::ENEMY_BOSS, 28.0),
+        // Boss
         EnemyType::Boss => (mesh_names::ENEMY_BOSS, colors::ENEMY_BOSS, 80.0),
     };
 

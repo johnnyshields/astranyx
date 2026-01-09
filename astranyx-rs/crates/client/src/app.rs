@@ -86,7 +86,9 @@ impl App {
 
         // Initialize simulation
         let config = SimulationConfig::default();
-        let simulation = Simulation::new(config, 12345, 1); // Single player for now
+        let mut simulation = Simulation::new(config, 12345, 1); // Single player for now
+        simulation.load_embedded_scripts();
+        tracing::info!("Loaded {} enemy scripts", simulation.scripts.loaded_enemy_types().len());
         self.simulation = Some(simulation);
 
         self.window = Some(window);

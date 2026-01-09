@@ -122,20 +122,84 @@ pub struct Enemy {
     pub fire_cooldown: u32,
 }
 
+/// Enemy type - matches script file names in scripts/enemies/
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub enum EnemyType {
-    Basic,
-    Fast,
-    Heavy,
-    Boss,
+    // Original types (mapped to scripts)
+    Basic,  // -> grunt
+    Fast,   // -> speeder
+    Heavy,  // -> tank
+    Boss,   // -> (handled separately)
+    // New script-based types
+    Grunt,
+    Shooter,
+    Swerver,
+    Tank,
+    Speeder,
+    Bomber,
+    Sniper,
+    Carrier,
+    Mine,
+    Spiral,
+    Shield,
+    Splitter,
+}
+
+impl EnemyType {
+    /// Get the script name for this enemy type.
+    pub fn script_name(&self) -> &'static str {
+        match self {
+            EnemyType::Basic | EnemyType::Grunt => "grunt",
+            EnemyType::Shooter => "shooter",
+            EnemyType::Swerver => "swerver",
+            EnemyType::Heavy | EnemyType::Tank => "tank",
+            EnemyType::Fast | EnemyType::Speeder => "speeder",
+            EnemyType::Bomber => "bomber",
+            EnemyType::Sniper => "sniper",
+            EnemyType::Carrier => "carrier",
+            EnemyType::Mine => "mine",
+            EnemyType::Spiral => "spiral",
+            EnemyType::Shield => "shield",
+            EnemyType::Splitter => "splitter",
+            EnemyType::Boss => "grunt", // Bosses handled separately
+        }
+    }
+
+    /// Create from script name.
+    pub fn from_script_name(name: &str) -> Self {
+        match name {
+            "grunt" => EnemyType::Grunt,
+            "shooter" => EnemyType::Shooter,
+            "swerver" => EnemyType::Swerver,
+            "tank" => EnemyType::Tank,
+            "speeder" => EnemyType::Speeder,
+            "bomber" => EnemyType::Bomber,
+            "sniper" => EnemyType::Sniper,
+            "carrier" => EnemyType::Carrier,
+            "mine" => EnemyType::Mine,
+            "spiral" => EnemyType::Spiral,
+            "shield" => EnemyType::Shield,
+            "splitter" => EnemyType::Splitter,
+            _ => EnemyType::Grunt,
+        }
+    }
 }
 
 impl Enemy {
     pub fn new(id: EntityId, position: Vec2, enemy_type: EnemyType) -> Self {
         let health = match enemy_type {
-            EnemyType::Basic => 10,
-            EnemyType::Fast => 5,
-            EnemyType::Heavy => 50,
+            EnemyType::Basic | EnemyType::Grunt => 20,
+            EnemyType::Shooter => 40,
+            EnemyType::Swerver => 25,
+            EnemyType::Heavy | EnemyType::Tank => 150,
+            EnemyType::Fast | EnemyType::Speeder => 15,
+            EnemyType::Bomber => 60,
+            EnemyType::Sniper => 50,
+            EnemyType::Carrier => 120,
+            EnemyType::Mine => 30,
+            EnemyType::Spiral => 70,
+            EnemyType::Shield => 100,
+            EnemyType::Splitter => 80,
             EnemyType::Boss => 500,
         };
 
@@ -152,9 +216,18 @@ impl Enemy {
 
     pub fn hitbox_radius(&self) -> f32 {
         match self.enemy_type {
-            EnemyType::Basic => 16.0,
-            EnemyType::Fast => 12.0,
-            EnemyType::Heavy => 32.0,
+            EnemyType::Basic | EnemyType::Grunt => 16.0,
+            EnemyType::Shooter => 18.0,
+            EnemyType::Swerver => 16.0,
+            EnemyType::Heavy | EnemyType::Tank => 28.0,
+            EnemyType::Fast | EnemyType::Speeder => 14.0,
+            EnemyType::Bomber => 20.0,
+            EnemyType::Sniper => 18.0,
+            EnemyType::Carrier => 26.0,
+            EnemyType::Mine => 20.0,
+            EnemyType::Spiral => 20.0,
+            EnemyType::Shield => 24.0,
+            EnemyType::Splitter => 22.0,
             EnemyType::Boss => 64.0,
         }
     }
