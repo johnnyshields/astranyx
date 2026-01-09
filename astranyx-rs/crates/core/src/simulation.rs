@@ -8,7 +8,7 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::entities::{
-    Enemy, EnemyType, EntityIdGenerator, Player, PowerUp, Projectile, ProjectileType,
+    Enemy, EnemyType, EntityId, EntityIdGenerator, Player, PowerUp, Projectile, ProjectileType,
 };
 use crate::input::PlayerInput;
 use crate::physics::{circles_collide, WorldBounds};
@@ -180,32 +180,78 @@ impl Simulation {
 
     fn update_enemies(&mut self) {
         let dt = 1.0 / self.config.tick_rate as f32;
+        let bounds = &self.config.world_bounds;
+
+        // Collect enemy shooting info first to avoid borrow issues
+        let mut shots_to_fire: Vec<(Vec2, Vec2)> = Vec::new();
 
         for enemy in &mut self.state.enemies {
             enemy.state_timer += 1;
 
-            // Simple AI based on type
+            // Simple AI based on type - JS-style movement
             match enemy.enemy_type {
                 EnemyType::Basic => {
-                    enemy.velocity = Vec2::new(-100.0, 0.0);
+                    // Straight left movement
+                    enemy.velocity = Vec2::new(-120.0, 0.0);
                 }
                 EnemyType::Fast => {
-                    enemy.velocity = Vec2::new(-200.0, (enemy.state_timer as f32 * 0.1).sin() * 50.0);
+                    // Fast with sine wave
+                    let wave = (enemy.state_timer as f32 * 0.15).sin() * 80.0;
+                    enemy.velocity = Vec2::new(-250.0, wave);
                 }
                 EnemyType::Heavy => {
-                    enemy.velocity = Vec2::new(-50.0, 0.0);
+                    // Slow but steady
+                    enemy.velocity = Vec2::new(-60.0, 0.0);
                 }
                 EnemyType::Boss => {
-                    // Boss AI would be more complex
-                    enemy.velocity = Vec2::new(0.0, (enemy.state_timer as f32 * 0.05).sin() * 100.0);
+                    // Boss moves vertically, stays on right side
+                    let wave = (enemy.state_timer as f32 * 0.08).sin() * 150.0;
+                    enemy.velocity = Vec2::new(-30.0, wave);
+
+                    // Boss stays within bounds
+                    if enemy.position.x < bounds.max.x * 0.6 {
+                        enemy.velocity.x = 0.0;
+                    }
                 }
             }
 
             enemy.position += enemy.velocity * dt;
 
+            // Clamp Y to bounds
+            enemy.position.y = enemy.position.y.clamp(bounds.min.y + 50.0, bounds.max.y - 50.0);
+
+            // Enemy shooting (when on screen and cooldown ready)
             if enemy.fire_cooldown > 0 {
                 enemy.fire_cooldown -= 1;
+            } else if enemy.position.x < bounds.max.x - 100.0 {
+                // Only shoot when visible
+                let shoot_rate = match enemy.enemy_type {
+                    EnemyType::Basic => 90,   // Every 3 seconds
+                    EnemyType::Fast => 120,   // Every 4 seconds
+                    EnemyType::Heavy => 45,   // Every 1.5 seconds
+                    EnemyType::Boss => 30,    // Every 1 second
+                };
+                enemy.fire_cooldown = shoot_rate;
+
+                // Queue a shot toward the left
+                shots_to_fire.push((
+                    enemy.position + Vec2::new(-20.0, 0.0),
+                    Vec2::new(-400.0, 0.0),
+                ));
             }
+        }
+
+        // Create projectiles from queued shots
+        for (pos, vel) in shots_to_fire {
+            let id = self.state.entity_ids.next();
+            self.state.projectiles.push(Projectile::new(
+                id,
+                pos,
+                vel,
+                5,
+                EntityId(0), // Enemy owner
+                ProjectileType::EnemyBullet,
+            ));
         }
     }
 
@@ -333,35 +379,51 @@ impl Simulation {
     }
 
     fn spawn_enemies(&mut self) {
-        // Simple spawning every 60 frames (2 seconds)
-        if self.state.frame % 60 == 0 && self.state.enemies.len() < 20 {
-            let id = self.state.entity_ids.next();
-            let y = self.state.rng.next_range(100.0, self.config.world_bounds.height() - 100.0);
-            let enemy_type = if self.state.rng.next() < 0.7 {
-                EnemyType::Basic
-            } else if self.state.rng.next() < 0.8 {
-                EnemyType::Fast
-            } else {
-                EnemyType::Heavy
-            };
+        // Spawn enemies every 30 frames (1 second at 30Hz) with some randomness
+        // More frequent spawning for a shoot-em-up feel
+        let spawn_interval = 30 + (self.state.rng.next() * 30.0) as u32;
 
-            self.state.enemies.push(Enemy::new(
-                id,
-                Vec2::new(self.config.world_bounds.width() + 50.0, y),
-                enemy_type,
-            ));
+        if self.state.frame % spawn_interval == 0 && self.state.enemies.len() < 15 {
+            // Spawn 1-3 enemies at a time
+            let count = 1 + (self.state.rng.next() * 2.0) as usize;
+
+            for _ in 0..count {
+                let id = self.state.entity_ids.next();
+                // Spawn at right edge of screen, random Y within play area
+                let y = self.state.rng.next_range(100.0, self.config.world_bounds.height() - 100.0);
+
+                // Pick enemy type based on wave/randomness
+                let roll = self.state.rng.next();
+                let enemy_type = if roll < 0.5 {
+                    EnemyType::Basic
+                } else if roll < 0.75 {
+                    EnemyType::Fast
+                } else if roll < 0.9 {
+                    EnemyType::Heavy
+                } else {
+                    EnemyType::Boss // Rare boss-type enemy
+                };
+
+                // Spawn at right edge (within bounds so they don't get culled)
+                self.state.enemies.push(Enemy::new(
+                    id,
+                    Vec2::new(self.config.world_bounds.max.x - 10.0, y),
+                    enemy_type,
+                ));
+            }
         }
     }
 
     fn cleanup(&mut self) {
-        // Remove dead projectiles
+        // Remove dead projectiles or ones that left the play area (left side)
         self.state.projectiles.retain(|p| {
-            p.lifetime > 0 && !self.config.world_bounds.is_outside(p.position, 50.0)
+            p.lifetime > 0 && p.position.x > self.config.world_bounds.min.x - 100.0
+                && p.position.x < self.config.world_bounds.max.x + 100.0
         });
 
-        // Remove dead enemies
+        // Remove dead enemies or ones that left the left side of the screen
         self.state.enemies.retain(|e| {
-            e.is_alive() && !self.config.world_bounds.is_outside(e.position, 100.0)
+            e.is_alive() && e.position.x > self.config.world_bounds.min.x - 100.0
         });
 
         // Remove expired power-ups

@@ -6,7 +6,6 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use winit::{
     application::ApplicationHandler,

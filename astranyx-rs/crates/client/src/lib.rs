@@ -2,9 +2,11 @@
 //!
 //! Game client supporting both WASM (browser) and native platforms.
 
-pub mod renderer;
-pub mod input;
 pub mod app;
+pub mod game;
+pub mod hud;
+pub mod input;
+pub mod renderer;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;

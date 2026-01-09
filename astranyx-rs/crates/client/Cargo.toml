@@ -59,6 +59,7 @@ features = [
     "Element",
     "DomRect",
     "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
     "console",
     "Performance",
     "WebTransport",
