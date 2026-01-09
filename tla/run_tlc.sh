@@ -22,7 +22,7 @@ TMP_DIR="$SCRIPT_DIR/tmp"
 mkdir -p "$TMP_DIR"
 
 # Auto-detect all models by finding MC*.tla files (strips MC prefix and .tla suffix)
-# Searches current dir and subdirs
+# Searches current dir and subdirs, excluding archive/ and _TTrace_ files
 detect_models() {
     local models=""
     while IFS= read -r -d '' mc_file; do
@@ -33,7 +33,7 @@ detect_models() {
         else
             models="$models,$model_name"
         fi
-    done < <(find "$SCRIPT_DIR" -name "MC*.tla" -print0 2>/dev/null | sort -z)
+    done < <(find "$SCRIPT_DIR" -name "MC*.tla" -not -path "*/archive/*" -not -name "*_TTrace_*" -print0 2>/dev/null | sort -z)
     echo "$models"
 }
 
@@ -376,6 +376,17 @@ run_model() {
          "MC${SPEC_NAME}.tla" 2>&1 | tee /dev/stderr)
     local TLC_EXIT=${PIPESTATUS[0]}
 
+    # Check for errors in output even if exit code is 0
+    # TLC doesn't always return non-zero on errors
+    if echo "$TLC_OUTPUT" | grep -qE "Error:|Invariant.*violated|violated.*Invariant"; then
+        echo "[$SPEC_NAME] FAILED - error found in output"
+        FAILED_MODELS+=("$SPEC_NAME")
+        if [[ "$FAIL_FAST" == "true" ]]; then
+            exit 1
+        fi
+        return 1
+    fi
+
     if [[ $TLC_EXIT -eq 0 ]]; then
         # Parse state counts from TLC output
         # Format: "46895806 states generated, 5602527 distinct states found, 0 states left on queue."
@@ -422,17 +433,53 @@ if [[ "$RECOVER_MODE" == "true" ]]; then
     cd "$SCRIPT_DIR"
     configure_tlc_resources
 
+    # Determine which model to recover - either from MODEL_ARGS or by inspecting checkpoint
+    if [[ ${#MODEL_ARGS[@]} -gt 0 ]]; then
+        RECOVER_MODEL="${MODEL_ARGS[0]}"
+    else
+        # Try to detect model from checkpoint directory contents
+        # Look for .st files which contain the spec name
+        RECOVER_MODEL=""
+        for st_file in "$CHECKPOINT_DIR"/*.st; do
+            if [[ -f "$st_file" ]]; then
+                # Extract model name from .st filename (format: MCModelName.st)
+                st_basename=$(basename "$st_file" .st)
+                RECOVER_MODEL="${st_basename#MC}"  # Remove MC prefix
+                break
+            fi
+        done
+
+        if [[ -z "$RECOVER_MODEL" ]]; then
+            echo "Error: Cannot determine which model to recover."
+            echo ""
+            echo "Please specify the model name:"
+            echo "  ./run_tlc.sh -r LockstepNetwork"
+            exit 1
+        fi
+    fi
+
+    MC_FILE="MC${RECOVER_MODEL}.tla"
+    CONFIG_FILE="MC${RECOVER_MODEL}.cfg"
+
+    if [[ ! -f "$SCRIPT_DIR/$MC_FILE" ]]; then
+        echo "Error: $MC_FILE not found"
+        exit 1
+    fi
+
     echo "Resuming TLC from checkpoint: $CHECKPOINT_DIR"
+    echo "Model: $RECOVER_MODEL"
     echo ""
 
     java -XX:+UseParallelGC \
          -Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.OffHeapDiskFPSet \
          $HEAP \
          -jar "$TLC_JAR" \
+         -config "$CONFIG_FILE" \
          -recover "$CHECKPOINT_DIR" \
          -metadir "$TMP_DIR" \
          -lncheck final \
-         $WORKERS
+         $WORKERS \
+         "$MC_FILE"
 
     exit $?
 fi

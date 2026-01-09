@@ -1,34 +1,54 @@
 # Astranyx Licensing
 
+## Licenses
+
 This project has separate licenses for its components.
 
-## Source Code
+1. Source Code
 
-All source code is licensed under the GNU Affero General Public License v3.0 or later.
-See LICENSE_CODE for the full license text.
+   All source and executable code (including game logic, engine code, scripts,
+   shaders, build tooling, configuration files, and other machine-executable
+   components) is licensed under the GNU General Public License v3.0 or later.
+   See LICENSE_CODE for the full license text.
 
-* SPDX-License-Identifier: AGPL-3.0-or-later
+   * SPDX-License-Identifier: GPL-3.0-or-later
 
-## Art, Music, and Assets
+2. Creative Assets
 
-All art, music, textures, 3D models, and other creative assets (excluding fonts) are
-licensed under the Creative Commons Attribution-ShareAlike 4.0 International License.
-See LICENSE_ASSETS for the full license text.
+   All art, music, textures, 3D models, narrative content (including story, lore,
+   characters, dialogue, world-building, and written text), and other creative
+   assets (excluding fonts) are licensed under the Creative Commons
+   Attribution-ShareAlike 4.0 International License. See LICENSE_ASSETS for the
+   full license text.
 
-* SPDX-License-Identifier: CC-BY-SA-4.0
+   * SPDX-License-Identifier: CC-BY-SA-4.0
 
-## Fonts
+3. Fonts
 
-Font files are licensed under the SIL Open Font License, Version 1.1.
-See LICENSE_FONTS for the full license text.
+   Font files are licensed under the SIL Open Font License, Version 1.1. See
+   LICENSE_FONTS for the full license text.
 
-* SPDX-License-Identifier: OFL-1.1
+   * SPDX-License-Identifier: OFL-1.1
 
-## Contributions
+## Contributions and CLA
 
-Unless otherwise stated, all contributions to this project are licensed
-under the same terms above.
+By submitting a contribution (including code, documentation, assets, or other
+materials) to this project, you agree that:
+
+1. Project Licensing
+
+   Your contribution will be included in the project under the same license
+   terms as the component you are contributing to, unless explicitly agreed
+   otherwise in writing.
+
+2. Contributor License Agreement
+
+   All contributions are subject to the Contributor License Agreement (CLA).
+   The CLA grants the Astranyx Owner additional rights, including a perpetual,
+   worldwide, royalty-free license to use, modify, distribute, and relicense
+   contributions. See CONTRIBUTOR_AGREEMENT for the full text of the CLA.
 
 ## Third-Party Dependencies
 
-Third-party dependencies and assets retain their original licenses.
+Third-party dependencies and assets included in this project retain their
+original licenses and are governed by their respective terms.
