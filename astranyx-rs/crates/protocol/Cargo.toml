@@ -1,0 +1,12 @@
+[package]
+name = "astranyx-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Network protocol for Astranyx"
+
+[dependencies]
+astranyx-core.workspace = true
+bincode.workspace = true
+serde.workspace = true
+thiserror.workspace = true

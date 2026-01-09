@@ -1,0 +1,20 @@
+[package]
+name = "astranyx-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deterministic game simulation for Astranyx"
+
+[features]
+default = []
+std = []  # Enable for native, disable for no_std WASM
+
+[dependencies]
+bincode.workspace = true
+glam.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

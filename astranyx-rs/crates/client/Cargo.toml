@@ -1,0 +1,73 @@
+[package]
+name = "astranyx-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Astranyx game client (WASM + Native)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "astranyx"
+path = "src/main.rs"
+
+[features]
+default = ["native"]
+native = ["pollster", "tracing-subscriber"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "tracing-wasm"]
+
+[dependencies]
+astranyx-core.workspace = true
+astranyx-protocol.workspace = true
+
+# Graphics
+wgpu.workspace = true
+winit.workspace = true
+
+# Math
+glam.workspace = true
+bytemuck.workspace = true
+
+# Serialization
+bincode.workspace = true
+serde.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Native-only
+pollster = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+# WASM-only
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+tracing-wasm = { workspace = true, optional = true }
+
+[dependencies.web-sys]
+workspace = true
+optional = true
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "console",
+    "Performance",
+    "WebTransport",
+    "WebTransportOptions",
+    "WebTransportDatagramDuplexStream",
+    "ReadableStream",
+    "WritableStream",
+    "ReadableStreamDefaultReader",
+    "WritableStreamDefaultWriter",
+]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
