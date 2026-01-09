@@ -15,11 +15,40 @@ Rust/WASM rewrite of Astranyx - a 2.5D multiplayer shoot-em-up game.
 ```
 astranyx-rs/
 ├── crates/
-│   ├── core/       # Deterministic game simulation
-│   ├── protocol/   # Network message types
+│   ├── core/       # Deterministic game simulation (13 tests)
+│   ├── protocol/   # Network message types (3 tests)
 │   └── client/     # Renderer, input, networking
+├── pkg/            # WASM build output (generated)
 ├── web/            # Browser shell (HTML/JS)
+├── .cargo/         # Build configuration
 └── Cargo.toml      # Workspace root
+```
+
+## Quick Start
+
+### Windows (Native)
+
+```powershell
+# From WSL
+cargo build --release --target x86_64-pc-windows-gnu
+
+# Run the exe
+./target/x86_64-pc-windows-gnu/release/astranyx.exe
+```
+
+Or double-click `C:\workspace\astranyx\astranyx-rs\target\x86_64-pc-windows-gnu\release\astranyx.exe`
+
+### Browser (WASM)
+
+```bash
+# Build WASM
+wasm-pack build crates/client --target web --out-dir ../../pkg --no-default-features --features wasm
+
+# Serve locally
+python3 -m http.server 8080
+
+# Open in browser
+# http://localhost:8080/web/
 ```
 
 ## Prerequisites
@@ -30,108 +59,96 @@ astranyx-rs/
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Add WASM target
+# Add targets
 rustup target add wasm32-unknown-unknown
+rustup target add x86_64-pc-windows-gnu  # For Windows cross-compile
 
-# Install wasm-pack (for WASM builds)
+# Install tools
 cargo install wasm-pack
 ```
 
-### Optional: Native Build Dependencies
+### Cross-Compile to Windows (from Linux/WSL)
 
-**Linux:**
 ```bash
-sudo apt install libwayland-dev libxkbcommon-dev
-```
-
-**macOS:**
-```bash
-# Xcode command line tools
-xcode-select --install
+sudo apt install mingw-w64
 ```
 
 ## Building
 
-### Native (Vulkan/Metal/DX12)
+### Native Linux
 
 ```bash
-cd astranyx-rs
-
-# Debug build
-cargo build
-
-# Release build
 cargo build --release
-
-# Run
-cargo run --release
+./target/release/astranyx
 ```
+
+### Native Windows (cross-compile from WSL)
+
+```bash
+cargo build --release --target x86_64-pc-windows-gnu
+```
+
+Output: `target/x86_64-pc-windows-gnu/release/astranyx.exe` (portable, no DLLs)
 
 ### WASM (Browser)
 
 ```bash
-cd astranyx-rs
-
-# Build WASM package
-wasm-pack build crates/client --target web --out-dir ../../pkg --features wasm --no-default-features
-
-# Serve locally (requires a local server for WASM)
-# Option 1: Python
-python3 -m http.server 8080
-
-# Option 2: Use any static file server
-npx serve .
+wasm-pack build crates/client --target web --out-dir ../../pkg --no-default-features --features wasm
 ```
 
-Then open http://localhost:8080/web/ in a WebGPU-capable browser.
+Output: `pkg/astranyx_client.js` + `pkg/astranyx_client_bg.wasm`
 
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (16 total)
 cargo test
 
 # Run specific crate tests
-cargo test -p astranyx-core
-cargo test -p astranyx-protocol
+cargo test -p astranyx-core      # 13 tests
+cargo test -p astranyx-protocol  # 3 tests
 ```
 
 ## Development
 
-### Type Checking
-
 ```bash
-cargo check
-cargo clippy
-```
-
-### Documentation
-
-```bash
-cargo doc --open
+cargo check          # Type check
+cargo clippy         # Lint
+cargo doc --open     # Generate docs
 ```
 
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| W/↑ | Move up |
-| S/↓ | Move down |
-| A/← | Move left |
-| D/→ | Move right |
-| Space/Z | Fire |
-| X/Ctrl | Special |
-| Shift/C | Focus (slow/precise) |
+| W / ↑ | Move up |
+| S / ↓ | Move down |
+| A / ← | Move left |
+| D / → | Move right |
+| Space / Z | Fire |
+| X / Ctrl | Special |
+| Shift / C | Focus (slow/precise) |
 
 ## Browser Compatibility
 
-WebGPU is required. Supported browsers:
+WebGPU required:
 - Chrome 113+
 - Edge 113+
-- Firefox Nightly (with `dom.webgpu.enabled = true`)
+- Firefox Nightly (`dom.webgpu.enabled = true`)
 - Safari 17+ (macOS Sonoma+)
 
 ## Architecture
+
+### Dual Target
+
+Same codebase compiles to both native and WASM via feature flags:
+
+```toml
+[features]
+default = ["native"]
+native = ["pollster", "tracing-subscriber"]
+wasm = ["wasm-bindgen", "web-sys", "js-sys", "tracing-wasm"]
+```
 
 ### Determinism
 
@@ -142,7 +159,15 @@ The simulation in `astranyx-core` is 100% deterministic for P2P lockstep:
 3. **Ordered iteration**: `Vec` for entities, not `HashMap`
 4. **Synchronous logic**: No async in simulation
 
-### Networking
+### Crates
+
+| Crate | Purpose |
+|-------|---------|
+| `astranyx-core` | Deterministic simulation, entities, physics, RNG |
+| `astranyx-protocol` | Network messages, binary codec |
+| `astranyx-client` | wgpu renderer, winit windowing, input handling |
+
+### Networking (Planned)
 
 - **WebTransport**: UDP-like datagrams for low-latency game inputs
 - **WebSocket**: Phoenix server connection for lobby/signaling

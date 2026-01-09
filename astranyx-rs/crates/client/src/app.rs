@@ -26,6 +26,17 @@ impl App {
         }
     }
 
+    /// Set the renderer (used by WASM async init).
+    pub fn set_renderer(&mut self, renderer: Renderer) {
+        self.renderer = Some(renderer);
+    }
+
+    /// Get window reference.
+    pub fn window(&self) -> Option<&Arc<Window>> {
+        self.window.as_ref()
+    }
+
+    #[cfg(feature = "native")]
     fn init_window(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
             .with_title("Astranyx")
@@ -37,7 +48,7 @@ impl App {
                 .expect("failed to create window"),
         );
 
-        // Initialize renderer
+        // Initialize renderer synchronously on native
         let renderer = pollster::block_on(Renderer::new(window.clone()))
             .expect("failed to create renderer");
 
@@ -46,6 +57,33 @@ impl App {
 
         tracing::info!("Window and renderer initialized");
     }
+
+    #[cfg(feature = "wasm")]
+    fn init_window(&mut self, event_loop: &ActiveEventLoop) {
+        use winit::platform::web::WindowAttributesExtWebSys;
+
+        let window_attrs = Window::default_attributes()
+            .with_title("Astranyx")
+            .with_canvas(get_canvas());
+
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .expect("failed to create window"),
+        );
+
+        self.window = Some(window);
+        tracing::info!("Window initialized");
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn get_canvas() -> Option<web_sys::HtmlCanvasElement> {
+    use wasm_bindgen::JsCast;
+    let window = web_sys::window()?;
+    let document = window.document()?;
+    let canvas = document.get_element_by_id("astranyx-canvas")?;
+    canvas.dyn_into::<web_sys::HtmlCanvasElement>().ok()
 }
 
 impl Default for App {
@@ -83,12 +121,9 @@ impl ApplicationHandler for App {
                                 renderer.resize(window.inner_size());
                             }
                         }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            tracing::error!("Out of memory, exiting");
-                            event_loop.exit();
-                        }
                         Err(e) => {
-                            tracing::error!("Render error: {e:?}");
+                            tracing::error!("Render error: {e:?}, exiting");
+                            event_loop.exit();
                         }
                     }
                 }

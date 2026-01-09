@@ -31,6 +31,7 @@ pub struct Renderer {
 impl Renderer {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         let size = window.inner_size();
+        tracing::info!("Initializing renderer with size: {:?}", size);
 
         // Create instance
         let instance = Instance::new(&InstanceDescriptor {
@@ -71,7 +72,8 @@ impl Renderer {
                 },
                 None,
             )
-            .await?;
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to request device: {e}"))?;
 
         // Configure surface
         let surface_caps = surface.get_capabilities(&adapter);
