@@ -25,9 +25,82 @@ use crate::renderer::{meshes, GameRenderer, MeshBuilder};
 /// Debug mode flag - enables shortcuts like Tab to skip segments.
 const DEBUG_MODE: bool = true;
 
+/// Screenshot configuration.
+mod screenshot_config {
+    /// Scale factor for screenshots (0.25 = 25% of original size).
+    pub const SCALE: f32 = 0.25;
+    /// Quality (0-100) for lossy formats. Lower = smaller file.
+    pub const QUALITY: f32 = 60.0;
+
+    #[derive(Clone, Copy)]
+    pub enum Format {
+        Png,   // Lossless, largest
+        Jpeg,  // Lossy, medium
+        WebP,  // Lossy, smallest (best for Claude)
+    }
+
+    /// Output format. WebP lossy gives best compression.
+    pub const FORMAT: Format = Format::WebP;
+}
+
+/// Debug/playtest state for AI-assisted game development.
+#[derive(Default)]
+struct DebugState {
+    /// Time is frozen (simulation doesn't advance) - for AI control
+    frozen: bool,
+    /// Advance one frame then freeze again
+    step_frame: bool,
+    /// Game speed multiplier (1.0 = normal, 0.5 = half, 2.0 = double)
+    speed: f32,
+    /// Player is invincible
+    invincible: bool,
+    /// Auto-screenshot every N frames (0 = disabled)
+    auto_screenshot_interval: u32,
+    /// Frame counter for auto-screenshot
+    frame_counter: u32,
+    /// Show debug overlay with positions/stats
+    show_overlay: bool,
+}
+
+impl DebugState {
+    fn new() -> Self {
+        Self {
+            frozen: true,  // Start frozen for AI control
+            speed: 1.0,
+            auto_screenshot_interval: 0,
+            ..Default::default()
+        }
+    }
+
+    /// Check if we should run a simulation tick this frame
+    fn should_tick(&mut self) -> bool {
+        if self.step_frame {
+            self.step_frame = false;
+            self.frozen = true;
+            return true;
+        }
+        !self.frozen
+    }
+
+    /// Check if we should take an auto-screenshot
+    fn should_auto_screenshot(&mut self) -> bool {
+        if self.auto_screenshot_interval == 0 {
+            return false;
+        }
+        self.frame_counter += 1;
+        if self.frame_counter >= self.auto_screenshot_interval {
+            self.frame_counter = 0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Simple input state tracker using three-d's Key enum.
 #[derive(Default)]
 struct InputState {
+    // Game controls
     up: bool,
     down: bool,
     left: bool,
@@ -35,10 +108,21 @@ struct InputState {
     fire: bool,
     special: bool,
     focus: bool,
-    debug_skip: bool,
     // Mouse movement for FPS modes
     mouse_dx: f32,
     mouse_dy: f32,
+    // Debug controls (active when DEBUG_MODE is true)
+    debug_skip: bool,      // Tab - skip to next segment
+    screenshot: bool,      // P - take screenshot
+    freeze_toggle: bool,   // F - freeze/unfreeze time (AI control)
+    pause_toggle: bool,    // Escape - pause menu (player)
+    frame_step: bool,      // N - advance one frame
+    speed_up: bool,        // ] - increase speed
+    speed_down: bool,      // [ - decrease speed
+    toggle_invincible: bool, // I - toggle invincibility
+    toggle_overlay: bool,  // O - toggle debug overlay
+    auto_screenshot: bool, // K - toggle auto-screenshot
+    hot_reload: bool,      // R - hot-reload scripts
 }
 
 impl InputState {
@@ -72,14 +156,26 @@ impl InputState {
 
     fn handle_key(&mut self, key: Key, pressed: bool) {
         match key {
+            // Game controls
             Key::W | Key::ArrowUp => self.up = pressed,
             Key::S | Key::ArrowDown => self.down = pressed,
             Key::A | Key::ArrowLeft => self.left = pressed,
             Key::D | Key::ArrowRight => self.right = pressed,
-            Key::Space | Key::Z => self.fire = pressed,
+            Key::Z => self.fire = pressed,
             Key::X => self.special = pressed,
             Key::C => self.focus = pressed,
+            // Debug controls
             Key::Tab => self.debug_skip = pressed,
+            Key::P => self.screenshot = pressed,
+            Key::F => self.freeze_toggle = pressed,
+            Key::Escape => self.pause_toggle = pressed,
+            Key::N => self.frame_step = pressed,
+            Key::I => self.toggle_invincible = pressed,
+            Key::O => self.toggle_overlay = pressed,
+            Key::K => self.auto_screenshot = pressed,
+            Key::R => self.hot_reload = pressed,
+            // Space is fire when not paused, but also can be used for other things
+            Key::Space => self.fire = pressed,
             _ => {}
         }
     }
@@ -88,6 +184,79 @@ impl InputState {
     fn consume_debug_skip(&mut self) -> bool {
         if self.debug_skip {
             self.debug_skip = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check and consume the screenshot flag (returns true once per press).
+    fn consume_screenshot(&mut self) -> bool {
+        if self.screenshot {
+            self.screenshot = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_freeze_toggle(&mut self) -> bool {
+        if self.freeze_toggle {
+            self.freeze_toggle = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_pause_toggle(&mut self) -> bool {
+        if self.pause_toggle {
+            self.pause_toggle = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_frame_step(&mut self) -> bool {
+        if self.frame_step {
+            self.frame_step = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_toggle_invincible(&mut self) -> bool {
+        if self.toggle_invincible {
+            self.toggle_invincible = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_toggle_overlay(&mut self) -> bool {
+        if self.toggle_overlay {
+            self.toggle_overlay = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_auto_screenshot(&mut self) -> bool {
+        if self.auto_screenshot {
+            self.auto_screenshot = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn consume_hot_reload(&mut self) -> bool {
+        if self.hot_reload {
+            self.hot_reload = false;
             true
         } else {
             false
@@ -169,6 +338,12 @@ pub fn run() -> anyhow::Result<()> {
     // Input state
     let mut input_state = InputState::default();
 
+    // Debug state for AI-assisted playtesting
+    let mut debug_state = DebugState::new();
+    // Auto-screenshot every 90 frames (~3 seconds at 30fps) - disabled by default
+    // Enable with K key or set here for always-on
+    // debug_state.auto_screenshot_interval = 90;
+
     // Timing
     let mut last_frame = Instant::now();
     let mut accumulated_time = 0.0f32;
@@ -205,15 +380,63 @@ pub fn run() -> anyhow::Result<()> {
             }
         }
 
+        // Debug controls
+        if DEBUG_MODE {
+            if input_state.consume_freeze_toggle() {
+                debug_state.frozen = !debug_state.frozen;
+                tracing::info!("[DEBUG] Frozen: {}", debug_state.frozen);
+            }
+            if input_state.consume_pause_toggle() {
+                // TODO: Show pause menu
+                tracing::info!("[DEBUG] Pause menu (not implemented yet)");
+            }
+            if input_state.consume_frame_step() {
+                debug_state.step_frame = true;
+                tracing::info!("[DEBUG] Stepping one frame");
+            }
+            if input_state.consume_toggle_invincible() {
+                debug_state.invincible = !debug_state.invincible;
+                tracing::info!("[DEBUG] Invincible: {}", debug_state.invincible);
+            }
+            if input_state.consume_toggle_overlay() {
+                debug_state.show_overlay = !debug_state.show_overlay;
+                tracing::info!("[DEBUG] Overlay: {}", debug_state.show_overlay);
+            }
+            if input_state.consume_auto_screenshot() {
+                if debug_state.auto_screenshot_interval == 0 {
+                    debug_state.auto_screenshot_interval = 90; // ~3 sec at 30fps
+                    tracing::info!("[DEBUG] Auto-screenshot enabled (every 90 frames)");
+                } else {
+                    debug_state.auto_screenshot_interval = 0;
+                    tracing::info!("[DEBUG] Auto-screenshot disabled");
+                }
+            }
+            if input_state.consume_hot_reload() {
+                tracing::info!("[DEBUG] Hot-reloading scripts...");
+                match simulation.hot_reload_scripts() {
+                    Ok(count) => {
+                        // Update segment config after reload
+                        current_segment_id = simulation.state.level.segment_id.clone();
+                        segment_config = simulation.scripts.get_segment_config(&current_segment_id);
+                        if let Some(ref config) = segment_config {
+                            camera_config = config.camera.clone();
+                        }
+                        tracing::info!("[DEBUG] Reloaded {} scripts successfully", count);
+                    }
+                    Err(e) => tracing::error!("[DEBUG] Hot-reload failed: {}", e),
+                }
+            }
+        }
+
         // Timing
         let now = Instant::now();
         let delta = now.duration_since(last_frame).as_secs_f32();
         last_frame = now;
         game_renderer.update_time(delta);
 
-        // Fixed timestep simulation
+        // Fixed timestep simulation (respects debug pause/step)
         accumulated_time += delta;
-        while accumulated_time >= TICK_DURATION {
+        while accumulated_time >= TICK_DURATION && debug_state.should_tick() {
             // Track segment before tick to detect transitions
             let segment_before = simulation.state.level.segment_id.clone();
             let was_transitioning = simulation.state.level.transition.is_some();
@@ -319,6 +542,36 @@ pub fn run() -> anyhow::Result<()> {
             &[&ambient as &dyn Light, &directional as &dyn Light],
             &mut frame_input,
         );
+
+        // Screenshot on P key or auto-screenshot
+        let take_screenshot = input_state.consume_screenshot() || debug_state.should_auto_screenshot();
+        if take_screenshot {
+            let pixels = frame_input.screen().read_color::<[u8; 4]>();
+            let width = frame_input.viewport.width;
+            let height = frame_input.viewport.height;
+
+            // Save to /tmp (extension added by save_screenshot based on format)
+            match save_screenshot(&pixels, width, height, "/tmp/astranyx_screenshot") {
+                Ok(_) => {}
+                Err(e) => tracing::error!("Failed to save screenshot: {}", e),
+            }
+        }
+
+        // Debug overlay - log state periodically when overlay is enabled
+        if debug_state.show_overlay && simulation.state.frame % 30 == 0 {
+            let state = &simulation.state;
+            let player = &state.players[0];
+            tracing::info!(
+                "[OVERLAY] Frame:{} Seg:{} Mode:{:?} | Player: pos=({:.0},{:.0},{:.0}) hp={} | Enemies:{} Bullets:{}",
+                state.frame,
+                state.level.segment_id,
+                state.level.mode,
+                player.position_3d.x, player.position_3d.y, player.position_3d.z,
+                player.health,
+                state.enemies.iter().filter(|e| e.is_alive()).count(),
+                state.projectiles.len()
+            );
+        }
 
         FrameOutput::default()
     });
@@ -718,4 +971,61 @@ pub async fn wasm_start() {
     tracing::info!("Starting Astranyx (WASM)");
 
     // TODO: WASM implementation with three-d
+}
+
+/// Save a screenshot with configurable format and quality.
+fn save_screenshot(pixels: &[[u8; 4]], width: u32, height: u32, base_path: &str) -> anyhow::Result<String> {
+    use image::{ImageBuffer, Rgb, Rgba, imageops::FilterType};
+    use screenshot_config::*;
+
+    // three-d returns pixels with origin at bottom-left, so we need to flip vertically
+    let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
+
+    for y in 0..height {
+        for x in 0..width {
+            let src_idx = ((height - 1 - y) * width + x) as usize;
+            let pixel = pixels.get(src_idx).copied().unwrap_or([0, 0, 0, 255]);
+            img.put_pixel(x, y, Rgba(pixel));
+        }
+    }
+
+    // Scale down if configured
+    let img = if SCALE < 1.0 {
+        let new_width = (width as f32 * SCALE) as u32;
+        let new_height = (height as f32 * SCALE) as u32;
+        image::imageops::resize(&img, new_width, new_height, FilterType::Triangle)
+    } else {
+        img
+    };
+
+    // Determine file extension and save
+    let (path, ext) = match FORMAT {
+        Format::Png => (format!("{}.png", base_path), "png"),
+        Format::Jpeg => (format!("{}.jpg", base_path), "jpg"),
+        Format::WebP => (format!("{}.webp", base_path), "webp"),
+    };
+
+    match FORMAT {
+        Format::Png => {
+            img.save(&path)?;
+        }
+        Format::Jpeg => {
+            let rgb_img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(
+                img.width(), img.height(),
+                |x, y| { let p = img.get_pixel(x, y); Rgb([p[0], p[1], p[2]]) },
+            );
+            let mut file = std::fs::File::create(&path)?;
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, QUALITY as u8);
+            rgb_img.write_with_encoder(encoder)?;
+        }
+        Format::WebP => {
+            // Use webp crate for lossy encoding
+            let encoder = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
+            let webp_data = encoder.encode(QUALITY);
+            std::fs::write(&path, &*webp_data)?;
+        }
+    }
+
+    tracing::info!("Screenshot saved to {} ({}x{}, {})", path, img.width(), img.height(), ext);
+    Ok(path)
 }

@@ -162,6 +162,39 @@ impl Simulation {
         let _ = self.scripts.load_segment_script_from_str("5_boss", script!("worlds/01_station/segments/5_boss.rhai"));
     }
 
+    /// Hot-reload scripts from disk (for development).
+    /// Returns Ok with number of files reloaded, or Err with error message.
+    pub fn hot_reload_scripts(&mut self) -> Result<usize, String> {
+        // Try to find the scripts directory relative to the current working directory
+        let scripts_path = std::path::Path::new("scripts");
+        if !scripts_path.exists() {
+            // Try relative to crate root
+            let alt_path = std::path::Path::new("../../scripts");
+            if alt_path.exists() {
+                return self.hot_reload_scripts_from_path(alt_path);
+            }
+            return Err("Scripts directory not found. Run from project root.".to_string());
+        }
+        self.hot_reload_scripts_from_path(scripts_path)
+    }
+
+    fn hot_reload_scripts_from_path(&mut self, scripts_path: &std::path::Path) -> Result<usize, String> {
+        // Clear existing scripts
+        self.scripts.clear();
+
+        // Reload from disk
+        self.scripts.load_scripts_from_dir(scripts_path)
+            .map_err(|e| e.to_string())?;
+
+        let count = self.scripts.loaded_enemy_types().len()
+            + self.scripts.loaded_segment_ids().len();
+
+        // Re-enter the current segment to apply changes
+        self.on_segment_enter();
+
+        Ok(count)
+    }
+
     /// Initialize the level state from scripts.
     pub fn init_level_from_scripts(&mut self) {
         let world_id = self.scripts.get_start_world()

@@ -225,3 +225,11 @@ simulation/
 - **Ikaruga** - Polarity system, chain combos
 - **Radiant Silvergun** - Weapon chaining, scoring depth
 - **Bruno Simon** - Polished WebGL aesthetic
+
+## AI Debug Mode
+
+See `@.cursor/rules/debug.md` for AI-assisted playtesting controls:
+- Game starts frozen (F to unfreeze, N to step frames)
+- Screenshots: P key, saves to `/tmp/astranyx_screenshot.webp`
+- Hot-reload: R key reloads Rhai scripts without recompiling
+- Debug overlay: O key logs frame/position/enemy stats
