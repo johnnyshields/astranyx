@@ -71,3 +71,10 @@ mod native;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::NativeHud;
+
+// Debug HUD (native only for now)
+#[cfg(not(target_arch = "wasm32"))]
+mod debug;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use debug::DebugHud;

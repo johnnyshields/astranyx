@@ -210,6 +210,12 @@ pub struct Enemy {
     pub position: Vec2,
     #[bincode(with_serde)]
     pub velocity: Vec2,
+    /// 3D position for FPS modes (x, y=height, z)
+    #[bincode(with_serde)]
+    pub position_3d: glam::Vec3,
+    /// 3D velocity for FPS modes
+    #[bincode(with_serde)]
+    pub velocity_3d: glam::Vec3,
     pub health: i32,
     pub enemy_type: EnemyType,
     pub state_timer: u32,
@@ -301,6 +307,8 @@ impl Enemy {
             id,
             position,
             velocity: Vec2::ZERO,
+            position_3d: glam::Vec3::new(position.x, 0.0, position.y),
+            velocity_3d: glam::Vec3::ZERO,
             health,
             enemy_type,
             state_timer: 0,

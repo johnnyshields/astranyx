@@ -22,7 +22,7 @@ wasm = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:tracing-wasm", 
 astranyx-core.workspace = true
 
 # Rendering (three-d includes winit and wgpu)
-three-d = "0.18"
+three-d = { version = "0.18", features = ["text"] }
 
 # Math
 glam.workspace = true

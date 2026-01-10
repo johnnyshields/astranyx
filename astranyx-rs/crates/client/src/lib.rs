@@ -20,6 +20,7 @@ use astranyx_core::simulation::{GameState, Simulation, SimulationConfig};
 
 use crate::effects::{EffectEvent, VisualEffects};
 use crate::game::{colors, mesh_names};
+use crate::hud::DebugHud;
 use crate::renderer::{meshes, GameRenderer, MeshBuilder};
 
 /// Debug mode flag - enables shortcuts like Tab to skip segments.
@@ -344,6 +345,15 @@ pub fn run() -> anyhow::Result<()> {
     // Enable with K key or set here for always-on
     // debug_state.auto_screenshot_interval = 90;
 
+    // Debug HUD for displaying frame counter and game state
+    let debug_hud: Option<DebugHud> = match DebugHud::new() {
+        Ok(hud) => Some(hud),
+        Err(e) => {
+            tracing::warn!("Failed to create debug HUD: {:?}", e);
+            None
+        }
+    };
+
     // Timing
     let mut last_frame = Instant::now();
     let mut accumulated_time = 0.0f32;
@@ -542,6 +552,23 @@ pub fn run() -> anyhow::Result<()> {
             &[&ambient as &dyn Light, &directional as &dyn Light],
             &mut frame_input,
         );
+
+        // Render debug HUD overlay
+        if debug_state.show_overlay {
+            if let Some(ref hud) = debug_hud {
+                let mode_str = format!("{:?}", simulation.state.level.mode);
+                hud.render(
+                    &context,
+                    &mut frame_input,
+                    simulation.state.frame,
+                    &simulation.state.level.segment_id,
+                    &mode_str,
+                    debug_state.frozen,
+                    simulation.state.enemies.iter().filter(|e| e.is_alive()).count(),
+                    simulation.state.projectiles.len(),
+                );
+            }
+        }
 
         // Screenshot on P key or auto-screenshot
         let take_screenshot = input_state.consume_screenshot() || debug_state.should_auto_screenshot();

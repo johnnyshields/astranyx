@@ -265,7 +265,7 @@ impl Simulation {
                 fps::update_projectiles(self);
                 fps::update_enemies(self);
                 fps::check_collisions(self);
-                // FPS may have different spawning logic
+                fps::spawn_enemies(self);
             }
         }
 
