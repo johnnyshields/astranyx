@@ -90,10 +90,10 @@ pub fn run() -> anyhow::Result<()> {
         simulation.scripts.loaded_enemy_types().len()
     );
 
-    // Set up camera - perspective for now (easier to debug)
+    // Set up camera - perspective, sees full 1920x1080 world
     let mut camera = Camera::new_perspective(
         window.viewport(),
-        vec3(960.0, 540.0, 1000.0), // position - further back
+        vec3(960.0, 540.0, 1000.0), // position
         vec3(960.0, 540.0, 0.0),    // target
         vec3(0.0, 1.0, 0.0),        // up
         degrees(60.0),              // field of view
@@ -192,6 +192,9 @@ fn register_all_meshes(renderer: &mut GameRenderer) {
     tracing::info!("Registered all game meshes");
 }
 
+/// Global scale multiplier for all entities.
+const RENDER_SCALE: f32 = 5.0;
+
 /// Render the game state.
 fn render_game_state(
     context: &Context,
@@ -216,12 +219,13 @@ fn render_game_state(
             vec4_to_srgba(colors::PLAYER)
         };
 
+        let s = 30.0 * RENDER_SCALE;
         render_mesh(
             context,
             game_renderer,
             mesh_names::PLAYER_SHIP,
             vec3(player.position.x, player.position.y, 0.0),
-            vec3(30.0, 30.0, 30.0),
+            vec3(s, s, s),
             color,
             camera,
             lights,
@@ -235,13 +239,14 @@ fn render_game_state(
             continue;
         }
 
-        let (mesh_name, color, scale) = game::get_enemy_render_info(enemy);
+        let (mesh_name, color, base_scale) = game::get_enemy_render_info(enemy);
+        let s = base_scale * RENDER_SCALE;
         render_mesh(
             context,
             game_renderer,
             mesh_name,
             vec3(enemy.position.x, enemy.position.y, 0.0),
-            vec3(scale, scale, scale),
+            vec3(s, s, s),
             vec4_to_srgba(color),
             camera,
             lights,
@@ -251,13 +256,14 @@ fn render_game_state(
 
     // Render projectiles
     for proj in &state.projectiles {
-        let (mesh_name, color, scale) = game::get_projectile_render_info(proj);
+        let (mesh_name, color, base_scale) = game::get_projectile_render_info(proj);
+        let s = base_scale * RENDER_SCALE;
         render_mesh(
             context,
             game_renderer,
             mesh_name,
             vec3(proj.position.x, proj.position.y, 0.0),
-            vec3(scale, scale, scale),
+            vec3(s, s, s),
             vec4_to_srgba(color),
             camera,
             lights,
@@ -269,13 +275,13 @@ fn render_game_state(
     for power_up in &state.power_ups {
         let (mesh_name, color) = game::get_powerup_render_info(power_up);
         let pulse = 1.0 + (time * 3.0).sin() * 0.1;
-        let scale = 20.0 * pulse;
+        let s = 20.0 * RENDER_SCALE * pulse;
         render_mesh(
             context,
             game_renderer,
             mesh_name,
             vec3(power_up.position.x, power_up.position.y, 0.0),
-            vec3(scale, scale, scale),
+            vec3(s, s, s),
             vec4_to_srgba(color),
             camera,
             lights,
