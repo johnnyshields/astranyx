@@ -23,8 +23,17 @@ use crate::game::{colors, mesh_names};
 use crate::hud::DebugHud;
 use crate::renderer::{meshes, GameRenderer, MeshBuilder};
 
-/// Debug mode flag - enables shortcuts like Tab to skip segments.
-const DEBUG_MODE: bool = true;
+/// Check if debug mode is enabled via DEBUG_MODE=1 environment variable.
+/// Enables debug controls (Tab skip, overlay, hot-reload, etc.)
+fn is_debug_mode() -> bool {
+    std::env::var("DEBUG_MODE").map(|v| v == "1").unwrap_or(false)
+}
+
+/// Check if Claude/AI debug mode is enabled via DEBUG_CLAUDE=1.
+/// Starts frozen with overlay for AI-assisted frame-by-frame analysis.
+fn is_claude_mode() -> bool {
+    std::env::var("DEBUG_CLAUDE").map(|v| v == "1").unwrap_or(false)
+}
 
 /// Screenshot configuration.
 mod screenshot_config {
@@ -64,11 +73,12 @@ struct DebugState {
 }
 
 impl DebugState {
-    fn new() -> Self {
+    fn new(claude_mode: bool) -> Self {
         Self {
-            frozen: true,  // Start frozen for AI control
+            frozen: claude_mode,       // Only start frozen if DEBUG_CLAUDE=1
             speed: 1.0,
             auto_screenshot_interval: 0,
+            show_overlay: claude_mode, // Show overlay by default in Claude mode
             ..Default::default()
         }
     }
@@ -339,11 +349,18 @@ pub fn run() -> anyhow::Result<()> {
     // Input state
     let mut input_state = InputState::default();
 
-    // Debug state for AI-assisted playtesting
-    let mut debug_state = DebugState::new();
-    // Auto-screenshot every 90 frames (~3 seconds at 30fps) - disabled by default
-    // Enable with K key or set here for always-on
-    // debug_state.auto_screenshot_interval = 90;
+    // Check debug flags
+    let debug_mode = is_debug_mode();   // Enables debug controls (Tab, F, O, etc.)
+    let claude_mode = is_claude_mode(); // Starts frozen with overlay for AI
+
+    if claude_mode {
+        tracing::info!("Claude mode enabled (DEBUG_CLAUDE=1) - starting frozen with overlay");
+    } else if debug_mode {
+        tracing::info!("Debug mode enabled (DEBUG_MODE=1)");
+    }
+
+    // Debug state - Claude mode starts frozen, debug mode runs normally
+    let mut debug_state = DebugState::new(claude_mode);
 
     // Debug HUD for displaying frame counter and game state
     let debug_hud: Option<DebugHud> = match DebugHud::new() {
@@ -383,15 +400,15 @@ pub fn run() -> anyhow::Result<()> {
             }
         }
 
-        // Debug: Tab to skip to next segment
-        if DEBUG_MODE && input_state.consume_debug_skip() {
+        // Debug: Tab to skip to next segment (works in both debug modes)
+        if (debug_mode || claude_mode) && input_state.consume_debug_skip() {
             if let Some(next_segment) = simulation.debug_skip_to_next_segment() {
                 tracing::info!("[DEBUG] Skipping to segment: {}", next_segment);
             }
         }
 
-        // Debug controls
-        if DEBUG_MODE {
+        // Debug controls (work in both debug modes)
+        if debug_mode || claude_mode {
             if input_state.consume_freeze_toggle() {
                 debug_state.frozen = !debug_state.frozen;
                 tracing::info!("[DEBUG] Frozen: {}", debug_state.frozen);
