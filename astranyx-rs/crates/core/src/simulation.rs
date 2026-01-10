@@ -2,6 +2,14 @@
 //!
 //! This is the deterministic heart of the game. All game logic runs here.
 //! Must produce identical results on all clients for lockstep to work.
+//!
+//! The simulation is split into separate domains:
+//! - `shmup` - 2D side-scrolling shoot-em-up logic
+//! - `fps` - First-person shooter logic
+//! - Common systems (collision, spawning, etc.) work across both
+
+pub mod fps;
+pub mod shmup;
 
 use bincode::{Decode, Encode};
 use glam::Vec2;
@@ -14,14 +22,13 @@ macro_rules! script {
     };
 }
 
-use crate::entities::{
-    Enemy, EnemyType, EntityId, EntityIdGenerator, Player, PowerUp, Projectile, ProjectileType,
-};
+use crate::entities::{Enemy, EntityIdGenerator, Player, PowerUp, Projectile};
 use crate::input::PlayerInput;
-use crate::level::LevelState;
-use crate::physics::{circles_collide, WorldBounds};
+use crate::level::{GameMode, LevelState};
+use crate::path::PathSet;
+use crate::physics::WorldBounds;
 use crate::random::SeededRandom;
-use crate::scripting::{ScriptEngine, ScriptEnemy};
+use crate::scripting::ScriptEngine;
 
 /// Configuration for the simulation.
 #[derive(Debug, Clone)]
@@ -96,14 +103,20 @@ pub struct Simulation {
     pub config: SimulationConfig,
     pub state: GameState,
     pub scripts: ScriptEngine,
+    /// Paths for on-rails movement (loaded from segments).
+    pub paths: PathSet,
 }
 
 impl Simulation {
+    /// Fixed delta time for determinism (1/30 sec at 30Hz).
+    pub const DT: f32 = 1.0 / 30.0;
+
     pub fn new(config: SimulationConfig, seed: u32, player_count: usize) -> Self {
         Self {
             config,
             state: GameState::new(seed, player_count),
             scripts: ScriptEngine::new(),
+            paths: PathSet::new(),
         }
     }
 
@@ -142,15 +155,15 @@ impl Simulation {
         // World 01: Space Station
         let _ = self.scripts.load_world_script_from_str("station", script!("worlds/01_station/world.rhai"));
         let _ = self.scripts.load_route_script_from_str(script!("worlds/01_station/routes.rhai"));
-        let _ = self.scripts.load_segment_script_from_str("station_approach", script!("worlds/01_station/segments/station_approach.rhai"));
-        let _ = self.scripts.load_segment_script_from_str("station_interior", script!("worlds/01_station/segments/station_interior.rhai"));
-        let _ = self.scripts.load_segment_script_from_str("station_hangar", script!("worlds/01_station/segments/station_hangar.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("1_approach", script!("worlds/01_station/segments/1_approach.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("2_corridor", script!("worlds/01_station/segments/2_corridor.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("3_hangar", script!("worlds/01_station/segments/3_hangar.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("4_base", script!("worlds/01_station/segments/4_base.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("5_boss", script!("worlds/01_station/segments/5_boss.rhai"));
     }
 
     /// Initialize the level state from scripts.
-    /// Uses the start_world from config.rhai and the world's starting segment.
     pub fn init_level_from_scripts(&mut self) {
-        // Get starting world from config, fallback to first loaded world
         let world_id = self.scripts.get_start_world()
             .or_else(|| self.scripts.get_default_world().map(|s| s.to_string()));
 
@@ -158,7 +171,6 @@ impl Simulation {
             return;
         };
 
-        // Get starting segment for this world
         let Some(segment_id) = self.scripts.get_world_start_segment(&world_id) else {
             return;
         };
@@ -166,42 +178,27 @@ impl Simulation {
         let segment_id = segment_id.to_string();
 
         self.state.level.world_id = world_id;
-        self.state.level.segment_id = segment_id.clone();
+        self.state.level.segment_id = segment_id;
 
-        // Apply segment config (bounds, mode)
-        if let Some(config) = self.scripts.get_segment_config(&segment_id) {
-            self.state.level.bounds = config.bounds;
-            self.state.level.mode = config.mode;
-        }
-
-        // Call on_enter for the initial segment
-        self.scripts.call_segment_on_enter(&segment_id, &self.state.level);
+        // Set up the initial segment properly
+        self.on_segment_enter();
     }
 
     /// Initialize the level state with a specific world.
     pub fn init_level(&mut self, world_id: &str) {
-        // Get starting segment for this world
         let segment_id = self.scripts.get_world_start_segment(world_id)
             .unwrap_or_default()
             .to_string();
 
         self.state.level.world_id = world_id.to_string();
-        self.state.level.segment_id = segment_id.clone();
+        self.state.level.segment_id = segment_id;
 
-        // Apply segment config (bounds, mode)
-        if let Some(config) = self.scripts.get_segment_config(&segment_id) {
-            self.state.level.bounds = config.bounds;
-            self.state.level.mode = config.mode;
-        }
-
-        // Call on_enter for the initial segment
-        if !segment_id.is_empty() {
-            self.scripts.call_segment_on_enter(&segment_id, &self.state.level);
+        if !self.state.level.segment_id.is_empty() {
+            self.on_segment_enter();
         }
     }
 
     /// Advance the simulation by one frame with the given player inputs.
-    /// Inputs are indexed by player index.
     pub fn tick(&mut self, inputs: &[PlayerInput]) {
         self.state.frame += 1;
 
@@ -211,19 +208,33 @@ impl Simulation {
         // Update scroll (use segment's scroll config if available)
         self.update_scroll();
 
-        // Process player inputs
-        self.update_players(inputs);
+        // Process player inputs based on game mode
+        let mode = self.state.level.mode.clone();
+        match &mode {
+            GameMode::SideScroll { .. } | GameMode::OnRails { .. } | GameMode::FreeFlight => {
+                shmup::update_players(self, inputs);
+            }
+            GameMode::FirstPerson | GameMode::Turret { .. } => {
+                fps::update_players(self, inputs);
+            }
+        }
 
-        // Update entities
-        self.update_projectiles();
-        self.update_enemies();
-        self.update_power_ups();
-
-        // Collision detection
-        self.check_collisions();
-
-        // Spawn enemies (segment-aware spawning)
-        self.spawn_enemies();
+        // Update entities based on game mode
+        match &mode {
+            GameMode::SideScroll { .. } | GameMode::OnRails { .. } | GameMode::FreeFlight => {
+                shmup::update_projectiles(self);
+                shmup::update_enemies(self);
+                shmup::update_power_ups(self);
+                shmup::check_collisions(self);
+                shmup::spawn_enemies(self);
+            }
+            GameMode::FirstPerson | GameMode::Turret { .. } => {
+                fps::update_projectiles(self);
+                fps::update_enemies(self);
+                fps::check_collisions(self);
+                // FPS may have different spawning logic
+            }
+        }
 
         // Call segment tick callback
         self.scripts.call_segment_on_tick(
@@ -241,31 +252,70 @@ impl Simulation {
 
     /// Update level state (transitions, segment frame).
     fn update_level(&mut self) {
-        // Handle active transition
         if self.state.level.transition.is_some() {
             if self.state.level.update_transition() {
-                // Transition completed - call on_enter for new segment
-                self.scripts.call_segment_on_enter(
-                    &self.state.level.segment_id,
-                    &self.state.level,
-                );
-
-                // Apply new segment's bounds and mode
-                if let Some(config) = self.scripts.get_segment_config(&self.state.level.segment_id) {
-                    self.state.level.bounds = config.bounds;
-                    self.state.level.mode = config.mode;
-                }
+                // Transition completed - set up new segment
+                self.on_segment_enter();
             }
-            return; // Skip normal updates during transition
+            return;
         }
 
-        // Increment segment frame
         self.state.level.segment_frame += 1;
+    }
+
+    /// Called when entering a new segment.
+    fn on_segment_enter(&mut self) {
+        let segment_id = &self.state.level.segment_id;
+
+        // Clear all entities from the previous segment
+        self.state.enemies.clear();
+        self.state.projectiles.clear();
+        self.state.power_ups.clear();
+
+        // Load segment config and apply
+        if let Some(config) = self.scripts.get_segment_config(segment_id) {
+            self.state.level.bounds = config.bounds.clone();
+            self.state.level.mode = config.mode.clone();
+
+            // Reset player positions based on segment config
+            let player_start = config.player_start.unwrap_or_else(|| {
+                // Default start positions based on game mode
+                match &config.mode {
+                    GameMode::SideScroll { .. } => glam::Vec3::new(200.0, 540.0, 0.0),
+                    GameMode::OnRails { .. } => glam::Vec3::new(0.0, 100.0, 50.0),
+                    GameMode::FreeFlight => glam::Vec3::new(0.0, 100.0, 0.0),
+                    GameMode::Turret { .. } => glam::Vec3::new(0.0, 50.0, 0.0),
+                    GameMode::FirstPerson => glam::Vec3::new(0.0, 5.0, 0.0),
+                }
+            });
+
+            // Reset each player to the start position
+            for (i, player) in self.state.players.iter_mut().enumerate() {
+                let offset = (i as f32) * 50.0; // Space out multiple players
+                player.position_3d = player_start + glam::Vec3::new(offset, 0.0, 0.0);
+                player.position = Vec2::new(player.position_3d.x, player.position_3d.z);
+                player.velocity_3d = glam::Vec3::ZERO;
+                player.velocity = Vec2::ZERO;
+                // Face into the room (toward -Z) in FPS mode
+                player.look_yaw = if config.mode.is_first_person() {
+                    std::f32::consts::PI // Face -Z direction
+                } else {
+                    0.0
+                };
+                player.look_pitch = 0.0;
+            }
+        }
+
+        // Reset scroll offset
+        self.state.level.scroll_offset = glam::Vec3::ZERO;
+        self.state.scroll_offset = 0.0;
+
+        // Call segment on_enter callback
+        self.scripts.call_segment_on_enter(segment_id, &self.state.level);
     }
 
     /// Update scroll based on segment config.
     fn update_scroll(&mut self) {
-        // Get scroll config from current segment
         if let Some(config) = self.scripts.get_segment_config(&self.state.level.segment_id) {
             if let Some(scroll) = &config.scroll {
                 let dt = 1.0 / self.config.tick_rate as f32;
@@ -273,14 +323,12 @@ impl Simulation {
                 self.state.scroll_offset = self.state.level.scroll_offset.x;
             }
         } else {
-            // Fallback: default scroll
             self.state.scroll_offset += 60.0 / self.config.tick_rate as f32;
         }
     }
 
     /// Check route triggers and initiate transitions.
     fn check_route_triggers(&mut self) {
-        // Skip if already transitioning
         if self.state.level.transition.is_some() {
             return;
         }
@@ -290,16 +338,12 @@ impl Simulation {
             return;
         }
 
-        // Get routes from the current segment
         let routes = self.scripts.get_routes_from(current_segment);
 
-        // Evaluate triggers in priority order (routes should be sorted)
         for route in routes {
             if route.evaluate(&self.state.level) {
-                // Call on_exit for current segment
                 self.scripts.call_segment_on_exit(current_segment, &self.state.level);
 
-                // Start transition
                 self.state.level.start_transition(
                     &route.to,
                     route.transition.transition_type,
@@ -310,318 +354,16 @@ impl Simulation {
         }
     }
 
-    fn update_players(&mut self, inputs: &[PlayerInput]) {
-        let dt = 1.0 / self.config.tick_rate as f32;
-
-        for (i, player) in self.state.players.iter_mut().enumerate() {
-            if !player.is_alive() {
-                continue;
-            }
-
-            let input = inputs.get(i).copied().unwrap_or_default();
-
-            // Movement
-            let speed = if input.focus() {
-                Player::FOCUS_SPEED
-            } else {
-                Player::SPEED
-            };
-
-            let move_dir = Vec2::new(input.horizontal() as f32, input.vertical() as f32);
-            if move_dir != Vec2::ZERO {
-                player.velocity = move_dir.normalize() * speed;
-            } else {
-                player.velocity = Vec2::ZERO;
-            }
-
-            player.position += player.velocity * dt;
-            player.position = self
-                .config
-                .world_bounds
-                .clamp_with_radius(player.position, Player::HITBOX_RADIUS);
-
-            // Cooldowns
-            if player.fire_cooldown > 0 {
-                player.fire_cooldown -= 1;
-            }
-            if player.invincibility_frames > 0 {
-                player.invincibility_frames -= 1;
-            }
-
-            // Firing
-            if input.fire() && player.fire_cooldown == 0 {
-                player.fire_cooldown = Player::FIRE_RATE;
-
-                let bullet_id = self.state.entity_ids.next();
-                self.state.projectiles.push(Projectile::new(
-                    bullet_id,
-                    player.position + Vec2::new(20.0, 0.0),
-                    Vec2::new(800.0, 0.0),
-                    10,
-                    player.id,
-                    ProjectileType::PlayerBullet,
-                ));
-            }
-        }
-    }
-
-    fn update_projectiles(&mut self) {
-        let dt = 1.0 / self.config.tick_rate as f32;
-
-        for proj in &mut self.state.projectiles {
-            proj.position += proj.velocity * dt;
-            if proj.lifetime > 0 {
-                proj.lifetime -= 1;
-            }
-        }
-    }
-
-    fn update_enemies(&mut self) {
-        let dt = 1.0 / self.config.tick_rate as f32;
-        let bounds = &self.config.world_bounds;
-
-        // Collect enemy shooting info first to avoid borrow issues
-        let mut shots_to_fire: Vec<(Vec2, Vec2)> = Vec::new();
-
-        for enemy in &mut self.state.enemies {
-            enemy.state_timer += 1;
-
-            // Convert to script enemy
-            let script_enemy = ScriptEnemy {
-                id: enemy.id.0,
-                x: enemy.position.x,
-                y: enemy.position.y,
-                vx: enemy.velocity.x,
-                vy: enemy.velocity.y,
-                health: enemy.health,
-                frame: enemy.state_timer,
-            };
-
-            let script_name = enemy.enemy_type.script_name();
-
-            // Get velocity from script
-            if let Some((vx, vy)) = self.scripts.update_enemy(script_name, &script_enemy, dt) {
-                enemy.velocity = Vec2::new(vx, vy);
-            } else {
-                // Minimal fallback - just move left
-                enemy.velocity = Vec2::new(-80.0, 0.0);
-            }
-
-            enemy.position += enemy.velocity * dt;
-
-            // Clamp Y to bounds
-            enemy.position.y = enemy.position.y.clamp(bounds.min.y + 50.0, bounds.max.y - 50.0);
-
-            // Enemy shooting (when on screen and cooldown ready)
-            if enemy.fire_cooldown > 0 {
-                enemy.fire_cooldown -= 1;
-            } else if enemy.position.x < bounds.max.x - 100.0 {
-                // Get fire rate from script stats
-                let shoot_rate = self.scripts.get_enemy_stats(script_name)
-                    .map(|s| s.fire_rate)
-                    .unwrap_or(90);
-
-                enemy.fire_cooldown = shoot_rate;
-
-                // Queue a shot toward the left
-                shots_to_fire.push((
-                    enemy.position + Vec2::new(-20.0, 0.0),
-                    Vec2::new(-300.0, 0.0),
-                ));
-            }
-        }
-
-        // Create projectiles from queued shots
-        for (pos, vel) in shots_to_fire {
-            let id = self.state.entity_ids.next();
-            self.state.projectiles.push(Projectile::new(
-                id,
-                pos,
-                vel,
-                5,
-                EntityId(0), // Enemy owner
-                ProjectileType::EnemyBullet,
-            ));
-        }
-    }
-
-    fn update_power_ups(&mut self) {
-        let dt = 1.0 / self.config.tick_rate as f32;
-
-        for power_up in &mut self.state.power_ups {
-            power_up.position += power_up.velocity * dt;
-            if power_up.lifetime > 0 {
-                power_up.lifetime -= 1;
-            }
-        }
-    }
-
-    fn check_collisions(&mut self) {
-        // Player bullets vs enemies
-        for proj in &mut self.state.projectiles {
-            if !matches!(proj.projectile_type, ProjectileType::PlayerBullet | ProjectileType::PlayerMissile) {
-                continue;
-            }
-
-            for enemy in &mut self.state.enemies {
-                if !enemy.is_alive() {
-                    continue;
-                }
-
-                if circles_collide(
-                    proj.position,
-                    proj.hitbox_radius(),
-                    enemy.position,
-                    enemy.hitbox_radius(),
-                ) {
-                    enemy.health -= proj.damage;
-                    proj.lifetime = 0; // Mark for removal
-
-                    if !enemy.is_alive() {
-                        // Get points from script stats
-                        let points = self.scripts.get_enemy_stats(enemy.enemy_type.script_name())
-                            .map(|s| s.points)
-                            .unwrap_or(100);
-                        self.state.score += points;
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Enemy bullets vs players
-        for proj in &mut self.state.projectiles {
-            if !matches!(proj.projectile_type, ProjectileType::EnemyBullet | ProjectileType::EnemyLaser) {
-                continue;
-            }
-
-            for player in &mut self.state.players {
-                if !player.is_alive() || player.is_invincible() {
-                    continue;
-                }
-
-                if circles_collide(
-                    proj.position,
-                    proj.hitbox_radius(),
-                    player.position,
-                    Player::HITBOX_RADIUS,
-                ) {
-                    player.health -= proj.damage;
-                    player.invincibility_frames = 90; // 3 seconds
-                    proj.lifetime = 0;
-                    break;
-                }
-            }
-        }
-
-        // Enemies vs players (collision damage)
-        for enemy in &self.state.enemies {
-            if !enemy.is_alive() {
-                continue;
-            }
-
-            for player in &mut self.state.players {
-                if !player.is_alive() || player.is_invincible() {
-                    continue;
-                }
-
-                if circles_collide(
-                    player.position,
-                    Player::HITBOX_RADIUS,
-                    enemy.position,
-                    enemy.hitbox_radius(),
-                ) {
-                    player.health -= 1;
-                    player.invincibility_frames = 90;
-                }
-            }
-        }
-
-        // Power-ups vs players
-        for power_up in &mut self.state.power_ups {
-            for player in &mut self.state.players {
-                if !player.is_alive() {
-                    continue;
-                }
-
-                if circles_collide(
-                    player.position,
-                    Player::HITBOX_RADIUS,
-                    power_up.position,
-                    PowerUp::HITBOX_RADIUS,
-                ) {
-                    // Apply power-up effect
-                    match power_up.power_type {
-                        crate::entities::PowerUpType::Health => {
-                            player.health = (player.health + 1).min(player.max_health);
-                        }
-                        crate::entities::PowerUpType::Special => {
-                            player.special_charge = (player.special_charge + 0.25).min(1.0);
-                        }
-                        _ => {}
-                    }
-                    power_up.lifetime = 0;
-                    break;
-                }
-            }
-        }
-    }
-
-    fn spawn_enemies(&mut self) {
-        // Spawn enemies every 30 frames (1 second at 30Hz) with some randomness
-        // More frequent spawning for a shoot-em-up feel
-        let spawn_interval = 30 + (self.state.rng.next() * 30.0) as u32;
-
-        if self.state.frame % spawn_interval == 0 && self.state.enemies.len() < 15 {
-            // Spawn 1-3 enemies at a time
-            let count = 1 + (self.state.rng.next() * 2.0) as usize;
-
-            // Calculate "wave" based on time for progressive unlocks
-            let wave = (self.state.frame / 300) as u32; // New wave every 10 seconds
-
-            for _ in 0..count {
-                let id = self.state.entity_ids.next();
-                // Spawn at right edge of screen, random Y within play area
-                let y = self.state.rng.next_range(100.0, self.config.world_bounds.height() - 100.0);
-
-                // Pick enemy type based on wave progression
-                let roll = self.state.rng.next();
-                let enemy_type = self.pick_enemy_type(wave, roll);
-
-                // Spawn at right edge (within bounds so they don't get culled)
-                self.state.enemies.push(Enemy::new(
-                    id,
-                    Vec2::new(self.config.world_bounds.max.x - 10.0, y),
-                    enemy_type,
-                ));
-            }
-        }
-    }
-
-    /// Pick an enemy type based on wave and random roll.
-    fn pick_enemy_type(&self, wave: u32, roll: f32) -> EnemyType {
-        // Use wave system script to get available enemies
-        let available = self.scripts.get_available_enemies(wave);
-
-        // Pick from available types
-        let idx = (roll * available.len() as f32) as usize;
-        let name = &available[idx.min(available.len() - 1)];
-        EnemyType::from_script_name(name)
-    }
-
     fn cleanup(&mut self) {
-        // Remove dead projectiles or ones that left the play area (left side)
         self.state.projectiles.retain(|p| {
             p.lifetime > 0 && p.position.x > self.config.world_bounds.min.x - 100.0
                 && p.position.x < self.config.world_bounds.max.x + 100.0
         });
 
-        // Remove dead enemies or ones that left the left side of the screen
         self.state.enemies.retain(|e| {
             e.is_alive() && e.position.x > self.config.world_bounds.min.x - 100.0
         });
 
-        // Remove expired power-ups
         self.state.power_ups.retain(|p| {
             p.lifetime > 0 && !self.config.world_bounds.is_outside(p.position, 50.0)
         });
@@ -645,6 +387,36 @@ impl Simulation {
         self.state = state;
         Ok(())
     }
+
+    /// Debug: Skip to the next segment immediately.
+    /// Returns the new segment ID if successful.
+    pub fn debug_skip_to_next_segment(&mut self) -> Option<String> {
+        // Don't skip if already transitioning
+        if self.state.level.transition.is_some() {
+            return None;
+        }
+
+        let current_segment = &self.state.level.segment_id;
+        if current_segment.is_empty() {
+            return None;
+        }
+
+        // Find the first route from this segment (lowest priority first, which is usually time-based)
+        let routes = self.scripts.get_routes_from(current_segment);
+        let route = routes.into_iter()
+            .filter(|r| r.to != "victory" && r.to != "secret_area") // Skip end states
+            .min_by_key(|r| r.priority)?; // Take lowest priority (normal progression)
+
+        self.scripts.call_segment_on_exit(current_segment, &self.state.level);
+
+        self.state.level.start_transition(
+            &route.to,
+            route.transition.transition_type,
+            5, // Fast transition for debug (5 frames instead of normal duration)
+        );
+
+        Some(route.to.clone())
+    }
 }
 
 #[cfg(test)]
@@ -667,7 +439,6 @@ mod tests {
             sim2.tick(&inputs);
         }
 
-        // States should be identical
         assert_eq!(sim1.state.frame, sim2.state.frame);
         assert_eq!(sim1.state.score, sim2.state.score);
         assert_eq!(sim1.state.players.len(), sim2.state.players.len());
@@ -694,5 +465,84 @@ mod tests {
 
         assert_eq!(sim.state.frame, sim2.state.frame);
         assert_eq!(sim.state.score, sim2.state.score);
+    }
+
+    #[test]
+    fn segment_transition_with_scripts() {
+        let config = SimulationConfig::default();
+        let mut sim = Simulation::new(config, 12345, 1);
+        sim.load_embedded_scripts();
+        sim.init_level_from_scripts();
+
+        // Verify we start on segment 1 (approach)
+        assert_eq!(sim.state.level.segment_id, "1_approach");
+        assert!(matches!(sim.state.level.mode, GameMode::SideScroll { .. }));
+
+        // Run the simulation past the first segment's duration (1800 frames = 60 seconds)
+        let inputs = vec![PlayerInput::from_bits(PlayerInput::RIGHT)];
+        for _ in 0..1900 {
+            sim.tick(&inputs);
+        }
+
+        // Should have transitioned to segment 2 (corridor)
+        // The transition takes 45 frames, so we need to be past 1800 + 45
+        assert_eq!(sim.state.level.segment_id, "2_corridor");
+        assert!(matches!(sim.state.level.mode, GameMode::OnRails { .. }));
+    }
+
+    #[test]
+    fn game_mode_detection() {
+        use crate::level::GameMode;
+
+        // Test 2D mode detection
+        let side_scroll = GameMode::SideScroll { angle: 0.0 };
+        assert!(side_scroll.is_2d());
+        assert!(!side_scroll.is_first_person());
+        assert!(!side_scroll.is_on_rails());
+
+        // Test on-rails mode detection
+        let on_rails = GameMode::OnRails { path_id: "test".to_string() };
+        assert!(!on_rails.is_2d());
+        assert!(on_rails.is_on_rails());
+        assert!(!on_rails.is_first_person());
+
+        // Test turret mode detection
+        let turret = GameMode::Turret { path_id: "test".to_string() };
+        assert!(!turret.is_2d());
+        assert!(turret.is_on_rails());
+        assert!(turret.is_first_person());
+
+        // Test first-person mode detection
+        let fps = GameMode::FirstPerson;
+        assert!(!fps.is_2d());
+        assert!(!fps.is_on_rails());
+        assert!(fps.is_first_person());
+        assert!(fps.is_3d_free());
+
+        // Test free-flight mode detection
+        let free_flight = GameMode::FreeFlight;
+        assert!(!free_flight.is_2d());
+        assert!(!free_flight.is_on_rails());
+        assert!(free_flight.is_3d_free());
+    }
+
+    #[test]
+    fn player_3d_sync() {
+        use crate::entities::Player;
+        use glam::{Vec2, Vec3};
+
+        let id = crate::entities::EntityId(1);
+
+        // Test 2D to 3D sync
+        let mut player = Player::new(id, Vec2::new(100.0, 200.0));
+        player.sync_2d_to_3d();
+        assert_eq!(player.position_3d.x, 100.0);
+        assert_eq!(player.position_3d.z, 200.0);
+
+        // Test 3D to 2D sync
+        player.position_3d = Vec3::new(300.0, 50.0, 400.0);
+        player.sync_3d_to_2d();
+        assert_eq!(player.position.x, 300.0);
+        assert_eq!(player.position.y, 400.0);
     }
 }

@@ -4,8 +4,10 @@
 //! No hashmaps or sets - iteration order must be identical across all clients.
 
 use bincode::{Decode, Encode};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+
+use crate::level::GameMode;
 
 /// Unique identifier for an entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
@@ -15,11 +17,25 @@ pub struct EntityId(pub u32);
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Player {
     pub id: EntityId,
+
+    // 2D position/velocity (used for side-scroll mode)
     #[bincode(with_serde)]
     pub position: Vec2,
     #[bincode(with_serde)]
     pub velocity: Vec2,
-    pub rotation: f32,
+    pub rotation: f32, // 2D rotation in radians
+
+    // 3D position/velocity (used for FPS, on-rails, free-flight modes)
+    #[bincode(with_serde)]
+    pub position_3d: Vec3,
+    #[bincode(with_serde)]
+    pub velocity_3d: Vec3,
+
+    // FPS look angles (in radians)
+    pub look_yaw: f32,   // Horizontal rotation around Y axis
+    pub look_pitch: f32, // Vertical rotation around X axis
+
+    // Combat stats
     pub health: i32,
     pub max_health: i32,
     pub invincibility_frames: u32,
@@ -28,10 +44,18 @@ pub struct Player {
 }
 
 impl Player {
-    pub const SPEED: f32 = 200.0;
-    pub const FOCUS_SPEED: f32 = 80.0;
+    // Movement speeds
+    pub const SPEED: f32 = 200.0;        // 2D movement speed
+    pub const FOCUS_SPEED: f32 = 80.0;   // 2D focus/precision mode speed
+    pub const FPS_SPEED: f32 = 100.0;    // FPS movement speed
+    pub const FPS_RUN_SPEED: f32 = 180.0; // FPS sprint speed
+
+    // Combat
     pub const FIRE_RATE: u32 = 6; // Frames between shots
     pub const HITBOX_RADIUS: f32 = 4.0;
+
+    // Look limits
+    pub const MAX_PITCH: f32 = 1.4; // ~80 degrees up/down
 
     pub fn new(id: EntityId, position: Vec2) -> Self {
         Self {
@@ -39,12 +63,82 @@ impl Player {
             position,
             velocity: Vec2::ZERO,
             rotation: 0.0,
+            position_3d: Vec3::new(position.x, 0.0, position.y),
+            velocity_3d: Vec3::ZERO,
+            look_yaw: 0.0,
+            look_pitch: 0.0,
             health: 3,
             max_health: 3,
             invincibility_frames: 0,
             fire_cooldown: 0,
             special_charge: 0.0,
         }
+    }
+
+    /// Create a player at a 3D position (for FPS modes).
+    pub fn new_3d(id: EntityId, position: Vec3) -> Self {
+        Self {
+            id,
+            position: Vec2::new(position.x, position.z),
+            velocity: Vec2::ZERO,
+            rotation: 0.0,
+            position_3d: position,
+            velocity_3d: Vec3::ZERO,
+            look_yaw: 0.0,
+            look_pitch: 0.0,
+            health: 3,
+            max_health: 3,
+            invincibility_frames: 0,
+            fire_cooldown: 0,
+            special_charge: 0.0,
+        }
+    }
+
+    /// Get the effective position based on game mode.
+    pub fn effective_position(&self, mode: &GameMode) -> Vec3 {
+        if mode.is_2d() {
+            Vec3::new(self.position.x, self.position.y, 0.0)
+        } else {
+            self.position_3d
+        }
+    }
+
+    /// Get the forward direction vector in 3D (for FPS/free-flight).
+    pub fn forward_3d(&self) -> Vec3 {
+        let cos_pitch = self.look_pitch.cos();
+        Vec3::new(
+            self.look_yaw.sin() * cos_pitch,
+            -self.look_pitch.sin(),
+            self.look_yaw.cos() * cos_pitch,
+        )
+    }
+
+    /// Get the right direction vector in 3D (for strafing).
+    pub fn right_3d(&self) -> Vec3 {
+        Vec3::new(self.look_yaw.cos(), 0.0, -self.look_yaw.sin())
+    }
+
+    /// Get the flat forward direction (ignoring pitch, for ground movement).
+    pub fn forward_flat(&self) -> Vec3 {
+        Vec3::new(self.look_yaw.sin(), 0.0, self.look_yaw.cos()).normalize_or_zero()
+    }
+
+    /// Set position for segment transition.
+    pub fn set_position_3d(&mut self, pos: Vec3) {
+        self.position_3d = pos;
+        self.position = Vec2::new(pos.x, pos.z);
+    }
+
+    /// Sync 2D and 3D positions (call after 2D updates to keep 3D in sync).
+    pub fn sync_2d_to_3d(&mut self) {
+        self.position_3d.x = self.position.x;
+        self.position_3d.z = self.position.y;
+    }
+
+    /// Sync 3D position back to 2D (call after 3D updates).
+    pub fn sync_3d_to_2d(&mut self) {
+        self.position.x = self.position_3d.x;
+        self.position.y = self.position_3d.z;
     }
 
     pub fn is_alive(&self) -> bool {

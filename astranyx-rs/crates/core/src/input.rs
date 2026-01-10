@@ -1,6 +1,7 @@
 //! Player input types for the simulation.
 //!
 //! Inputs are collected each frame and exchanged between peers in lockstep.
+//! Mouse input is quantized to i16 for determinism.
 
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -11,24 +12,78 @@ use serde::{Deserialize, Serialize};
 pub struct PlayerInput {
     /// Raw bitfield of pressed inputs
     pub bits: u16,
+
+    /// Mouse X delta (quantized for determinism).
+    /// Range: -32768 to 32767, scaled by 1000.0
+    pub mouse_dx: i16,
+
+    /// Mouse Y delta (quantized for determinism).
+    /// Range: -32768 to 32767, scaled by 1000.0
+    pub mouse_dy: i16,
 }
 
 impl PlayerInput {
-    // Input bit positions
+    // Input bit positions - movement
     pub const UP: u16 = 1 << 0;
     pub const DOWN: u16 = 1 << 1;
     pub const LEFT: u16 = 1 << 2;
     pub const RIGHT: u16 = 1 << 3;
+
+    // Actions
     pub const FIRE: u16 = 1 << 4;
     pub const SPECIAL: u16 = 1 << 5;
     pub const FOCUS: u16 = 1 << 6; // Slow movement / precision mode
 
+    // FPS-specific movement (W/S for forward/backward)
+    pub const FORWARD: u16 = 1 << 7;  // W key in FPS mode
+    pub const BACKWARD: u16 = 1 << 8; // S key in FPS mode
+
+    // Menu/cutscene
+    pub const SKIP: u16 = 1 << 9; // Skip cutscene
+
     pub const fn new() -> Self {
-        Self { bits: 0 }
+        Self {
+            bits: 0,
+            mouse_dx: 0,
+            mouse_dy: 0,
+        }
     }
 
     pub const fn from_bits(bits: u16) -> Self {
-        Self { bits }
+        Self {
+            bits,
+            mouse_dx: 0,
+            mouse_dy: 0,
+        }
+    }
+
+    /// Create input with mouse delta.
+    pub const fn with_mouse(bits: u16, mouse_dx: i16, mouse_dy: i16) -> Self {
+        Self {
+            bits,
+            mouse_dx,
+            mouse_dy,
+        }
+    }
+
+    /// Quantize a raw mouse delta (in pixels) to i16.
+    /// Multiply by 1000 to preserve precision, clamp to i16 range.
+    pub fn quantize_mouse_delta(raw_delta: f32) -> i16 {
+        (raw_delta * 1000.0).clamp(-32768.0, 32767.0) as i16
+    }
+
+    /// Get mouse delta as radians for FPS aiming.
+    /// Applies sensitivity scaling.
+    pub fn mouse_delta_radians(&self, sensitivity: f32) -> (f32, f32) {
+        let dx = (self.mouse_dx as f32 / 1000.0) * sensitivity;
+        let dy = (self.mouse_dy as f32 / 1000.0) * sensitivity;
+        (dx, dy)
+    }
+
+    /// Set mouse delta from raw pixel values.
+    pub fn set_mouse_delta(&mut self, dx: f32, dy: f32) {
+        self.mouse_dx = Self::quantize_mouse_delta(dx);
+        self.mouse_dy = Self::quantize_mouse_delta(dy);
     }
 
     #[inline]
@@ -78,6 +133,21 @@ impl PlayerInput {
     #[inline]
     pub const fn focus(&self) -> bool {
         self.is_pressed(Self::FOCUS)
+    }
+
+    #[inline]
+    pub const fn forward(&self) -> bool {
+        self.is_pressed(Self::FORWARD)
+    }
+
+    #[inline]
+    pub const fn backward(&self) -> bool {
+        self.is_pressed(Self::BACKWARD)
+    }
+
+    #[inline]
+    pub const fn skip(&self) -> bool {
+        self.is_pressed(Self::SKIP)
     }
 
     /// Returns horizontal axis as -1, 0, or 1.
@@ -136,5 +206,43 @@ mod tests {
 
         input.set(PlayerInput::LEFT, false);
         assert_eq!(input.horizontal(), 1);
+    }
+
+    #[test]
+    fn mouse_quantization() {
+        // Test quantization preserves precision
+        let raw = 5.5;
+        let quantized = PlayerInput::quantize_mouse_delta(raw);
+        assert_eq!(quantized, 5500);
+
+        // Test dequantization
+        let input = PlayerInput::with_mouse(0, 5500, -3000);
+        let (dx, dy) = input.mouse_delta_radians(1.0);
+        assert!((dx - 5.5).abs() < 0.01);
+        assert!((dy - (-3.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn mouse_clamping() {
+        // Test extreme values are clamped
+        let huge = PlayerInput::quantize_mouse_delta(100000.0);
+        assert_eq!(huge, 32767);
+
+        let tiny = PlayerInput::quantize_mouse_delta(-100000.0);
+        assert_eq!(tiny, -32768);
+    }
+
+    #[test]
+    fn fps_inputs() {
+        let mut input = PlayerInput::new();
+        assert!(!input.forward());
+        assert!(!input.backward());
+        assert!(!input.skip());
+
+        input.set(PlayerInput::FORWARD, true);
+        input.set(PlayerInput::SKIP, true);
+        assert!(input.forward());
+        assert!(input.skip());
+        assert!(!input.backward());
     }
 }

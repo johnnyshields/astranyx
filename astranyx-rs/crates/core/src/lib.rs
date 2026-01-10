@@ -14,6 +14,7 @@
 pub mod entities;
 pub mod input;
 pub mod level;
+pub mod path;
 pub mod physics;
 pub mod random;
 pub mod scripting;
@@ -21,6 +22,7 @@ pub mod simulation;
 
 pub use input::PlayerInput;
 pub use level::LevelState;
+pub use path::{Path, PathPoint, PathSet};
 pub use physics::WorldBounds3D;
 pub use random::SeededRandom;
 pub use scripting::ScriptEngine;

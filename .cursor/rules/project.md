@@ -58,7 +58,13 @@ Client A ◄══════════════════════�
 
 ```
 astranyx/
-├── client/
+├── astranyx-rs/            # Rust game engine (core + client)
+│   ├── crates/
+│   │   ├── core/           # Deterministic simulation (synced)
+│   │   ├── client/         # Rendering, input, visual effects
+│   │   └── protocol/       # Network message encoding
+│   └── scripts/            # Rhai game content scripts
+├── client/                 # TypeScript client (legacy/alternative)
 │   ├── src/
 │   │   ├── core/           # Engine, Renderer, Input
 │   │   ├── game/           # Game, Simulation
@@ -79,7 +85,53 @@ astranyx/
 
 ## Key Modules
 
-### Client
+### Rust Crates (`/astranyx-rs`)
+
+#### `astranyx-core` (Deterministic - Synced via Lockstep)
+- **`Simulation`** - Game tick loop, entity updates, collision
+- **`GameState`** - All synced state (players, enemies, projectiles)
+- **`LevelState`** - World, segment, transitions, scroll offset
+- **`ScriptEngine`** - Rhai scripting for game content
+- **`SeededRandom`** - Deterministic RNG for lockstep
+
+#### `astranyx-client` (Client-only - NOT synced)
+- **`GameRenderer`** - three-d based 3D rendering
+- **`VisualEffects`** - Rapier physics for debris, particles (see warning below)
+- **`InputState`** - Keyboard/gamepad input handling
+
+#### `astranyx-protocol`
+- **`MessageCodec`** - Binary protocol for network messages
+
+### ⚠️ CRITICAL: Rapier Physics Usage
+
+**Rapier is used EXCLUSIVELY for client-side visual effects.**
+
+```
+┌─────────────────────────────────────────────────┐
+│         astranyx-core (DETERMINISTIC)           │
+│  - Simple circle collision                      │
+│  - Velocity-based movement                      │
+│  - NO Rapier, NO external physics               │
+│  - Synced via lockstep                          │
+└─────────────────────────────────────────────────┘
+                     │ Death/hit events
+                     ▼
+┌─────────────────────────────────────────────────┐
+│     astranyx-client VisualEffects (Rapier)      │
+│  - Debris chunks with physics                   │
+│  - Particle effects                             │
+│  - NOT synced - each client different           │
+│  - Full SIMD/parallel (fast, non-deterministic) │
+└─────────────────────────────────────────────────┘
+```
+
+**NEVER use Rapier for:**
+- Player movement
+- Enemy behavior
+- Collision detection that affects gameplay
+- Anything that must be identical across clients
+
+### TypeScript Client (`/client`)
 
 - **`Simulation`** - Deterministic game simulation (fixed-point math, seeded RNG)
 - **`LockstepNetcode`** - Frame synchronization, input exchange
@@ -144,6 +196,26 @@ TURN_URLS=turn:localhost:3478       # Comma-separated for multiple
 
 Credentials are generated server-side and provided to clients only when a game starts.
 See `/docs/deployment.md` for production setup.
+
+## Rust Conventions
+
+### Module Structure (Rust 2018+)
+
+Use the modern module style - keep the module root file named after the module:
+
+```
+# GOOD (modern style)
+simulation.rs        <- module root
+simulation/
+  fps.rs
+  shmup.rs
+
+# AVOID (old style)
+simulation/
+  mod.rs             <- confusing in editor tabs
+  fps.rs
+  shmup.rs
+```
 
 ## Design Influences
 
