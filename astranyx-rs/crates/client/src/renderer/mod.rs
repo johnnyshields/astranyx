@@ -1,440 +1,324 @@
-//! WebGPU renderer for Astranyx.
+//! Three-d based renderer for Astranyx.
 //!
-//! Uses wgpu for cross-platform GPU rendering (WebGPU on WASM, Vulkan/Metal/DX12 native).
-
-pub mod camera;
-pub mod mesh;
-pub mod meshes;
-mod phong_pipeline;
-mod pipeline;
-mod vertex;
+//! Uses the three-d crate for simple 3D rendering.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use glam::{Mat4, Vec3, Vec4};
-use wgpu::{
-    util::DeviceExt, Backends, BindGroup, Buffer, Device, DeviceDescriptor, Instance,
-    InstanceDescriptor, PowerPreference, Queue, RequestAdapterOptions, Surface,
-    SurfaceConfiguration, Texture, TextureUsages, TextureView,
-};
-use winit::{dpi::PhysicalSize, window::Window};
+use glam::{Vec3, Vec4};
+use three_d::*;
 
-pub use camera::Camera;
-pub use mesh::{MeshBuilder, MeshData, MeshVertex};
-pub use phong_pipeline::{GlobalUniforms, InstanceUniforms, PhongPipeline};
-pub use vertex::Vertex;
-
-/// Cached GPU mesh with vertex buffer and bind group.
-pub struct GpuMesh {
-    pub vertex_buffer: Buffer,
-    pub vertex_count: u32,
+/// Simple mesh data for registration.
+pub struct MeshData {
+    pub positions: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
+    pub indices: Vec<u32>,
 }
 
-/// The main renderer.
-pub struct Renderer {
-    surface: Surface<'static>,
-    device: Device,
-    queue: Queue,
-    config: SurfaceConfiguration,
-    size: PhysicalSize<u32>,
-    clear_color: wgpu::Color,
+/// Builder for creating mesh data.
+pub struct MeshBuilder {
+    positions: Vec<Vec3>,
+    normals: Vec<Vec3>,
+    indices: Vec<u32>,
+}
 
-    // Pipelines
-    phong_pipeline: PhongPipeline,
-    #[allow(dead_code)]
-    simple_pipeline: wgpu::RenderPipeline, // For backwards compat / simple shapes
+impl MeshBuilder {
+    pub fn new() -> Self {
+        Self {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            indices: Vec::new(),
+        }
+    }
 
-    // Depth buffer
-    depth_texture: Texture,
-    depth_view: TextureView,
+    /// Add a box centered at origin with given dimensions.
+    pub fn add_box(&mut self, width: f32, height: f32, depth: f32) {
+        let hw = width / 2.0;
+        let hh = height / 2.0;
+        let hd = depth / 2.0;
 
-    // Camera
-    camera: Camera,
+        let base = self.positions.len() as u32;
 
-    // Mesh cache
-    mesh_cache: HashMap<String, GpuMesh>,
+        // Front face
+        self.positions.extend([
+            Vec3::new(-hw, -hh, hd),
+            Vec3::new(hw, -hh, hd),
+            Vec3::new(hw, hh, hd),
+            Vec3::new(-hw, hh, hd),
+        ]);
+        self.normals.extend([Vec3::Z; 4]);
+        self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 
-    // Per-frame instance data
-    instance_buffer: Buffer,
-    instance_bind_group: BindGroup,
+        // Back face
+        let base = self.positions.len() as u32;
+        self.positions.extend([
+            Vec3::new(hw, -hh, -hd),
+            Vec3::new(-hw, -hh, -hd),
+            Vec3::new(-hw, hh, -hd),
+            Vec3::new(hw, hh, -hd),
+        ]);
+        self.normals.extend([Vec3::NEG_Z; 4]);
+        self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 
-    // Time tracking
+        // Top face
+        let base = self.positions.len() as u32;
+        self.positions.extend([
+            Vec3::new(-hw, hh, hd),
+            Vec3::new(hw, hh, hd),
+            Vec3::new(hw, hh, -hd),
+            Vec3::new(-hw, hh, -hd),
+        ]);
+        self.normals.extend([Vec3::Y; 4]);
+        self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+
+        // Bottom face
+        let base = self.positions.len() as u32;
+        self.positions.extend([
+            Vec3::new(-hw, -hh, -hd),
+            Vec3::new(hw, -hh, -hd),
+            Vec3::new(hw, -hh, hd),
+            Vec3::new(-hw, -hh, hd),
+        ]);
+        self.normals.extend([Vec3::NEG_Y; 4]);
+        self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+
+        // Right face
+        let base = self.positions.len() as u32;
+        self.positions.extend([
+            Vec3::new(hw, -hh, hd),
+            Vec3::new(hw, -hh, -hd),
+            Vec3::new(hw, hh, -hd),
+            Vec3::new(hw, hh, hd),
+        ]);
+        self.normals.extend([Vec3::X; 4]);
+        self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+
+        // Left face
+        let base = self.positions.len() as u32;
+        self.positions.extend([
+            Vec3::new(-hw, -hh, -hd),
+            Vec3::new(-hw, -hh, hd),
+            Vec3::new(-hw, hh, hd),
+            Vec3::new(-hw, hh, -hd),
+        ]);
+        self.normals.extend([Vec3::NEG_X; 4]);
+        self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    /// Add a diamond/octahedron shape.
+    pub fn add_diamond(&mut self, size: f32) {
+        let base = self.positions.len() as u32;
+        let h = size;
+        let w = size * 0.5;
+
+        // 6 vertices: top, bottom, and 4 around middle
+        self.positions.extend([
+            Vec3::new(0.0, h, 0.0),     // 0: top
+            Vec3::new(0.0, -h, 0.0),    // 1: bottom
+            Vec3::new(w, 0.0, 0.0),     // 2: right
+            Vec3::new(-w, 0.0, 0.0),    // 3: left
+            Vec3::new(0.0, 0.0, w),     // 4: front
+            Vec3::new(0.0, 0.0, -w),    // 5: back
+        ]);
+
+        // Normals (approximate)
+        self.normals.extend([
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ]);
+
+        // 8 triangular faces
+        self.indices.extend([
+            // Top faces
+            base, base + 4, base + 2, // top-front-right
+            base, base + 2, base + 5, // top-right-back
+            base, base + 5, base + 3, // top-back-left
+            base, base + 3, base + 4, // top-left-front
+            // Bottom faces
+            base + 1, base + 2, base + 4, // bottom-right-front
+            base + 1, base + 5, base + 2, // bottom-back-right
+            base + 1, base + 3, base + 5, // bottom-left-back
+            base + 1, base + 4, base + 3, // bottom-front-left
+        ]);
+    }
+
+    /// Add a cone/wedge shape pointing right (for ships).
+    pub fn add_ship_cone(&mut self, length: f32, width: f32, height: f32) {
+        let base = self.positions.len() as u32;
+
+        // Ship points right (+X), centered at origin
+        let tip = Vec3::new(length / 2.0, 0.0, 0.0);
+        let back_top = Vec3::new(-length / 2.0, height / 2.0, 0.0);
+        let back_bottom = Vec3::new(-length / 2.0, -height / 2.0, 0.0);
+        let back_left = Vec3::new(-length / 2.0, 0.0, -width / 2.0);
+        let back_right = Vec3::new(-length / 2.0, 0.0, width / 2.0);
+
+        self.positions.extend([tip, back_top, back_bottom, back_left, back_right]);
+
+        // Simple normals
+        self.normals.extend([
+            Vec3::X,
+            Vec3::new(-0.5, 0.5, 0.0).normalize(),
+            Vec3::new(-0.5, -0.5, 0.0).normalize(),
+            Vec3::new(-0.5, 0.0, -0.5).normalize(),
+            Vec3::new(-0.5, 0.0, 0.5).normalize(),
+        ]);
+
+        // 4 triangular faces + 2 back faces
+        self.indices.extend([
+            base, base + 4, base + 1, // top-right
+            base, base + 1, base + 3, // top-left
+            base, base + 3, base + 2, // bottom-left
+            base, base + 2, base + 4, // bottom-right
+            // Back face (two triangles)
+            base + 1, base + 4, base + 2,
+            base + 1, base + 2, base + 3,
+        ]);
+    }
+
+    pub fn finish(self) -> MeshData {
+        MeshData {
+            positions: self.positions,
+            normals: self.normals,
+            indices: self.indices,
+        }
+    }
+}
+
+impl Default for MeshBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Pre-built mesh generators.
+pub mod meshes {
+    use super::*;
+
+    pub fn create_player_ship_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_ship_cone(1.0, 0.4, 0.3);
+        builder.finish()
+    }
+
+    pub fn create_enemy_ship_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_box(0.8, 0.5, 0.4);
+        builder.finish()
+    }
+
+    pub fn create_drone_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_diamond(0.5);
+        builder.finish()
+    }
+
+    pub fn create_tank_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_box(1.0, 0.6, 0.6);
+        builder.finish()
+    }
+
+    pub fn create_boss_core_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_box(1.5, 1.0, 0.8);
+        builder.finish()
+    }
+
+    pub fn create_bullet_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_box(0.4, 0.15, 0.15);
+        builder.finish()
+    }
+
+    pub fn create_laser_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_box(1.0, 0.1, 0.1);
+        builder.finish()
+    }
+
+    pub fn create_powerup_mesh() -> MeshData {
+        let mut builder = MeshBuilder::new();
+        builder.add_diamond(0.5);
+        builder.finish()
+    }
+}
+
+/// A registered mesh with its GPU data.
+struct RegisteredMesh {
+    cpu_mesh: CpuMesh,
+}
+
+/// Instance data for batched rendering.
+pub struct Instance {
+    pub position: Vec3,
+    pub scale: Vec3,
+    pub rotation: Vec3,
+    pub color: Vec4,
+}
+
+/// The main renderer using three-d.
+pub struct GameRenderer {
+    meshes: HashMap<String, RegisteredMesh>,
     time: f32,
-
-    // Legacy test triangle
-    #[allow(dead_code)]
-    vertex_buffer: Buffer,
-    #[allow(dead_code)]
-    num_vertices: u32,
 }
 
-impl Renderer {
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
-        let size = window.inner_size();
-        tracing::info!("Initializing renderer with size: {:?}", size);
-
-        // Create instance
-        let instance = Instance::new(&InstanceDescriptor {
-            backends: Backends::all(),
-            ..Default::default()
-        });
-
-        // Create surface
-        let surface = instance.create_surface(window)?;
-
-        // Request adapter
-        let adapter = instance
-            .request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No suitable GPU adapter found"))?;
-
-        tracing::info!("Using adapter: {:?}", adapter.get_info());
-
-        // Create device and queue
-        // Use adapter limits for native, fall back to defaults for WASM
-        let limits = if cfg!(target_arch = "wasm32") {
-            wgpu::Limits::downlevel_webgl2_defaults()
-        } else {
-            wgpu::Limits::default()
-        };
-
-        let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: Some("astranyx_device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: limits,
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to request device: {e}"))?;
-
-        // Configure surface
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
-
-        let config = SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        // Create depth buffer
-        let (depth_texture, depth_view) =
-            Self::create_depth_texture(&device, config.width, config.height);
-
-        // Create pipelines
-        let simple_pipeline = pipeline::create_render_pipeline(&device, surface_format);
-        let phong_pipeline = PhongPipeline::new(&device, surface_format);
-
-        // Create camera
-        let mut camera = Camera::new();
-        camera.set_aspect(config.width as f32 / config.height as f32);
-
-        // Create instance buffer (for per-object uniforms)
-        let instance_uniforms = InstanceUniforms::new(Mat4::IDENTITY, Vec4::ONE);
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("instance_buffer"),
-            contents: bytemuck::cast_slice(&[instance_uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let instance_bind_group = phong_pipeline.create_instance_bind_group(&device, &instance_buffer);
-
-        // Create a test triangle (legacy)
-        let vertices = &[
-            Vertex {
-                position: [0.0, 0.5, 0.0],
-                color: [1.0, 0.0, 0.0],
-            },
-            Vertex {
-                position: [-0.5, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0],
-            },
-            Vertex {
-                position: [0.5, -0.5, 0.0],
-                color: [0.0, 0.0, 1.0],
-            },
-        ];
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("vertex_buffer"),
-            contents: bytemuck::cast_slice(vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        Ok(Self {
-            surface,
-            device,
-            queue,
-            config,
-            size,
-            clear_color: wgpu::Color {
-                r: 0.02,
-                g: 0.02,
-                b: 0.06,
-                a: 1.0,
-            },
-            phong_pipeline,
-            simple_pipeline,
-            depth_texture,
-            depth_view,
-            camera,
-            mesh_cache: HashMap::new(),
-            instance_buffer,
-            instance_bind_group,
+impl GameRenderer {
+    pub fn new() -> Self {
+        Self {
+            meshes: HashMap::new(),
             time: 0.0,
-            vertex_buffer,
-            num_vertices: vertices.len() as u32,
-        })
-    }
-
-    fn create_depth_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth_texture"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
-    }
-
-    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
-
-            // Recreate depth buffer
-            let (depth_texture, depth_view) =
-                Self::create_depth_texture(&self.device, new_size.width, new_size.height);
-            self.depth_texture = depth_texture;
-            self.depth_view = depth_view;
-
-            // Update camera aspect ratio
-            self.camera.set_aspect(new_size.width as f32 / new_size.height as f32);
-
-            tracing::debug!("Resized to {}x{}", new_size.width, new_size.height);
         }
     }
 
-    /// Register a mesh from MeshData. Returns the mesh name for later use.
-    pub fn register_mesh(&mut self, name: &str, data: &MeshData) -> String {
-        if self.mesh_cache.contains_key(name) {
-            return name.to_string();
-        }
+    /// Register a mesh by name.
+    pub fn register_mesh(&mut self, name: &str, data: &MeshData) {
+        let positions: Vec<three_d::Vec3> = data
+            .positions
+            .iter()
+            .map(|p| three_d::Vec3::new(p.x, p.y, p.z))
+            .collect();
 
-        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("mesh_{}_vertices", name)),
-            contents: bytemuck::cast_slice(&data.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let normals: Vec<three_d::Vec3> = data
+            .normals
+            .iter()
+            .map(|n| three_d::Vec3::new(n.x, n.y, n.z))
+            .collect();
 
-        self.mesh_cache.insert(
-            name.to_string(),
-            GpuMesh {
-                vertex_buffer,
-                vertex_count: data.vertex_count(),
-            },
-        );
-
-        name.to_string()
-    }
-
-    /// Begin a new frame. Call this before any draw calls.
-    pub fn begin_frame(&mut self, delta_time: f32) {
-        self.time += delta_time;
-
-        // Update global uniforms
-        let global_uniforms = GlobalUniforms::new(
-            self.camera.projection_matrix(),
-            self.camera.view_matrix(),
-            self.camera.position(),
-            self.time,
-        );
-        self.phong_pipeline.update_global_uniforms(&self.queue, &global_uniforms);
-    }
-
-    /// Draw a 3D mesh with Phong shading.
-    pub fn draw_mesh(
-        &mut self,
-        mesh_name: &str,
-        position: Vec3,
-        scale: Vec3,
-        rotation: Vec3, // Euler angles in radians (X, Y, Z)
-        color: Vec4,    // RGBA color
-        encoder: &mut wgpu::CommandEncoder,
-        view: &TextureView,
-    ) {
-        let mesh = match self.mesh_cache.get(mesh_name) {
-            Some(m) => m,
-            None => {
-                tracing::warn!("Mesh not found: {}", mesh_name);
-                return;
-            }
+        let cpu_mesh = CpuMesh {
+            positions: Positions::F32(positions),
+            normals: Some(normals),
+            indices: Indices::U32(data.indices.clone()),
+            ..Default::default()
         };
 
-        // Build model matrix: scale -> rotate -> translate
-        let model = Mat4::from_translation(position)
-            * Mat4::from_euler(glam::EulerRot::ZYX, rotation.z, rotation.y, rotation.x)
-            * Mat4::from_scale(scale);
-
-        // Update instance uniforms
-        let instance_uniforms = InstanceUniforms::new(model, color);
-        self.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&[instance_uniforms]),
-        );
-
-        // Render
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("phong_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // Don't clear - we're accumulating draws
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            render_pass.set_pipeline(&self.phong_pipeline.pipeline);
-            render_pass.set_bind_group(0, &self.phong_pipeline.global_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.instance_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass.draw(0..mesh.vertex_count, 0..1);
-        }
+        self.meshes.insert(name.to_string(), RegisteredMesh { cpu_mesh });
     }
 
-    /// Render the frame. Returns the surface texture for presentation.
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("render_encoder"),
-            });
-
-        // Clear pass
-        {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            // Pass drops here, ending the clear
-        }
-
-        // Draw a test mesh if registered
-        if self.mesh_cache.contains_key("test_box") {
-            self.draw_mesh(
-                "test_box",
-                Vec3::new(0.0, 0.0, 0.0),
-                Vec3::splat(100.0),
-                Vec3::new(0.0, self.time * 0.5, self.time * 0.3),
-                Vec4::new(0.8, 0.3, 0.2, 1.0),
-                &mut encoder,
-                &view,
-            );
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
-    }
-
-    /// Get the camera for manipulation.
-    pub fn camera(&self) -> &Camera {
-        &self.camera
-    }
-
-    /// Get mutable camera reference.
-    pub fn camera_mut(&mut self) -> &mut Camera {
-        &mut self.camera
-    }
-
-    pub fn device(&self) -> &Device {
-        &self.device
-    }
-
-    pub fn queue(&self) -> &Queue {
-        &self.queue
-    }
-
-    pub fn surface(&self) -> &Surface<'static> {
-        &self.surface
-    }
-
-    pub fn depth_view(&self) -> &TextureView {
-        &self.depth_view
-    }
-
-    pub fn size(&self) -> PhysicalSize<u32> {
-        self.size
-    }
-
+    /// Get the current time.
     pub fn time(&self) -> f32 {
         self.time
     }
+
+    /// Update time.
+    pub fn update_time(&mut self, delta: f32) {
+        self.time += delta;
+    }
+
+    /// Get a mesh by name for rendering.
+    pub fn get_mesh(&self, name: &str) -> Option<&CpuMesh> {
+        self.meshes.get(name).map(|m| &m.cpu_mesh)
+    }
 }
+
+impl Default for GameRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Re-export
+pub use self::meshes::*;
