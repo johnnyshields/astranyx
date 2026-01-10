@@ -7,10 +7,18 @@ use bincode::{Decode, Encode};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+/// Helper macro to include a script file from the scripts directory.
+macro_rules! script {
+    ($path:literal) => {
+        include_str!(concat!("../../../scripts/", $path))
+    };
+}
+
 use crate::entities::{
     Enemy, EnemyType, EntityId, EntityIdGenerator, Player, PowerUp, Projectile, ProjectileType,
 };
 use crate::input::PlayerInput;
+use crate::level::LevelState;
 use crate::physics::{circles_collide, WorldBounds};
 use crate::random::SeededRandom;
 use crate::scripting::{ScriptEngine, ScriptEnemy};
@@ -45,6 +53,8 @@ pub struct GameState {
     pub score: u32,
     pub rng: SeededRandom,
     pub entity_ids: EntityIdGenerator,
+    /// Level state (world, segment, transitions).
+    pub level: LevelState,
 }
 
 impl GameState {
@@ -59,6 +69,7 @@ impl GameState {
             score: 0,
             rng: SeededRandom::new(seed),
             entity_ids: EntityIdGenerator::new(),
+            level: LevelState::default(),
         };
 
         // Spawn players
@@ -69,6 +80,13 @@ impl GameState {
             state.players.push(Player::new(id, position));
         }
 
+        state
+    }
+
+    /// Create game state with a specific world and segment.
+    pub fn new_with_level(seed: u32, player_count: usize, world_id: &str, segment_id: &str) -> Self {
+        let mut state = Self::new(seed, player_count);
+        state.level = LevelState::new(world_id, segment_id);
         state
     }
 }
@@ -97,26 +115,89 @@ impl Simulation {
 
     /// Load scripts from embedded strings (for WASM builds).
     pub fn load_embedded_scripts(&mut self) {
+        // Game config (must be loaded first)
+        let _ = self.scripts.load_config_script_from_str(script!("config.rhai"));
+
         // Enemy scripts
-        let _ = self.scripts.load_enemy_script_from_str("grunt", include_str!("../../../scripts/enemies/grunt.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("shooter", include_str!("../../../scripts/enemies/shooter.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("swerver", include_str!("../../../scripts/enemies/swerver.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("tank", include_str!("../../../scripts/enemies/tank.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("speeder", include_str!("../../../scripts/enemies/speeder.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("bomber", include_str!("../../../scripts/enemies/bomber.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("sniper", include_str!("../../../scripts/enemies/sniper.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("carrier", include_str!("../../../scripts/enemies/carrier.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("mine", include_str!("../../../scripts/enemies/mine.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("spiral", include_str!("../../../scripts/enemies/spiral.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("shield", include_str!("../../../scripts/enemies/shield.rhai"));
-        let _ = self.scripts.load_enemy_script_from_str("splitter", include_str!("../../../scripts/enemies/splitter.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("grunt", script!("enemies/grunt.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("shooter", script!("enemies/shooter.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("swerver", script!("enemies/swerver.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("tank", script!("enemies/tank.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("speeder", script!("enemies/speeder.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("bomber", script!("enemies/bomber.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("sniper", script!("enemies/sniper.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("carrier", script!("enemies/carrier.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("mine", script!("enemies/mine.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("spiral", script!("enemies/spiral.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("shield", script!("enemies/shield.rhai"));
+        let _ = self.scripts.load_enemy_script_from_str("splitter", script!("enemies/splitter.rhai"));
 
         // Wave system
-        let _ = self.scripts.load_wave_script_from_str(include_str!("../../../scripts/waves/wave_system.rhai"));
+        let _ = self.scripts.load_wave_script_from_str(script!("waves/wave_system.rhai"));
 
         // Weapons and powerups
-        let _ = self.scripts.load_weapons_script_from_str(include_str!("../../../scripts/weapons/weapons.rhai"));
-        let _ = self.scripts.load_powerups_script_from_str(include_str!("../../../scripts/powerups/powerups.rhai"));
+        let _ = self.scripts.load_weapons_script_from_str(script!("weapons/weapons.rhai"));
+        let _ = self.scripts.load_powerups_script_from_str(script!("powerups/powerups.rhai"));
+
+        // World 01: Space Station
+        let _ = self.scripts.load_world_script_from_str("station", script!("worlds/01_station/world.rhai"));
+        let _ = self.scripts.load_route_script_from_str(script!("worlds/01_station/routes.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("station_approach", script!("worlds/01_station/segments/station_approach.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("station_interior", script!("worlds/01_station/segments/station_interior.rhai"));
+        let _ = self.scripts.load_segment_script_from_str("station_hangar", script!("worlds/01_station/segments/station_hangar.rhai"));
+    }
+
+    /// Initialize the level state from scripts.
+    /// Uses the start_world from config.rhai and the world's starting segment.
+    pub fn init_level_from_scripts(&mut self) {
+        // Get starting world from config, fallback to first loaded world
+        let world_id = self.scripts.get_start_world()
+            .or_else(|| self.scripts.get_default_world().map(|s| s.to_string()));
+
+        let Some(world_id) = world_id else {
+            return;
+        };
+
+        // Get starting segment for this world
+        let Some(segment_id) = self.scripts.get_world_start_segment(&world_id) else {
+            return;
+        };
+
+        let segment_id = segment_id.to_string();
+
+        self.state.level.world_id = world_id;
+        self.state.level.segment_id = segment_id.clone();
+
+        // Apply segment config (bounds, mode)
+        if let Some(config) = self.scripts.get_segment_config(&segment_id) {
+            self.state.level.bounds = config.bounds;
+            self.state.level.mode = config.mode;
+        }
+
+        // Call on_enter for the initial segment
+        self.scripts.call_segment_on_enter(&segment_id, &self.state.level);
+    }
+
+    /// Initialize the level state with a specific world.
+    pub fn init_level(&mut self, world_id: &str) {
+        // Get starting segment for this world
+        let segment_id = self.scripts.get_world_start_segment(world_id)
+            .unwrap_or_default()
+            .to_string();
+
+        self.state.level.world_id = world_id.to_string();
+        self.state.level.segment_id = segment_id.clone();
+
+        // Apply segment config (bounds, mode)
+        if let Some(config) = self.scripts.get_segment_config(&segment_id) {
+            self.state.level.bounds = config.bounds;
+            self.state.level.mode = config.mode;
+        }
+
+        // Call on_enter for the initial segment
+        if !segment_id.is_empty() {
+            self.scripts.call_segment_on_enter(&segment_id, &self.state.level);
+        }
     }
 
     /// Advance the simulation by one frame with the given player inputs.
@@ -124,8 +205,11 @@ impl Simulation {
     pub fn tick(&mut self, inputs: &[PlayerInput]) {
         self.state.frame += 1;
 
-        // Update scroll
-        self.state.scroll_offset += 60.0 / self.config.tick_rate as f32;
+        // Update level state (transitions, segment frame)
+        self.update_level();
+
+        // Update scroll (use segment's scroll config if available)
+        self.update_scroll();
 
         // Process player inputs
         self.update_players(inputs);
@@ -138,11 +222,92 @@ impl Simulation {
         // Collision detection
         self.check_collisions();
 
-        // Spawn enemies (wave system would go here)
+        // Spawn enemies (segment-aware spawning)
         self.spawn_enemies();
+
+        // Call segment tick callback
+        self.scripts.call_segment_on_tick(
+            &self.state.level.segment_id,
+            &self.state.level,
+            self.state.level.segment_frame,
+        );
+
+        // Check route triggers for transitions
+        self.check_route_triggers();
 
         // Cleanup dead entities
         self.cleanup();
+    }
+
+    /// Update level state (transitions, segment frame).
+    fn update_level(&mut self) {
+        // Handle active transition
+        if self.state.level.transition.is_some() {
+            if self.state.level.update_transition() {
+                // Transition completed - call on_enter for new segment
+                self.scripts.call_segment_on_enter(
+                    &self.state.level.segment_id,
+                    &self.state.level,
+                );
+
+                // Apply new segment's bounds and mode
+                if let Some(config) = self.scripts.get_segment_config(&self.state.level.segment_id) {
+                    self.state.level.bounds = config.bounds;
+                    self.state.level.mode = config.mode;
+                }
+            }
+            return; // Skip normal updates during transition
+        }
+
+        // Increment segment frame
+        self.state.level.segment_frame += 1;
+    }
+
+    /// Update scroll based on segment config.
+    fn update_scroll(&mut self) {
+        // Get scroll config from current segment
+        if let Some(config) = self.scripts.get_segment_config(&self.state.level.segment_id) {
+            if let Some(scroll) = &config.scroll {
+                let dt = 1.0 / self.config.tick_rate as f32;
+                self.state.level.scroll_offset += scroll.direction * scroll.speed * dt;
+                self.state.scroll_offset = self.state.level.scroll_offset.x;
+            }
+        } else {
+            // Fallback: default scroll
+            self.state.scroll_offset += 60.0 / self.config.tick_rate as f32;
+        }
+    }
+
+    /// Check route triggers and initiate transitions.
+    fn check_route_triggers(&mut self) {
+        // Skip if already transitioning
+        if self.state.level.transition.is_some() {
+            return;
+        }
+
+        let current_segment = &self.state.level.segment_id;
+        if current_segment.is_empty() {
+            return;
+        }
+
+        // Get routes from the current segment
+        let routes = self.scripts.get_routes_from(current_segment);
+
+        // Evaluate triggers in priority order (routes should be sorted)
+        for route in routes {
+            if route.evaluate(&self.state.level) {
+                // Call on_exit for current segment
+                self.scripts.call_segment_on_exit(current_segment, &self.state.level);
+
+                // Start transition
+                self.state.level.start_transition(
+                    &route.to,
+                    route.transition.transition_type,
+                    route.transition.duration,
+                );
+                break;
+            }
+        }
     }
 
     fn update_players(&mut self, inputs: &[PlayerInput]) {

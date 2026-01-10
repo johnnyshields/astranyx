@@ -12,6 +12,7 @@ use glam::Vec4;
 use three_d::*;
 
 use astranyx_core::input::PlayerInput;
+use astranyx_core::level::{CameraConfig, CameraProjection, CameraState};
 use astranyx_core::simulation::{Simulation, SimulationConfig};
 
 use crate::game::{colors, mesh_names};
@@ -85,21 +86,26 @@ pub fn run() -> anyhow::Result<()> {
     let config = SimulationConfig::default();
     let mut simulation = Simulation::new(config, 12345, 1);
     simulation.load_embedded_scripts();
+    simulation.init_level_from_scripts();
+
     tracing::info!(
-        "Loaded {} enemy scripts",
-        simulation.scripts.loaded_enemy_types().len()
+        "Loaded {} enemy scripts, {} segments. Starting world: {}, segment: {}",
+        simulation.scripts.loaded_enemy_types().len(),
+        simulation.scripts.loaded_segment_ids().len(),
+        simulation.state.level.world_id,
+        simulation.state.level.segment_id
     );
 
-    // Set up camera - perspective, sees full 1920x1080 world
-    let mut camera = Camera::new_perspective(
-        window.viewport(),
-        vec3(960.0, 540.0, 1000.0), // position
-        vec3(960.0, 540.0, 0.0),    // target
-        vec3(0.0, 1.0, 0.0),        // up
-        degrees(60.0),              // field of view
-        0.1,
-        10000.0,
-    );
+    // Get initial camera config from segment
+    let camera_config = simulation.scripts.get_segment_config(&simulation.state.level.segment_id)
+        .map(|s| s.camera)
+        .unwrap_or_default();
+    let mut camera_state = CameraState::default();
+    camera_state.position = camera_config.position;
+    camera_state.target = camera_config.target;
+
+    // Set up camera from segment config
+    let mut camera = create_camera_from_config(&window.viewport(), &camera_config, &camera_state);
 
     // Create lights
     let ambient = AmbientLight::new(&context, 0.4, Srgba::WHITE);
@@ -112,6 +118,10 @@ pub fn run() -> anyhow::Result<()> {
     let mut last_frame = Instant::now();
     let mut accumulated_time = 0.0f32;
     const TICK_DURATION: f32 = 1.0 / 30.0;
+
+    // Track current segment for camera updates
+    let mut current_segment_id = simulation.state.level.segment_id.clone();
+    let mut camera_config = camera_config;
 
     // Main loop
     window.render_loop(move |mut frame_input| {
@@ -142,8 +152,23 @@ pub fn run() -> anyhow::Result<()> {
             accumulated_time -= TICK_DURATION;
         }
 
-        // Update camera viewport
-        camera.set_viewport(frame_input.viewport);
+        // Check for segment change and update camera config
+        if simulation.state.level.segment_id != current_segment_id {
+            current_segment_id = simulation.state.level.segment_id.clone();
+            if let Some(config) = simulation.scripts.get_segment_config(&current_segment_id) {
+                camera_config = config.camera;
+                tracing::info!("Segment changed to: {}", current_segment_id);
+            }
+        }
+
+        // Update camera state based on config and player position
+        let player_pos = simulation.state.players.first()
+            .filter(|p| p.is_alive())
+            .map(|p| glam::Vec3::new(p.position.x, p.position.y, 0.0));
+        update_camera_state(&mut camera_state, &camera_config, player_pos);
+
+        // Update camera from state
+        camera = create_camera_from_config(&frame_input.viewport, &camera_config, &camera_state);
 
         // Clear screen
         frame_input
@@ -332,6 +357,51 @@ fn vec4_to_srgba(color: Vec4) -> Srgba {
         (color.z * 255.0) as u8,
         (color.w * 255.0) as u8,
     )
+}
+
+/// Create a three-d Camera from a CameraConfig and CameraState.
+fn create_camera_from_config(viewport: &Viewport, config: &CameraConfig, state: &CameraState) -> Camera {
+    let pos = state.final_position();
+    let target = state.target;
+
+    match config.projection {
+        CameraProjection::Perspective => Camera::new_perspective(
+            *viewport,
+            vec3(pos.x, pos.y, pos.z),
+            vec3(target.x, target.y, target.z),
+            vec3(0.0, 1.0, 0.0),
+            degrees(config.fov),
+            config.near,
+            config.far,
+        ),
+        CameraProjection::Orthographic { scale } => Camera::new_orthographic(
+            *viewport,
+            vec3(pos.x, pos.y, pos.z),
+            vec3(target.x, target.y, target.z),
+            vec3(0.0, 1.0, 0.0),
+            scale,
+            config.near,
+            config.far,
+        ),
+    }
+}
+
+/// Update camera state from segment config and player position.
+fn update_camera_state(
+    state: &mut CameraState,
+    config: &CameraConfig,
+    player_pos: Option<glam::Vec3>,
+) {
+    if config.follow_player {
+        if let Some(player_pos) = player_pos {
+            state.position = config.calculate_position(player_pos, state.position);
+            state.target = config.calculate_target(player_pos, glam::Vec3::X);
+        }
+    } else {
+        // Static camera - use config position/target
+        state.position = config.position;
+        state.target = config.target;
+    }
 }
 
 /// WASM entry point - called from JavaScript.

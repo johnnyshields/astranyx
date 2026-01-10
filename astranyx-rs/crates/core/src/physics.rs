@@ -1,8 +1,10 @@
 //! Physics utilities for the simulation.
 //!
-//! Simple 2D physics - no external physics engine needed for a shmup.
+//! Simple 2D/3D physics - no external physics engine needed for a shmup.
 
-use glam::Vec2;
+use bincode::{Decode, Encode};
+use glam::{Vec2, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// World bounds for the game area.
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +70,88 @@ impl Default for WorldBounds {
     fn default() -> Self {
         // 16:9 aspect ratio game area
         Self::new(0.0, 0.0, 1920.0, 1080.0)
+    }
+}
+
+/// 3D world bounds for segments with depth.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+pub struct WorldBounds3D {
+    #[bincode(with_serde)]
+    pub min: Vec3,
+    #[bincode(with_serde)]
+    pub max: Vec3,
+}
+
+impl WorldBounds3D {
+    pub const fn new(min_x: f32, min_y: f32, min_z: f32, max_x: f32, max_y: f32, max_z: f32) -> Self {
+        Self {
+            min: Vec3::new(min_x, min_y, min_z),
+            max: Vec3::new(max_x, max_y, max_z),
+        }
+    }
+
+    /// Create from 2D bounds with default Z range.
+    pub fn from_2d(bounds: WorldBounds) -> Self {
+        Self {
+            min: Vec3::new(bounds.min.x, bounds.min.y, -100.0),
+            max: Vec3::new(bounds.max.x, bounds.max.y, 100.0),
+        }
+    }
+
+    /// Check if a point is within bounds.
+    pub fn contains(&self, point: Vec3) -> bool {
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
+            && point.z >= self.min.z
+            && point.z <= self.max.z
+    }
+
+    /// Clamp a point to within bounds.
+    pub fn clamp(&self, point: Vec3) -> Vec3 {
+        Vec3::new(
+            point.x.clamp(self.min.x, self.max.x),
+            point.y.clamp(self.min.y, self.max.y),
+            point.z.clamp(self.min.z, self.max.z),
+        )
+    }
+
+    /// Clamp a point with radius padding.
+    pub fn clamp_with_radius(&self, point: Vec3, radius: f32) -> Vec3 {
+        Vec3::new(
+            point.x.clamp(self.min.x + radius, self.max.x - radius),
+            point.y.clamp(self.min.y + radius, self.max.y - radius),
+            point.z.clamp(self.min.z + radius, self.max.z - radius),
+        )
+    }
+
+    pub fn width(&self) -> f32 {
+        self.max.x - self.min.x
+    }
+
+    pub fn height(&self) -> f32 {
+        self.max.y - self.min.y
+    }
+
+    pub fn depth(&self) -> f32 {
+        self.max.z - self.min.z
+    }
+
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+
+    /// Convert to 2D bounds (XY plane).
+    pub fn to_2d(&self) -> WorldBounds {
+        WorldBounds::new(self.min.x, self.min.y, self.max.x, self.max.y)
+    }
+}
+
+impl Default for WorldBounds3D {
+    fn default() -> Self {
+        // 16:9 aspect ratio with default depth
+        Self::new(0.0, 0.0, -100.0, 1920.0, 1080.0, 100.0)
     }
 }
 

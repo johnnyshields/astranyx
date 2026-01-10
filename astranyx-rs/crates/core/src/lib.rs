@@ -11,14 +11,17 @@
 //! 4. Ordered iteration - `Vec` not `HashMap` for entities
 //! 5. No async - Pure synchronous logic
 
-pub mod random;
-pub mod simulation;
 pub mod entities;
-pub mod physics;
 pub mod input;
+pub mod level;
+pub mod physics;
+pub mod random;
 pub mod scripting;
+pub mod simulation;
 
-pub use random::SeededRandom;
-pub use simulation::{Simulation, SimulationConfig};
 pub use input::PlayerInput;
+pub use level::LevelState;
+pub use physics::WorldBounds3D;
+pub use random::SeededRandom;
 pub use scripting::ScriptEngine;
+pub use simulation::{Simulation, SimulationConfig};
