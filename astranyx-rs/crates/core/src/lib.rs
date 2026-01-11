@@ -7,13 +7,14 @@
 //!
 //! 1. No `rand::thread_rng()` - Use `SeededRandom` only
 //! 2. No system time - Use frame counter
-//! 3. Careful with floats - Use fixed-point for critical paths
+//! 3. Use `math` module for trig - Cross-platform deterministic atan2/sin/cos
 //! 4. Ordered iteration - `Vec` not `HashMap` for entities
 //! 5. No async - Pure synchronous logic
 
 pub mod entities;
 pub mod input;
 pub mod level;
+pub mod math;
 pub mod path;
 pub mod physics;
 pub mod random;
