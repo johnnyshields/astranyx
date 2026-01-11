@@ -1,0 +1,18 @@
+[package]
+name = "astranyx-game"
+description = "Astranyx FPS game logic and simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+astranyx-physics = { path = "../physics" }
+
+glam.workspace = true
+serde.workspace = true
+bincode.workspace = true
+rhai.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true

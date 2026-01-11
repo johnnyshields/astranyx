@@ -1,0 +1,17 @@
+[package]
+name = "astranyx-renderer"
+description = "three-d based PBR renderer for Astranyx FPS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+astranyx-game = { path = "../game" }
+
+glam.workspace = true
+three-d.workspace = true
+three-d-asset.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true

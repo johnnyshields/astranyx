@@ -9,6 +9,7 @@
 //! This module is isolated from the shmup code for clean separation.
 
 pub mod alert;
+pub mod collision;
 pub mod movement;
 pub mod sound;
 pub mod stealth;
@@ -94,6 +95,12 @@ pub fn update_players(sim: &mut Simulation, inputs: &[PlayerInput]) {
     let bounds_3d = sim.state.level.bounds;
     let segment_frame = sim.state.level.segment_frame;
 
+    // Get geometry for collision detection
+    let geometry: Vec<crate::level::segment::GeometryDef> = sim.scripts
+        .get_segment_config(&sim.state.level.segment_id)
+        .map(|c| c.geometry)
+        .unwrap_or_default();
+
     // Collect projectiles to spawn
     let mut projectiles_to_spawn: Vec<(Vec3, Vec3, i32, EntityId)> = Vec::new();
     // Collect sound events
@@ -109,7 +116,7 @@ pub fn update_players(sim: &mut Simulation, inputs: &[PlayerInput]) {
         // Mode-specific movement
         match &mode {
             GameMode::FirstPerson => {
-                let sounds = movement::update_player_fps(player, &input, &bounds_3d);
+                let sounds = movement::update_player_fps_with_collision(player, &input, &bounds_3d, &geometry);
                 sound_events.extend(sounds);
             }
             GameMode::Turret { path_id } => {

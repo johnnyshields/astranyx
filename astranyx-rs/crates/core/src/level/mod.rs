@@ -4,6 +4,7 @@
 //! and Routes (connections with triggers).
 
 pub mod camera;
+pub mod mesh;
 pub mod route;
 pub mod segment;
 
@@ -15,7 +16,8 @@ use crate::physics::WorldBounds3D;
 
 pub use camera::{CameraConfig, CameraProjection, CameraState};
 pub use route::{Route, RouteTrigger, Transition, TransitionType};
-pub use segment::{BackgroundLayer, GameMode, GeometryDef, ScrollConfig, SegmentConfig};
+pub use mesh::{CollisionShape, CollisionWorld, LevelLight, LevelLightType, LevelMesh, MeshTransform, RenderMesh};
+pub use segment::{BackgroundLayer, GameMode, GeometryDef, LightDef, LightType, ScrollConfig, SegmentConfig};
 
 /// World definition loaded from script.
 #[derive(Debug, Clone)]

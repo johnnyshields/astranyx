@@ -1,0 +1,15 @@
+[package]
+name = "astranyx-physics"
+description = "Deterministic FPS physics engine for Astranyx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+parry3d.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true

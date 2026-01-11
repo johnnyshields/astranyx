@@ -14,14 +14,15 @@ use three_d::*;
 
 use astranyx_core::entities::EntityId;
 use astranyx_core::input::PlayerInput;
-use astranyx_core::level::{CameraConfig, CameraProjection, CameraState, GameMode, GeometryDef, SegmentConfig};
+use astranyx_core::level::{CameraConfig, CameraProjection, CameraState, GameMode, GeometryDef, LevelMesh, LightType, SegmentConfig};
 use astranyx_core::path::PathSet;
 use astranyx_core::simulation::{GameState, Simulation, SimulationConfig};
 
 use crate::effects::{EffectEvent, VisualEffects};
 use crate::game::{colors, mesh_names};
 use crate::hud::DebugHud;
-use crate::renderer::{meshes, GameRenderer, MeshBuilder};
+#[allow(unused_imports)]
+use crate::renderer::{gltf_loader, level_generator, meshes, GameRenderer, MeshBuilder};
 
 /// Check if debug mode is enabled via DEBUG_MODE=1 environment variable.
 /// Enables debug controls (Tab skip, overlay, hot-reload, etc.)
@@ -540,13 +541,44 @@ pub fn run() -> anyhow::Result<()> {
             .screen()
             .clear(ClearState::color_and_depth(0.02, 0.02, 0.06, 1.0, 1.0));
 
+        // Create dynamic lights from segment config (for FPS mode)
+        let segment_lights: Vec<PointLight> = segment_config.as_ref()
+            .map(|c| c.lights.iter().filter_map(|l| {
+                match l.light_type {
+                    LightType::Point => Some(PointLight::new(
+                        &context,
+                        l.intensity,
+                        Srgba::new(l.color[0], l.color[1], l.color[2], 255),
+                        vec3(l.position.x, l.position.y, l.position.z),
+                        Attenuation {
+                            constant: 1.0,
+                            linear: 2.0 / l.range,
+                            quadratic: 1.0 / (l.range * l.range),
+                        },
+                    )),
+                    _ => None, // TODO: Support spot and directional lights
+                }
+            }).collect())
+            .unwrap_or_default();
+
+        // Combine all lights for rendering
+        let all_lights: Vec<&dyn Light> = if segment_lights.is_empty() {
+            vec![&ambient as &dyn Light, &directional as &dyn Light]
+        } else {
+            let mut lights: Vec<&dyn Light> = vec![&ambient as &dyn Light];
+            for light in &segment_lights {
+                lights.push(light as &dyn Light);
+            }
+            lights
+        };
+
         // Render segment geometry (level visuals)
         if let Some(ref config) = segment_config {
             render_segment_geometry(
                 &context,
                 &config.geometry,
                 &camera,
-                &[&ambient as &dyn Light, &directional as &dyn Light],
+                &all_lights,
                 &mut frame_input,
             );
         }
@@ -557,7 +589,7 @@ pub fn run() -> anyhow::Result<()> {
             &game_renderer,
             &simulation.state,
             &camera,
-            &[&ambient as &dyn Light, &directional as &dyn Light],
+            &all_lights,
             &mut frame_input,
         );
 
@@ -566,7 +598,7 @@ pub fn run() -> anyhow::Result<()> {
             &context,
             &visual_effects,
             &camera,
-            &[&ambient as &dyn Light, &directional as &dyn Light],
+            &all_lights,
             &mut frame_input,
         );
 
@@ -605,16 +637,32 @@ pub fn run() -> anyhow::Result<()> {
         if debug_state.show_overlay && simulation.state.frame % 30 == 0 {
             let state = &simulation.state;
             let player = &state.players[0];
+            let mode = &state.level.mode;
             tracing::info!(
-                "[OVERLAY] Frame:{} Seg:{} Mode:{:?} | Player: pos=({:.0},{:.0},{:.0}) hp={} | Enemies:{} Bullets:{}",
+                "[OVERLAY] Frame:{} Seg:{} Mode:{:?} | Player: pos=({:.1},{:.1},{:.1}) yaw={:.2} vel=({:.1},{:.1},{:.1}) | Enemies:{} Bullets:{}",
                 state.frame,
                 state.level.segment_id,
-                state.level.mode,
+                mode,
                 player.position_3d.x, player.position_3d.y, player.position_3d.z,
-                player.health,
+                player.look_yaw,
+                player.velocity_3d.x, player.velocity_3d.y, player.velocity_3d.z,
                 state.enemies.iter().filter(|e| e.is_alive()).count(),
                 state.projectiles.len()
             );
+        }
+
+        // In FPS mode, log movement inputs for debugging (only FirstPerson, not Turret)
+        if (debug_mode || claude_mode) && matches!(simulation.state.level.mode, GameMode::FirstPerson) {
+            // Log state every half second (don't consume mouse delta!)
+            if simulation.state.frame % 15 == 0 {
+                let player = &simulation.state.players[0];
+                tracing::info!(
+                    "[FPS DBG] W={} S={} A={} D={} | pos=({:.1},{:.1},{:.1}) vel=({:.2},{:.2},{:.2})",
+                    input_state.up, input_state.down, input_state.left, input_state.right,
+                    player.position_3d.x, player.position_3d.y, player.position_3d.z,
+                    player.velocity_3d.x, player.velocity_3d.y, player.velocity_3d.z
+                );
+            }
         }
 
         FrameOutput::default()
@@ -642,11 +690,20 @@ fn register_all_meshes(renderer: &mut GameRenderer) {
     renderer.register_mesh(POWERUP_SHIELD, &meshes::create_powerup_mesh());
     renderer.register_mesh(POWERUP_SPEED, &meshes::create_powerup_mesh());
 
+    // FPS-specific meshes
+    renderer.register_mesh(FPS_ARM, &meshes::create_fps_arm_mesh());
+    renderer.register_mesh(FPS_WEAPON, &meshes::create_fps_weapon_mesh());
+    renderer.register_mesh(FPS_MUZZLE_FLASH, &meshes::create_muzzle_flash_mesh());
+    renderer.register_mesh(FPS_GUARD, &meshes::create_fps_guard_mesh());
+    renderer.register_mesh(FPS_GUARD_HEAD, &meshes::create_fps_guard_head_mesh());
+    renderer.register_mesh(FPS_SNIPER, &meshes::create_fps_sniper_mesh());
+    renderer.register_mesh(FPS_HEAVY, &meshes::create_fps_heavy_mesh());
+
     let mut builder = MeshBuilder::new();
     builder.add_box(1.0, 1.0, 1.0);
     renderer.register_mesh("test_box", &builder.finish());
 
-    tracing::info!("Registered all game meshes");
+    tracing::info!("Registered all game meshes (shmup + FPS)");
 }
 
 /// Global scale multiplier for all entities.
@@ -697,25 +754,62 @@ fn render_game_state(
         }
     }
 
-    // Render enemies (currently only 2D)
+    // Render enemies
     for enemy in &state.enemies {
         if !enemy.is_alive() {
             continue;
         }
 
-        let (mesh_name, color, base_scale) = game::get_enemy_render_info(enemy);
-        let s = base_scale * RENDER_SCALE;
-        render_mesh(
-            context,
-            game_renderer,
-            mesh_name,
-            vec3(enemy.position.x, enemy.position.y, 0.0),
-            vec3(s, s, s),
-            vec4_to_srgba(color),
-            camera,
-            lights,
-            frame_input,
-        );
+        // Use appropriate mesh/position based on game mode
+        if mode.is_first_person() {
+            // FPS mode - use 3D position and FPS meshes
+            let (mesh_name, color, base_scale) = game::get_fps_enemy_render_info(enemy);
+            let s = base_scale * RENDER_SCALE;
+            // Render body
+            render_mesh(
+                context,
+                game_renderer,
+                mesh_name,
+                vec3(enemy.position_3d.x, enemy.position_3d.y, enemy.position_3d.z),
+                vec3(s, s, s),
+                vec4_to_srgba(color),
+                camera,
+                lights,
+                frame_input,
+            );
+            // Render head
+            let head_offset = vec3(0.0, s * 0.7, 0.0);
+            render_mesh(
+                context,
+                game_renderer,
+                mesh_names::FPS_GUARD_HEAD,
+                vec3(
+                    enemy.position_3d.x + head_offset.x,
+                    enemy.position_3d.y + head_offset.y,
+                    enemy.position_3d.z + head_offset.z,
+                ),
+                vec3(s * 0.8, s * 0.8, s * 0.8),
+                vec4_to_srgba(colors::FPS_GUARD_HEAD),
+                camera,
+                lights,
+                frame_input,
+            );
+        } else {
+            // Shmup mode - use 2D position
+            let (mesh_name, color, base_scale) = game::get_enemy_render_info(enemy);
+            let s = base_scale * RENDER_SCALE;
+            render_mesh(
+                context,
+                game_renderer,
+                mesh_name,
+                vec3(enemy.position.x, enemy.position.y, 0.0),
+                vec3(s, s, s),
+                vec4_to_srgba(color),
+                camera,
+                lights,
+                frame_input,
+            );
+        }
     }
 
     // Render projectiles (currently only 2D)
@@ -747,6 +841,102 @@ fn render_game_state(
             vec3(power_up.position.x, power_up.position.y, 0.0),
             vec3(s, s, s),
             vec4_to_srgba(color),
+            camera,
+            lights,
+            frame_input,
+        );
+    }
+
+    // Render FPS viewmodel (weapon/arms) in first-person mode
+    if mode.is_first_person() {
+        if let Some(player) = state.players.first().filter(|p| p.is_alive()) {
+            render_fps_viewmodel(context, game_renderer, player, time, camera, lights, frame_input);
+        }
+    }
+}
+
+/// Render the first-person weapon viewmodel (arms + gun).
+/// Rendered in screen space, fixed relative to camera.
+fn render_fps_viewmodel(
+    context: &Context,
+    game_renderer: &GameRenderer,
+    player: &astranyx_core::entities::Player,
+    time: f32,
+    camera: &Camera,
+    lights: &[&dyn Light],
+    frame_input: &mut FrameInput,
+) {
+    // Get camera position and forward direction
+    let cam_pos = camera.position();
+    let cam_target = camera.target();
+    let forward = (cam_target - cam_pos).normalize();
+    let right = forward.cross(vec3(0.0, 1.0, 0.0)).normalize();
+    let up = right.cross(forward);
+
+    // Weapon bob based on movement and time
+    let bob_amount = if player.velocity_3d.length() > 0.1 { 0.02 } else { 0.005 };
+    let bob_x = (time * 8.0).sin() * bob_amount;
+    let bob_y = (time * 16.0).cos().abs() * bob_amount;
+
+    // Recoil animation when firing (fire_cooldown > 0 means recently fired)
+    let recoil = if player.fire_cooldown > 0 {
+        (player.fire_cooldown as f32 / 8.0).min(1.0) * 0.05
+    } else {
+        0.0
+    };
+
+    // Position weapon in bottom-right of view
+    let weapon_offset = forward * 0.5  // Distance from camera
+        + right * 0.25              // Right offset
+        - up * 0.15                 // Down offset
+        + right * bob_x             // Bob X
+        - up * bob_y                // Bob Y
+        - forward * recoil;         // Recoil backward
+
+    let weapon_pos = cam_pos + weapon_offset;
+
+    // Calculate weapon rotation to face forward
+    let weapon_scale = 60.0;
+
+    // Render arm
+    let arm_offset = right * -0.1 - up * 0.05;
+    render_mesh(
+        context,
+        game_renderer,
+        mesh_names::FPS_ARM,
+        vec3(weapon_pos.x + arm_offset.x, weapon_pos.y + arm_offset.y, weapon_pos.z + arm_offset.z),
+        vec3(weapon_scale, weapon_scale, weapon_scale),
+        vec4_to_srgba(colors::FPS_ARM),
+        camera,
+        lights,
+        frame_input,
+    );
+
+    // Render weapon
+    render_mesh(
+        context,
+        game_renderer,
+        mesh_names::FPS_WEAPON,
+        vec3(weapon_pos.x, weapon_pos.y, weapon_pos.z),
+        vec3(weapon_scale, weapon_scale, weapon_scale),
+        vec4_to_srgba(colors::FPS_WEAPON),
+        camera,
+        lights,
+        frame_input,
+    );
+
+    // Render muzzle flash when firing
+    if player.fire_cooldown > 5 {
+        let flash_offset = forward * 0.3;
+        let flash_pos = weapon_pos + flash_offset;
+        let flash_scale = weapon_scale * 0.5 * (player.fire_cooldown as f32 / 8.0);
+        render_mesh(
+            context,
+            game_renderer,
+            mesh_names::FPS_MUZZLE_FLASH,
+            vec3(flash_pos.x, flash_pos.y, flash_pos.z),
+            vec3(flash_scale, flash_scale, flash_scale),
+            vec4_to_srgba(colors::FPS_MUZZLE_FLASH),
             camera,
             lights,
             frame_input,
@@ -855,6 +1045,7 @@ fn vec4_to_srgba(color: Vec4) -> Srgba {
 }
 
 /// Render segment geometry (placeholder boxes for level visuals).
+/// Legacy function - uses GeometryDef from Rhai scripts.
 fn render_segment_geometry(
     context: &Context,
     geometry: &[GeometryDef],
@@ -893,6 +1084,82 @@ fn render_segment_geometry(
             _ => {}
         }
     }
+}
+
+/// Render a glTF/procedural level mesh.
+/// Modern function - uses LevelMesh from glTF or level_generator.
+#[allow(dead_code)]
+fn render_level_mesh(
+    context: &Context,
+    level_mesh: &LevelMesh,
+    camera: &Camera,
+    lights: &[&dyn Light],
+    frame_input: &mut FrameInput,
+) {
+    for mesh in &level_mesh.render_meshes {
+        // Convert RenderMesh to three-d CpuMesh
+        let cpu_mesh = gltf_loader::render_mesh_to_cpu_mesh(mesh);
+
+        let color = Srgba::new(mesh.color[0], mesh.color[1], mesh.color[2], 255);
+
+        let mut gm = Gm::new(
+            Mesh::new(context, &cpu_mesh),
+            PhysicalMaterial::new_opaque(
+                context,
+                &CpuMaterial {
+                    albedo: color,
+                    ..Default::default()
+                },
+            ),
+        );
+
+        // Apply transform from mesh
+        // Note: For now, we only apply position and scale (rotation from glTF uses quaternions)
+        let t = &mesh.transform;
+        gm.set_transformation(
+            Mat4::from_translation(vec3(t.position.x, t.position.y, t.position.z))
+                * Mat4::from_nonuniform_scale(t.scale.x, t.scale.y, t.scale.z),
+        );
+
+        frame_input.screen().render(camera, &gm, lights);
+    }
+}
+
+/// Create point lights from a LevelMesh's light definitions.
+#[allow(dead_code)]
+fn create_lights_from_level_mesh(context: &Context, level_mesh: &LevelMesh) -> Vec<PointLight> {
+    use astranyx_core::level::LevelLightType;
+
+    level_mesh.lights.iter().filter_map(|light| {
+        match light.light_type {
+            LevelLightType::Point => Some(PointLight::new(
+                context,
+                light.intensity,
+                Srgba::new(light.color[0], light.color[1], light.color[2], 255),
+                vec3(light.position.x, light.position.y, light.position.z),
+                Attenuation {
+                    constant: 1.0,
+                    linear: 2.0 / light.range,
+                    quadratic: 1.0 / (light.range * light.range),
+                },
+            )),
+            LevelLightType::Spot { .. } => {
+                // Spot lights rendered as point lights for now
+                Some(PointLight::new(
+                    context,
+                    light.intensity,
+                    Srgba::new(light.color[0], light.color[1], light.color[2], 255),
+                    vec3(light.position.x, light.position.y, light.position.z),
+                    Attenuation {
+                        constant: 1.0,
+                        linear: 2.0 / light.range,
+                        quadratic: 1.0 / (light.range * light.range),
+                    },
+                ))
+            }
+            LevelLightType::Directional => None, // Handled separately
+        }
+    }).collect()
 }
 
 /// Create a three-d Camera from a CameraConfig and CameraState.
