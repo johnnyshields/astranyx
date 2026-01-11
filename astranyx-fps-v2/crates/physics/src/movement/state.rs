@@ -170,7 +170,7 @@ impl MovementState {
     /// Get the right direction from view angles (horizontal only).
     pub fn right_direction(&self) -> Vec3 {
         let (sin_yaw, cos_yaw) = self.view_angles.y.sin_cos();
-        Vec3::new(sin_yaw, 0.0, -cos_yaw).normalize()
+        Vec3::new(-sin_yaw, 0.0, cos_yaw).normalize()
     }
 
     /// Get the full forward direction including pitch.
