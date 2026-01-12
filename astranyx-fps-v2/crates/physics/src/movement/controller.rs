@@ -100,18 +100,49 @@ impl PlayerController {
 
         // Clamp delta time to prevent physics explosions
         let delta_time = delta_time.min(0.066); // Max ~66ms (15 FPS minimum)
+        let delta_time_ms = (delta_time * 1000.0) as u32;
 
         // Update view angles
         self.update_view_angles(state, command);
 
-        // Handle stance (crouch/prone)
-        self.update_stance(state, command, world, delta_time);
-
-        // Detect ground
+        // Detect ground first (needed for jump state update)
         self.check_ground(state, world);
 
-        // Decrement timers
-        self.update_timers(state, delta_time);
+        // Check if player is prone (toggled on)
+        let is_prone = state.stance.base_stance == Stance::Prone;
+
+        // Handle stance (crouch/prone)
+        // If jump is pressed and we're prone, stand up instead of jumping
+        let wants_stand_from_jump = command.wants_jump() && is_prone && state.flags.on_ground();
+        self.update_stance(state, command, world, delta_time, wants_stand_from_jump);
+
+        // Only process jump if we're not prone
+        // Jumping from crouch is fine (crouch-jump), but prone must stand first
+        let should_process_jump = !is_prone;
+
+        if should_process_jump {
+            let jump_result = state.jump.update(
+                command.wants_jump(),
+                state.flags.on_ground(),
+                self.config.jump_cooldown_ms,
+                self.config.auto_bhop,
+                delta_time_ms,
+            );
+
+            if jump_result.should_jump {
+                self.do_jump(state);
+            }
+        } else if command.wants_jump() {
+            // Still update jump state to track prev_jump_pressed, but don't jump
+            // This prevents the jump from triggering on the next frame after standing
+            state.jump.update(
+                command.wants_jump(),
+                state.flags.on_ground(),
+                self.config.jump_cooldown_ms,
+                self.config.auto_bhop,
+                delta_time_ms,
+            );
+        }
 
         // Movement based on current state
         if state.flags.on_ground() {
@@ -156,14 +187,15 @@ impl PlayerController {
         command: &PlayerCommand,
         world: &CollisionWorld,
         delta_time: f32,
+        will_jump: bool,
     ) {
         // Build stance input from command
         let delta_time_ms = (delta_time * 1000.0) as u32;
         let stance_input = StanceInput {
             crouch_pressed: command.wants_crouch(),
             prone_pressed: command.wants_prone(),
-            // Jump stands up only if grounded and not jumping
-            stand_requested: command.wants_jump() && state.flags.on_ground() && !state.flags.jumping(),
+            // Stand up if we're about to jump (so we jump at full height)
+            stand_requested: will_jump,
             delta_time_ms,
         };
 
@@ -311,8 +343,8 @@ impl PlayerController {
                         state.position = trace.end_position;
                     }
 
-                    // Clear jumping flag if we've landed
-                    if state.timer_ms == 0 {
+                    // Clear jumping flag when we've landed (no longer moving upward)
+                    if state.velocity.y <= 0.0 {
                         state.flags.set(MovementFlags::JUMPING, false);
                     }
 
@@ -328,15 +360,6 @@ impl PlayerController {
     }
 
     // ========================================================================
-    // Timers
-    // ========================================================================
-
-    fn update_timers(&self, state: &mut MovementState, delta_time: f32) {
-        let decrease_ms = (delta_time * 1000.0) as u32;
-        state.timer_ms = state.timer_ms.saturating_sub(decrease_ms);
-    }
-
-    // ========================================================================
     // Ground Movement
     // ========================================================================
 
@@ -347,12 +370,7 @@ impl PlayerController {
         world: &CollisionWorld,
         delta_time: f32,
     ) {
-        // Check for jump
-        if command.wants_jump() && !state.flags.jumping() && state.timer_ms == 0 {
-            self.do_jump(state);
-            self.air_move(state, command, world, delta_time);
-            return;
-        }
+        // Note: Jump is handled centrally in update() before movement
 
         // Apply friction
         self.apply_friction(state, delta_time);
@@ -395,7 +413,6 @@ impl PlayerController {
         state.velocity.y = self.config.jump_velocity;
         state.flags.set(MovementFlags::ON_GROUND, false);
         state.flags.set(MovementFlags::JUMPING, true);
-        state.timer_ms = self.config.jump_cooldown_ms;
         state.ground_entity = -1;
     }
 
@@ -579,7 +596,9 @@ mod tests {
         let world = create_test_world();
         let controller = PlayerController::with_default_config();
 
-        let mut state = MovementState::new(Vec3::new(0.0, 0.0, 0.0));
+        // Start slightly above floor (floor top is at y=0)
+        // Player needs to be above it so they're not stuck in solid
+        let mut state = MovementState::new(Vec3::new(0.0, 0.05, 0.0));
         let command = PlayerCommand::default();
 
         controller.update(&mut state, &command, &world, 0.016);

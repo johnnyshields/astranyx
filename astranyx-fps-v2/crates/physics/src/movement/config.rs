@@ -109,6 +109,13 @@ pub struct MovementConfig {
 
     /// Time to transition to/from prone.
     pub prone_time_ms: u32,
+
+    // ========================================================================
+    // Behavior flags
+    // ========================================================================
+    /// If true, holding jump will automatically jump again on each landing.
+    /// Useful for casual play or testing. Disabled by default for skill-based movement.
+    pub auto_bhop: bool,
 }
 
 impl Default for MovementConfig {
@@ -149,9 +156,12 @@ impl Default for MovementConfig {
             overbounce: 1.001,
 
             // Timers
-            jump_cooldown_ms: 200,
+            jump_cooldown_ms: 400,
             crouch_time_ms: 150,
             prone_time_ms: 300,
+
+            // Behavior
+            auto_bhop: false,
         }
     }
 }
@@ -169,7 +179,8 @@ impl MovementConfig {
             air_control: 0.3,    // More air control for strafing
             ground_acceleration: 15.0,
             air_acceleration: 2.0,
-            jump_cooldown_ms: 100,
+            jump_cooldown_ms: 200,
+            auto_bhop: true,     // Hold jump to bunny hop
             ..Default::default()
         }
     }

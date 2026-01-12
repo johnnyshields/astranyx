@@ -12,6 +12,13 @@ use super::config::MovementConfig;
 /// Maximum number of collision planes to track during slide move.
 const MAX_CLIP_PLANES: usize = 5;
 
+/// Minimum velocity magnitude to continue sliding (prevents getting stuck).
+const MIN_SLIDE_VELOCITY: f32 = 0.01;
+
+/// Tolerance for checking if velocity goes into a plane.
+/// Using a small negative value allows near-parallel movement.
+const PLANE_TOLERANCE: f32 = -0.001;
+
 /// Clip velocity against a surface normal.
 ///
 /// This removes the component of velocity going into the surface and
@@ -20,12 +27,13 @@ pub fn clip_velocity(velocity: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
     // Calculate how much velocity is going into the surface
     let backoff = velocity.dot(normal);
 
-    // Adjust based on whether we're moving into or away from surface
-    let adjusted_backoff = if backoff < 0.0 {
-        backoff * overbounce
-    } else {
-        backoff / overbounce
-    };
+    // If we're moving away from or parallel to the surface, don't clip
+    if backoff >= 0.0 {
+        return velocity;
+    }
+
+    // Apply overbounce to push slightly away from surface
+    let adjusted_backoff = backoff * overbounce;
 
     // Remove the into-surface component
     velocity - normal * adjusted_backoff
@@ -123,14 +131,14 @@ pub fn slide_move(
                     if i == j {
                         continue;
                     }
-                    // Velocity must not go into any plane
-                    if clipped.dot(planes[j]) < -0.01 {
+                    // Velocity must not go into any plane (use tolerance for near-parallel)
+                    if clipped.dot(planes[j]) < PLANE_TOLERANCE {
                         valid = false;
                         break;
                     }
                 }
 
-                if valid {
+                if valid && clipped.length_squared() > MIN_SLIDE_VELOCITY * MIN_SLIDE_VELOCITY {
                     *velocity = clipped;
                     found_valid = true;
                     break;
@@ -146,7 +154,10 @@ pub fn slide_move(
                     *velocity = cross * speed;
 
                     // If still no good, just stop
-                    if velocity.dot(planes[0]) < -0.01 || velocity.dot(planes[1]) < -0.01 {
+                    if velocity.dot(planes[0]) < PLANE_TOLERANCE
+                        || velocity.dot(planes[1]) < PLANE_TOLERANCE
+                        || velocity.length_squared() < MIN_SLIDE_VELOCITY * MIN_SLIDE_VELOCITY
+                    {
                         *velocity = Vec3::ZERO;
                         return false;
                     }
@@ -356,5 +367,74 @@ mod tests {
 
         // With wall at x=5, player should be stopped before it (accounting for radius)
         assert!(position.x < 5.5, "Position x={} should be < 5.5", position.x);
+    }
+
+    #[test]
+    fn test_shallow_angle_slide() {
+        // Test that moving at a shallow angle (<10 degrees) into a wall still slides
+        // Use empty world (no floor) to avoid floor collision complexity
+        let mut world = CollisionWorld::new();
+
+        // Add a wall along the Z axis at x=2
+        // Wall extends from x=2 to x=3
+        // Player (radius 0.4) can be at x <= 1.6
+        // Make wall very tall and long to avoid any edge effects
+        world.add_box(
+            Vec3::new(2.5, 5.0, 0.0),   // center at y=5, z=0
+            Vec3::new(0.5, 10.0, 100.0), // half extents (20m tall, 200m long in Z: -100 to +100)
+            ContentFlags::SOLID,
+        );
+
+        let config = MovementConfig::default();
+        let shape = TraceShape::PLAYER_STANDING;
+
+        // Start along the wall, far from the corner
+        // Player radius is 0.4, wall starts at x=2, so player center can be at x=1.6
+        // Start at x=1.0 (further from wall) to have room to approach
+        let mut position = Vec3::new(1.0, 1.0, 0.0);
+
+        // Move almost parallel to wall (5 degrees into wall)
+        // cos(5°) ≈ 0.996, sin(5°) ≈ 0.087
+        // So mostly +Z with a tiny bit of +X (toward wall)
+        let speed = 10.0;
+        let angle_rad = 5.0_f32.to_radians();
+        let mut velocity = Vec3::new(speed * angle_rad.sin(), 0.0, speed * angle_rad.cos());
+
+        let start_z = position.z;
+        slide_move(&world, &mut position, &mut velocity, shape, 1.0, &config);
+
+        // At 5 degrees, mostly moving in Z, should move close to full distance
+        // cos(5°) * 10 * 1s ≈ 9.96m of Z movement if no obstruction
+        // Even hitting the wall, we should slide along it
+        let z_moved = position.z - start_z;
+
+        assert!(
+            z_moved > 9.0,
+            "Should slide along wall at shallow angle, moved {} in Z (expected > 9), velocity.z={}",
+            z_moved, velocity.z
+        );
+    }
+
+    #[test]
+    fn test_clip_velocity_shallow_angle() {
+        // Moving almost parallel to wall (5 degrees)
+        let speed = 10.0;
+        let angle_rad = 5.0_f32.to_radians();
+        let velocity = Vec3::new(speed * angle_rad.sin(), 0.0, speed * angle_rad.cos());
+        let wall_normal = Vec3::new(-1.0, 0.0, 0.0); // Wall facing -X
+
+        let clipped = clip_velocity(velocity, wall_normal, 1.001);
+
+        // X component should be zeroed/minimal, Z should be mostly preserved
+        assert!(
+            clipped.x.abs() < 0.1,
+            "X should be clipped, got {}",
+            clipped.x
+        );
+        assert!(
+            clipped.z > 9.0,
+            "Z should be mostly preserved, got {}",
+            clipped.z
+        );
     }
 }

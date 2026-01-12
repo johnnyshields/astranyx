@@ -357,6 +357,51 @@ impl CollisionWorld {
         position + correction
     }
 
+    /// Get the contact normal for a shape at a position.
+    ///
+    /// Returns the surface normal pointing away from the contacted brush,
+    /// or None if no contact is found.
+    fn get_contact_normal(
+        &self,
+        position: Vec3,
+        shape: TraceShape,
+        mask: ContentFlags,
+    ) -> Option<Vec3> {
+        let test_shape = self.create_parry_shape(shape);
+        let test_transform = self.shape_transform(position, shape);
+
+        for brush in &self.brushes {
+            if !mask.intersects(brush.contents) {
+                continue;
+            }
+
+            // Check for contact (use prediction distance to catch near-contacts too)
+            if let Ok(Some(contact_result)) = contact(
+                &test_transform,
+                test_shape.as_ref(),
+                &brush.transform,
+                brush.shape.as_ref(),
+                0.01, // Small prediction distance
+            ) {
+                // normal1 points INTO shape1 (player) at the contact point
+                // We want the surface normal pointing AWAY from the brush (wall)
+                // So we negate it: the wall's outward normal is -normal1
+                let normal = Vec3::new(
+                    -contact_result.normal1.x,
+                    -contact_result.normal1.y,
+                    -contact_result.normal1.z,
+                );
+
+                // Only return if it's a meaningful normal
+                if normal.length_squared() > 0.5 {
+                    return Some(normal.normalize());
+                }
+            }
+        }
+
+        None
+    }
+
     // ========================================================================
     // Private helpers
     // ========================================================================
@@ -408,21 +453,19 @@ impl CollisionWorld {
         let fraction = lo;
         let end_position = start + (end - start) * fraction;
 
-        // Compute hit normal from penetration direction
+        // Compute hit normal from contact with brush at collision point
+        // Try slightly past the collision point to ensure we get a contact
         let penetration_test = start + (end - start) * hi;
-        let resolved = self.resolve_penetration(penetration_test, shape, mask);
-        let push = resolved - penetration_test;
-        let hit_normal = if push.length_squared() > 0.0001 {
-            push.normalize()
-        } else {
-            // Default to opposite of movement direction (projected to horizontal)
-            let horizontal = Vec3::new(-direction.x, 0.0, -direction.z);
-            if horizontal.length_squared() > 0.1 {
-                horizontal.normalize()
-            } else {
-                Vec3::Y
-            }
-        };
+        let hit_normal = self.get_contact_normal(penetration_test, shape, mask)
+            .unwrap_or_else(|| {
+                // Fallback: opposite of movement direction (projected to horizontal)
+                let horizontal = Vec3::new(-direction.x, 0.0, -direction.z);
+                if horizontal.length_squared() > 0.1 {
+                    horizontal.normalize()
+                } else {
+                    Vec3::Y
+                }
+            });
 
         TraceResult {
             fraction,

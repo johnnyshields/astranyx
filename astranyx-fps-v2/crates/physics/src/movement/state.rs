@@ -3,6 +3,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use super::jump::JumpState;
 use super::stance::{Stance, StanceState};
 
 /// Flags describing the player's current movement state.
@@ -124,14 +125,14 @@ pub struct MovementState {
     /// Stance state machine (handles crouch/prone with toggle/hold).
     pub stance: StanceState,
 
+    /// Jump state machine (handles cooldown and queuing).
+    pub jump: JumpState,
+
     /// Ground entity ID (-1 if airborne, 0 for world, >0 for moving platform).
     pub ground_entity: i32,
 
     /// Ground surface normal (valid when on_ground is true).
     pub ground_normal: Vec3,
-
-    /// Timer in milliseconds (used for jump cooldown, etc.).
-    pub timer_ms: u32,
 
     /// Current crouch amount (0.0 = standing, 1.0 = fully crouched).
     /// Used for smooth crouch transitions.
@@ -150,9 +151,9 @@ impl Default for MovementState {
             view_angles: Vec3::ZERO,
             flags: MovementFlags::default(),
             stance: StanceState::default(),
+            jump: JumpState::default(),
             ground_entity: -1,
             ground_normal: Vec3::Y,
-            timer_ms: 0,
             crouch_fraction: 0.0,
             prone_fraction: 0.0,
         }
