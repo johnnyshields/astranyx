@@ -14,9 +14,6 @@
 //! The renderer is designed to be driven by game state from `astranyx-game`.
 //! Each frame, update the renderer with the current game state and call render.
 
-// TODO: Implement three-d renderer
-// This is a skeleton for now - actual rendering code will be added later
-
 pub mod camera;
 
 /// Placeholder for the game renderer.

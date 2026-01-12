@@ -1,0 +1,20 @@
+
+- Add jump cooldown and jump queuing (queue jump if space tapped during cooldown)
+- Fix: tap C to crouch, then hold C and release doesn't stand up (same issue in prone)
+- Fix tap vs hold detection timing (frame rate issue)
+- Lockstep should sync actual stance, not button presses (make stance local)
+- Strafing obliquely into walls (<10 deg) should slide along wall, not get stuck
+- Add subtle camera bob while moving (different for walk/run/crouch/prone), zeroes when stopped - affects camera only, not player position
+- Climbing ladder
+- Wading in water
+- Floating at water surface
+- Diving/swimming underwater
+- Cover at wall corner / peeking / leaning
+- Definitively fix can't stand issues (collision detection)
+- Add PBR textures to walls/floor (albedo, normal, roughness, metallic, ao)
+- Implement ParallaxPhysicalMaterial with height map support
+- Add height_texture fields to PhysicalMaterial struct in three-d fork
+- Update enum_bitfield macro call for height_texture
+- Add POM shader code to physical_material.frag
+- Update fragment_shader_source() and use_uniforms()
+- Update Astranyx Cargo.toml to use local three-d fork

@@ -11,7 +11,7 @@ path = "src/main.rs"
 astranyx-game = { path = "crates/game" }
 astranyx-physics = { path = "crates/physics" }
 astranyx-renderer = { path = "crates/renderer" }
-three-d = "0.18"
+three-d = { path = "../../three-d" }
 image = "0.25"
 glam = { version = "0.30", features = ["serde"] }
 log = "0.4"
@@ -46,8 +46,8 @@ rhai = { version = "1.22", features = ["sync", "f32_float"] }
 parry3d = "0.18"
 
 # Rendering
-three-d = "0.18"
-three-d-asset = "0.7"
+three-d = { path = "../../three-d" }
+three-d-asset = "0.9"
 
 # Utilities
 log = "0.4"

@@ -17,13 +17,15 @@ use three_d::*;
 // PBR Material Loading
 // ============================================================================
 
-/// A set of PBR textures for a material
+/// A set of PBR textures for a material (with optional height map for parallax)
 struct PbrTextures {
     albedo: CpuTexture,
     normal: CpuTexture,
     /// Combined metallic-roughness texture (glTF format: G=roughness, B=metallic)
     metallic_roughness: CpuTexture,
     ao: CpuTexture,
+    /// Height map for parallax occlusion mapping (white = high, black = low)
+    height: Option<CpuTexture>,
 }
 
 /// Load a PNG texture from disk
@@ -123,6 +125,7 @@ fn load_pbr_textures(base_path: &str, prefix: &str) -> PbrTextures {
         normal: load("normal-ogl.png", "normal"),
         metallic_roughness,
         ao: load("ao.png", "ao"),
+        height: load_texture_from_file(&format!("{}/{}_{}", base_path, prefix, "height.png")),
     }
 }
 
@@ -155,7 +158,7 @@ fn create_default_texture(name: &str) -> CpuTexture {
     }
 }
 
-/// Create a PhysicalMaterial from PBR textures
+/// Create a PhysicalMaterial from PBR textures (with height map support for parallax)
 fn create_pbr_material(context: &Context, textures: &PbrTextures) -> PhysicalMaterial {
     PhysicalMaterial {
         name: textures.albedo.name.clone(),
@@ -179,6 +182,14 @@ fn create_pbr_material(context: &Context, textures: &PbrTextures) -> PhysicalMat
             NormalDistributionFunction::TrowbridgeReitzGGX,
             GeometryFunction::SmithSchlickGGX,
         ),
+        // Parallax occlusion mapping settings
+        height_texture: textures
+            .height
+            .as_ref()
+            .map(|h| Texture2DRef::from_cpu_texture(context, h)),
+        height_scale: 0.08,
+        height_max_layers: 16.0,
+        height_iterations: 3,
     }
 }
 
