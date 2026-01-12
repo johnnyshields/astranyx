@@ -79,10 +79,12 @@ pub struct StanceState {
     pub base_stance: Stance,
     /// Current actual stance (may differ from base if holding a key).
     pub current_stance: Stance,
-    /// Base stance before crouch key was pressed (for hold revert).
+    /// Base stance before crouch key was pressed (for toggle detection).
     crouch_pre_press_base: Stance,
-    /// Base stance before prone key was pressed (for hold revert).
+    /// Base stance before prone key was pressed (for toggle detection).
     prone_pre_press_base: Stance,
+    /// The stance we should return to when hold-releasing Z (tracked when first entering prone).
+    prone_hold_return_stance: Stance,
     /// Whether crouch key is currently being held down.
     crouch_active: bool,
     /// Whether prone key is currently being held down.
@@ -104,6 +106,7 @@ impl Default for StanceState {
             current_stance: Stance::Standing,
             crouch_pre_press_base: Stance::Standing,
             prone_pre_press_base: Stance::Standing,
+            prone_hold_return_stance: Stance::Standing,
             crouch_active: false,
             prone_active: false,
             crouch_hold_time_ms: 0,
@@ -133,6 +136,7 @@ impl StanceState {
             current_stance: stance,
             crouch_pre_press_base: stance,
             prone_pre_press_base: stance,
+            prone_hold_return_stance: stance,
             ..Default::default()
         }
     }
@@ -185,6 +189,7 @@ impl StanceState {
         }
 
         // Handle crouch key press - save base and start timer
+        // Always save pre-press so tap-toggle knows what state we were in
         if crouch_just_pressed {
             self.crouch_pre_press_base = self.base_stance;
             self.crouch_active = true;
@@ -192,8 +197,13 @@ impl StanceState {
         }
 
         // Handle prone key press - save base and start timer
+        // Always save pre-press so tap-toggle knows what state we were in
         if prone_just_pressed {
             self.prone_pre_press_base = self.base_stance;
+            // If not already prone, save the return stance for hold-release
+            if self.base_stance != Stance::Prone {
+                self.prone_hold_return_stance = self.base_stance;
+            }
             self.prone_active = true;
             self.prone_hold_time_ms = 0;
         }
@@ -209,23 +219,17 @@ impl StanceState {
             self.crouch_hold_time_ms = 0;
 
             if was_hold {
-                // Hold: revert to pre-press base stance
-                self.base_stance = self.crouch_pre_press_base;
+                // Hold: stand up (C held = temporarily crouched, release = stand)
+                // This works whether we started standing or were already crouched
+                self.base_stance = Stance::Standing;
             } else {
-                // Toggle: change base based on what pre-press was
-                match self.crouch_pre_press_base {
-                    Stance::Standing => {
-                        // Was standing, tapped C -> stay crouched
-                        self.base_stance = Stance::Crouching;
-                    }
-                    Stance::Crouching => {
-                        // Was crouching, tapped C -> stand up
-                        self.base_stance = Stance::Standing;
-                    }
-                    Stance::Prone => {
-                        // Was prone, tapped C -> go to crouch
-                        self.base_stance = Stance::Crouching;
-                    }
+                // Toggle: if was crouching, stand up; otherwise go to crouch
+                if self.crouch_pre_press_base == Stance::Crouching {
+                    // Was crouching, tapped C -> stand up
+                    self.base_stance = Stance::Standing;
+                } else {
+                    // Was standing or prone, tapped C -> go to crouch
+                    self.base_stance = Stance::Crouching;
                 }
             }
             log::debug!("crouch released: new base_stance={:?}", self.base_stance);
@@ -238,23 +242,17 @@ impl StanceState {
             self.prone_hold_time_ms = 0;
 
             if was_hold {
-                // Hold: revert to pre-press base stance
-                self.base_stance = self.prone_pre_press_base;
+                // Hold: revert to the stance before we ever entered prone
+                // (hold Z = temporary prone, release should always go back up)
+                self.base_stance = self.prone_hold_return_stance;
             } else {
-                // Toggle: change base based on what pre-press was
-                match self.prone_pre_press_base {
-                    Stance::Standing => {
-                        // Was standing, tapped Z -> stay prone
-                        self.base_stance = Stance::Prone;
-                    }
-                    Stance::Crouching => {
-                        // Was crouching, tapped Z -> stay prone
-                        self.base_stance = Stance::Prone;
-                    }
-                    Stance::Prone => {
-                        // Was prone, tapped Z -> go to crouch
-                        self.base_stance = Stance::Crouching;
-                    }
+                // Toggle: if was prone, go to crouch; otherwise stay prone
+                if self.prone_pre_press_base == Stance::Prone {
+                    // Was prone, tapped Z -> go to crouch
+                    self.base_stance = Stance::Crouching;
+                } else {
+                    // Was standing or crouching, tapped Z -> stay prone
+                    self.base_stance = Stance::Prone;
                 }
             }
         }
@@ -509,7 +507,7 @@ mod tests {
         // Hold Z for > 150ms then release
         hold_prone_for_ms(&mut state, 200);
 
-        // Should revert to standing (hold behavior)
+        // Hold Z reverts to pre-press base (Standing)
         assert_eq!(state.current_stance, Stance::Standing);
         assert_eq!(state.base_stance, Stance::Standing);
     }
@@ -521,13 +519,13 @@ mod tests {
         // Hold Z for > 150ms then release
         hold_prone_for_ms(&mut state, 200);
 
-        // Should revert to crouch (hold behavior)
+        // Hold Z always releases to crouch
         assert_eq!(state.current_stance, Stance::Crouching);
         assert_eq!(state.base_stance, Stance::Crouching);
     }
 
     #[test]
-    fn test_10_crouching_c_hold_no_change() {
+    fn test_10_crouching_c_hold_stands_up() {
         let mut state = StanceState::new(Stance::Crouching);
 
         // C down from crouch - stays crouched (C doesn't lower from crouch)
@@ -540,11 +538,10 @@ mod tests {
         }
         assert_eq!(state.current_stance, Stance::Crouching);
 
-        // C up after hold - toggle to Standing since we were crouched
+        // C up after hold - stand up (hold C = temporarily crouch, release = stand)
         update_and_apply(&mut state, no_input());
-        // With hold time > 150ms, it's a hold, so revert to pre-press base (Crouching)
-        assert_eq!(state.current_stance, Stance::Crouching);
-        assert_eq!(state.base_stance, Stance::Crouching);
+        assert_eq!(state.current_stance, Stance::Standing);
+        assert_eq!(state.base_stance, Stance::Standing);
     }
 
     // =========================================================================
@@ -570,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn test_12_z_tap_stay_prone_c_hold_no_change() {
+    fn test_12_z_tap_stay_prone_c_hold_stands_up() {
         let mut state = StanceState::default();
 
         // Z tap (toggle to prone)
@@ -579,15 +576,33 @@ mod tests {
         assert_eq!(state.current_stance, Stance::Prone);
         assert_eq!(state.base_stance, Stance::Prone);
 
-        // C hold from prone - C doesn't lower from prone (we're already at the lowest for C)
-        // So current stays prone
+        // C hold from prone - stays prone while holding (C doesn't lower from prone)
         hold_crouch_for_ms(&mut state, 200);
 
-        // After C release (hold behavior), revert to base which is Prone
-        // But wait - C release when base was Prone does toggle to Crouch
-        // Actually the hold reverts to pre-press base which was Prone
+        // After C release (hold behavior), stand up
+        // Hold C always means "temporarily crouch", release = stand
+        assert_eq!(state.current_stance, Stance::Standing);
+        assert_eq!(state.base_stance, Stance::Standing);
+    }
+
+    #[test]
+    fn test_13_prone_z_hold_release_goes_to_standing() {
+        // If already prone (from standing), hold Z and release should go to standing
+        // because prone_pre_press_base was Standing when we first went prone
+        let mut state = StanceState::default(); // Start standing
+
+        // Tap Z to go prone
+        update_and_apply(&mut state, prone_pressed());
+        update_and_apply(&mut state, no_input());
         assert_eq!(state.current_stance, Stance::Prone);
         assert_eq!(state.base_stance, Stance::Prone);
+
+        // Now hold Z for > 150ms then release
+        hold_prone_for_ms(&mut state, 200);
+
+        // Should revert to pre-press base (Standing - from when we first went prone)
+        assert_eq!(state.current_stance, Stance::Standing);
+        assert_eq!(state.base_stance, Stance::Standing);
     }
 
     // =========================================================================
@@ -688,14 +703,14 @@ mod tests {
             delta_time_ms: FRAME_MS,
         };
         update_and_apply(&mut state, input);
-        // Z release was a hold (> 150ms), so base reverts to Standing
+        // Z release was a hold (> 150ms), base reverts to pre-press (Standing)
         // But C is still held, so effective = Crouching
         assert_eq!(state.current_stance, Stance::Crouching);
         assert_eq!(state.base_stance, Stance::Standing);
 
         // Release C (also was a hold)
         update_and_apply(&mut state, no_input());
-        // C release was a hold, revert to base = Standing
+        // C release was a hold, stand up
         assert_eq!(state.current_stance, Stance::Standing);
         assert_eq!(state.base_stance, Stance::Standing);
     }
@@ -737,6 +752,45 @@ mod tests {
         hold_crouch_for_ms(&mut state, 200);
 
         // Should be back to standing
+        assert_eq!(state.current_stance, Stance::Standing);
+        assert_eq!(state.base_stance, Stance::Standing);
+    }
+
+    #[test]
+    fn test_bug_tap_c_then_hold_c_release_should_stand() {
+        // tap C to crouch, then hold C and release -> should stand up
+        let mut state = StanceState::default();
+
+        // Tap C (toggle to crouch)
+        update_and_apply(&mut state, crouch_pressed());
+        update_and_apply(&mut state, no_input());
+        assert_eq!(state.current_stance, Stance::Crouching);
+        assert_eq!(state.base_stance, Stance::Crouching);
+
+        // Now hold C for > 150ms then release
+        hold_crouch_for_ms(&mut state, 200);
+
+        // Should stand up (hold C = temporary crouch, release = stand)
+        assert_eq!(state.current_stance, Stance::Standing);
+        assert_eq!(state.base_stance, Stance::Standing);
+    }
+
+    #[test]
+    fn test_bug_tap_z_then_hold_z_release_goes_to_standing() {
+        // tap Z to prone, then hold Z and release -> should go back to standing
+        // (because we were standing before we first entered prone)
+        let mut state = StanceState::default();
+
+        // Tap Z (toggle to prone from standing)
+        update_and_apply(&mut state, prone_pressed());
+        update_and_apply(&mut state, no_input());
+        assert_eq!(state.current_stance, Stance::Prone);
+        assert_eq!(state.base_stance, Stance::Prone);
+
+        // Now hold Z for > 150ms then release
+        hold_prone_for_ms(&mut state, 200);
+
+        // Should go back to standing (the stance before we first entered prone)
         assert_eq!(state.current_stance, Stance::Standing);
         assert_eq!(state.base_stance, Stance::Standing);
     }
