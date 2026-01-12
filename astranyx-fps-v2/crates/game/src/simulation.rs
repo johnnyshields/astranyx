@@ -98,11 +98,18 @@ impl Simulation {
         let spawn_index = self.players.len() % self.level.player_spawn_count().max(1);
         let spawn = self.level.get_player_spawn(spawn_index);
 
-        let position = spawn.map(|s| s.position).unwrap_or(Vec3::ZERO);
+        let spawn_pos = spawn.map(|s| s.position).unwrap_or(Vec3::ZERO);
         let facing = spawn.map(|s| s.facing).unwrap_or(0.0);
 
-        let mut player = Player::new(id, name.to_string(), position);
+        let mut player = Player::new(id, name.to_string(), spawn_pos);
         player.movement.view_angles.y = facing;
+
+        // Initialize position by tracing to ground
+        self.movement_controller.spawn_at(
+            &mut player.movement,
+            spawn_pos,
+            &self.level.collision,
+        );
 
         self.players.push(player);
         id

@@ -46,6 +46,36 @@ impl PlayerController {
         Self::new(MovementConfig::default())
     }
 
+    /// Initialize a player's position at spawn.
+    ///
+    /// This traces down from the spawn point to find the ground and positions
+    /// the player correctly above it. Should be called once when spawning.
+    pub fn spawn_at(&self, state: &mut MovementState, spawn_pos: Vec3, world: &CollisionWorld) {
+        // Start slightly above the spawn point to trace down
+        let trace_start = spawn_pos + Vec3::new(0.0, 1.0, 0.0);
+        let trace_end = spawn_pos - Vec3::new(0.0, 2.0, 0.0);
+
+        let shape = TraceShape::Capsule {
+            radius: self.config.player_radius,
+            height: self.config.standing_height,
+        };
+
+        let trace = world.trace(trace_start, trace_end, shape, ContentFlags::MASK_PLAYER_SOLID);
+
+        if trace.hit_something() {
+            // Position player at the trace end (on top of ground)
+            state.position = trace.end_position;
+            state.flags.set(MovementFlags::ON_GROUND, true);
+            state.ground_entity = 0;
+            if let Some(normal) = trace.hit_normal {
+                state.ground_normal = normal;
+            }
+        } else {
+            // No ground found, use spawn position as-is
+            state.position = spawn_pos;
+        }
+    }
+
     /// Update player movement for one frame.
     ///
     /// This is the main entry point that should be called each simulation tick.
@@ -612,5 +642,90 @@ mod tests {
         controller.update(&mut state, &command, &world, 0.016);
 
         assert!(state.flags.crouching(), "Should be crouching");
+    }
+
+    // ========================================================================
+    // Spawn Tests
+    // ========================================================================
+
+    #[test]
+    fn test_spawn_at_finds_ground() {
+        let world = create_test_world();
+        let controller = PlayerController::with_default_config();
+
+        let mut state = MovementState::default();
+
+        // Spawn at y=0 (exactly on floor surface)
+        controller.spawn_at(&mut state, Vec3::new(0.0, 0.0, 0.0), &world);
+
+        // Should be positioned slightly above floor, on ground
+        assert!(state.position.y >= 0.0, "Should be at or above floor, got y={}", state.position.y);
+        assert!(state.flags.on_ground(), "Should be on ground after spawn");
+    }
+
+    #[test]
+    fn test_spawn_at_above_ground() {
+        let world = create_test_world();
+        let controller = PlayerController::with_default_config();
+
+        let mut state = MovementState::default();
+
+        // Spawn at y=0.5 (slightly above floor)
+        // spawn_at traces from spawn+1.0 down to spawn-2.0, so this will find the floor
+        controller.spawn_at(&mut state, Vec3::new(0.0, 0.5, 0.0), &world);
+
+        // Should trace down and land on ground
+        assert!(state.position.y >= 0.0 && state.position.y < 1.0,
+            "Should be on ground, got y={}", state.position.y);
+        assert!(state.flags.on_ground(), "Should be on ground after spawn");
+    }
+
+    #[test]
+    fn test_spawn_at_no_ground() {
+        let world = CollisionWorld::new(); // Empty world, no floor
+        let controller = PlayerController::with_default_config();
+
+        let mut state = MovementState::default();
+        let spawn_pos = Vec3::new(0.0, 10.0, 0.0);
+
+        controller.spawn_at(&mut state, spawn_pos, &world);
+
+        // Should use spawn position as-is when no ground found
+        assert_eq!(state.position, spawn_pos, "Should use spawn position when no ground");
+        assert!(!state.flags.on_ground(), "Should not be on ground");
+    }
+
+    #[test]
+    fn test_spawn_then_crouch_hold_release_returns_to_standing() {
+        // This is the bug that was fixed: initial spawn + hold C + release
+        // should return to standing, not go to prone
+        let world = create_test_world();
+        let controller = PlayerController::with_default_config();
+
+        let mut state = MovementState::default();
+        controller.spawn_at(&mut state, Vec3::new(0.0, 0.0, 0.0), &world);
+
+        // Verify initial state
+        assert!(state.flags.on_ground(), "Should start on ground");
+        assert!(state.stance.is_standing(), "Should start standing");
+
+        // Hold crouch for several frames (> 150ms threshold)
+        let mut crouch_cmd = PlayerCommand::default();
+        crouch_cmd.buttons.press(CommandButtons::CROUCH);
+
+        for _ in 0..15 {
+            controller.update(&mut state, &crouch_cmd, &world, 0.016);
+        }
+
+        assert!(state.stance.is_crouching(), "Should be crouching while holding C");
+
+        // Release crouch
+        let release_cmd = PlayerCommand::default();
+        controller.update(&mut state, &release_cmd, &world, 0.016);
+
+        // Should return to standing (hold behavior), not go to prone
+        assert!(state.stance.is_standing(),
+            "Should return to standing after releasing held crouch, got {:?}",
+            state.stance.current_stance);
     }
 }
