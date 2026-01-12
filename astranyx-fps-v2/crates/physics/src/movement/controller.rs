@@ -140,35 +140,31 @@ impl PlayerController {
         // Update stance state machine
         let result = state.stance.update(stance_input);
 
-        log::debug!(
-            "stance update: crouch={} prone={} delta_ms={} -> desired={:?} needs_stand={} needs_crouch={} base={:?}",
-            stance_input.crouch_pressed,
-            stance_input.prone_pressed,
-            stance_input.delta_time_ms,
-            result.desired_stance,
-            result.needs_stand_check,
-            result.needs_crouch_check,
-            state.stance.base_stance
-        );
-
         // Apply desired stance, with collision checks for going higher
         let mut actual_stance = result.desired_stance;
 
+        // Only check collision if going to a HIGHER stance
         if result.needs_stand_check {
-            let can_stand = self.can_stand_up(state, world);
-            let can_crouch = self.can_crouch(state, world);
-            log::debug!(
-                "needs_stand_check: can_stand={} can_crouch={} pos={:?}",
-                can_stand,
-                can_crouch,
-                state.position
-            );
-            if !can_stand {
-                // Can't stand, try crouch
-                if can_crouch {
-                    actual_stance = Stance::Crouching;
-                } else {
-                    actual_stance = Stance::Prone;
+            match result.desired_stance {
+                Stance::Standing => {
+                    // Want to stand - check if we can
+                    if !self.can_stand_up(state, world) {
+                        // Can't stand, try crouch
+                        if self.can_crouch(state, world) {
+                            actual_stance = Stance::Crouching;
+                        } else {
+                            actual_stance = Stance::Prone;
+                        }
+                    }
+                }
+                Stance::Crouching => {
+                    // Want to crouch (from prone) - check if we can
+                    if !self.can_crouch(state, world) {
+                        actual_stance = Stance::Prone;
+                    }
+                }
+                Stance::Prone => {
+                    // Already at lowest, no check needed
                 }
             }
         } else if result.needs_crouch_check && !self.can_crouch(state, world) {
@@ -182,8 +178,23 @@ impl PlayerController {
         // Sync flags from stance state
         state.sync_flags_from_stance();
 
-        // Smooth crouch transition
-        let crouch_target = if state.stance.is_crouching() { 1.0 } else { 0.0 };
+        // Smooth stance transitions using fractions
+        //
+        // The fractions represent how "lowered" we are:
+        // - crouch_fraction: 0 = standing height, 1 = crouching height
+        // - prone_fraction: 0 = crouching height, 1 = prone height
+        //
+        // Key insight: prone is "below" crouch, so when prone, crouch_fraction
+        // should be 1.0 to prevent flashing through standing on Prone->Crouch.
+
+        let is_crouching = state.stance.is_crouching();
+        let is_prone = state.stance.is_prone();
+
+        // Crouch fraction target:
+        // - If prone: force to 1.0 (we're "past" crouch)
+        // - If crouching: animate to 1.0
+        // - If standing: animate to 0.0
+        let crouch_target = if is_prone || is_crouching { 1.0 } else { 0.0 };
         let crouch_speed = 1000.0 / self.config.crouch_time_ms as f32;
         let crouch_change = crouch_speed * delta_time;
 
@@ -193,8 +204,8 @@ impl PlayerController {
             state.crouch_fraction = (state.crouch_fraction - crouch_change).max(crouch_target);
         }
 
-        // Smooth prone transition
-        let prone_target = if state.stance.is_prone() { 1.0 } else { 0.0 };
+        // Prone fraction target
+        let prone_target = if is_prone { 1.0 } else { 0.0 };
         let prone_speed = 1000.0 / self.config.prone_time_ms as f32;
         let prone_change = prone_speed * delta_time;
 

@@ -182,20 +182,21 @@ impl MovementState {
         crouching_eye_height: f32,
         prone_eye_height: f32,
     ) -> Vec3 {
-        // Use stance current_stance for authoritative state
-        let eye_height = match self.stance.current_stance {
-            Stance::Prone => {
-                // Interpolate for smooth prone transition
-                let t = self.prone_fraction;
-                crouching_eye_height * (1.0 - t) + prone_eye_height * t
-            }
-            Stance::Crouching => {
-                // Interpolate for smooth crouch
-                let t = self.crouch_fraction;
-                standing_eye_height * (1.0 - t) + crouching_eye_height * t
-            }
-            Stance::Standing => standing_eye_height,
-        };
+        // Blend eye height using both fractions for smooth transitions
+        // This ensures Prone->Crouch doesn't flash through Standing
+        //
+        // prone_fraction: 0 = not prone, 1 = fully prone
+        // crouch_fraction: 0 = not crouched, 1 = fully crouched
+        //
+        // First blend between standing and crouching based on crouch_fraction
+        let standing_crouch_blend =
+            standing_eye_height * (1.0 - self.crouch_fraction) +
+            crouching_eye_height * self.crouch_fraction;
+
+        // Then blend that result toward prone based on prone_fraction
+        let eye_height =
+            standing_crouch_blend * (1.0 - self.prone_fraction) +
+            prone_eye_height * self.prone_fraction;
 
         self.position + Vec3::new(0.0, eye_height, 0.0)
     }

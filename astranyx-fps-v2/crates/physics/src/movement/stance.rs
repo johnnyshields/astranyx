@@ -160,13 +160,23 @@ impl StanceState {
             self.prone_hold_time_ms = self.prone_hold_time_ms.saturating_add(input.delta_time_ms);
         }
 
-        // Handle stand/jump request - always tries to return to standing
+        // Handle stand/jump request
+        // If holding a stance key, we stand temporarily (will return to held stance)
+        // If not holding, we clear the toggled stance
         if input.stand_requested {
-            self.base_stance = Stance::Standing;
-            self.crouch_active = false;
-            self.prone_active = false;
-            self.crouch_hold_time_ms = 0;
-            self.prone_hold_time_ms = 0;
+            // Only clear active states if the key is not still being held
+            if !input.crouch_pressed {
+                self.crouch_active = false;
+                self.crouch_hold_time_ms = 0;
+            }
+            if !input.prone_pressed {
+                self.prone_active = false;
+                self.prone_hold_time_ms = 0;
+            }
+            // Clear base stance only if not holding any stance key
+            if !input.crouch_pressed && !input.prone_pressed {
+                self.base_stance = Stance::Standing;
+            }
             return StanceUpdateResult {
                 desired_stance: Stance::Standing,
                 needs_stand_check: true,
@@ -598,14 +608,14 @@ mod tests {
     }
 
     #[test]
-    fn test_16_holding_z_space_cancels_stand_up() {
+    fn test_16_holding_z_space_stands_but_returns_to_prone() {
         let mut state = StanceState::default();
 
         // Z down - go to prone
         update_and_apply(&mut state, prone_pressed());
         assert_eq!(state.current_stance, Stance::Prone);
 
-        // Space while holding Z - space takes priority, cancels hold, stands up
+        // Space while holding Z - stands up temporarily
         let input = StanceInput {
             crouch_pressed: false,
             prone_pressed: true,
@@ -614,7 +624,35 @@ mod tests {
         };
         update_and_apply(&mut state, input);
         assert_eq!(state.current_stance, Stance::Standing);
+        // Base unchanged because we're still holding Z
         assert_eq!(state.base_stance, Stance::Standing);
+
+        // Next frame, still holding Z, no stand request - should return to prone
+        update_and_apply(&mut state, prone_pressed());
+        assert_eq!(state.current_stance, Stance::Prone);
+    }
+
+    #[test]
+    fn test_17_holding_c_space_stands_but_returns_to_crouch() {
+        let mut state = StanceState::default();
+
+        // C down - go to crouch
+        update_and_apply(&mut state, crouch_pressed());
+        assert_eq!(state.current_stance, Stance::Crouching);
+
+        // Space while holding C - stands up temporarily
+        let input = StanceInput {
+            crouch_pressed: true,
+            prone_pressed: false,
+            stand_requested: true,
+            delta_time_ms: FRAME_MS,
+        };
+        update_and_apply(&mut state, input);
+        assert_eq!(state.current_stance, Stance::Standing);
+
+        // Next frame, still holding C, no stand request - should return to crouch
+        update_and_apply(&mut state, crouch_pressed());
+        assert_eq!(state.current_stance, Stance::Crouching);
     }
 
     // =========================================================================
