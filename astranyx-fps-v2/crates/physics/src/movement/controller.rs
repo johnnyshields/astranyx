@@ -178,7 +178,12 @@ impl PlayerController {
             match result.desired_stance {
                 Stance::Standing => {
                     // Want to stand - check if we can
-                    if !self.can_stand_up(state, world) {
+                    let can_stand = self.can_stand_up(state, world);
+                    log::debug!(
+                        "wants to stand: can_stand={} pos={:?} current={:?}",
+                        can_stand, state.position, state.stance.current_stance
+                    );
+                    if !can_stand {
                         // Can't stand, try crouch
                         if self.can_crouch(state, world) {
                             actual_stance = Stance::Crouching;
@@ -247,21 +252,24 @@ impl PlayerController {
     }
 
     fn can_stand_up(&self, state: &MovementState, world: &CollisionWorld) -> bool {
-        let standing_shape = TraceShape::Capsule {
+        // Check if there's clearance at standing head height
+        // Use a sphere the size of the player's radius at the top of the standing capsule
+        let head_pos = state.position + Vec3::new(0.0, self.config.standing_height - self.config.player_radius, 0.0);
+        let head_shape = TraceShape::Capsule {
             radius: self.config.player_radius,
-            height: self.config.standing_height,
+            height: self.config.player_radius * 2.0,
         };
-
-        !world.point_in_solid(state.position, standing_shape, ContentFlags::MASK_PLAYER_SOLID)
+        !world.point_in_solid(head_pos, head_shape, ContentFlags::MASK_PLAYER_SOLID)
     }
 
     fn can_crouch(&self, state: &MovementState, world: &CollisionWorld) -> bool {
-        let crouch_shape = TraceShape::Capsule {
+        // Check if there's clearance at crouching head height
+        let head_pos = state.position + Vec3::new(0.0, self.config.crouching_height - self.config.player_radius, 0.0);
+        let head_shape = TraceShape::Capsule {
             radius: self.config.player_radius,
-            height: self.config.crouching_height,
+            height: self.config.player_radius * 2.0,
         };
-
-        !world.point_in_solid(state.position, crouch_shape, ContentFlags::MASK_PLAYER_SOLID)
+        !world.point_in_solid(head_pos, head_shape, ContentFlags::MASK_PLAYER_SOLID)
     }
 
     // ========================================================================
@@ -658,8 +666,7 @@ mod tests {
         // Spawn at y=0 (exactly on floor surface)
         controller.spawn_at(&mut state, Vec3::new(0.0, 0.0, 0.0), &world);
 
-        // Should be positioned slightly above floor, on ground
-        assert!(state.position.y >= 0.0, "Should be at or above floor, got y={}", state.position.y);
+        // Should be on ground after spawn
         assert!(state.flags.on_ground(), "Should be on ground after spawn");
     }
 

@@ -202,6 +202,10 @@ impl StanceState {
         if crouch_just_released && self.crouch_active {
             self.crouch_active = false;
             let was_hold = self.crouch_hold_time_ms >= HOLD_THRESHOLD_MS;
+            log::debug!(
+                "crouch released: hold_time={}ms threshold={}ms was_hold={} pre_press_base={:?}",
+                self.crouch_hold_time_ms, HOLD_THRESHOLD_MS, was_hold, self.crouch_pre_press_base
+            );
             self.crouch_hold_time_ms = 0;
 
             if was_hold {
@@ -224,6 +228,7 @@ impl StanceState {
                     }
                 }
             }
+            log::debug!("crouch released: new base_stance={:?}", self.base_stance);
         }
 
         // Handle prone key release - determine toggle vs hold based on time
