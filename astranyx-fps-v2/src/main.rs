@@ -187,9 +187,8 @@ fn create_pbr_material(context: &Context, textures: &PbrTextures) -> PhysicalMat
             .height
             .as_ref()
             .map(|h| Texture2DRef::from_cpu_texture(context, h)),
-        height_scale: 0.08,
-        height_max_layers: 16.0,
-        height_iterations: 3,
+        height_scale: 0.05,
+        height_quality: HeightQuality::Medium,
     }
 }
 
