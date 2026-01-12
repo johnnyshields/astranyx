@@ -3,6 +3,8 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use super::stance::{Stance, StanceState};
+
 /// Flags describing the player's current movement state.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MovementFlags(pub u16);
@@ -17,26 +19,29 @@ impl MovementFlags {
     /// Player is crouching/ducking.
     pub const CROUCHING: u16 = 1 << 2;
 
+    /// Player is prone (lying down).
+    pub const PRONE: u16 = 1 << 3;
+
     /// Player is sprinting.
-    pub const SPRINTING: u16 = 1 << 3;
+    pub const SPRINTING: u16 = 1 << 4;
 
     /// Player is in water.
-    pub const IN_WATER: u16 = 1 << 4;
+    pub const IN_WATER: u16 = 1 << 5;
 
     /// Player is swimming (fully submerged).
-    pub const SWIMMING: u16 = 1 << 5;
+    pub const SWIMMING: u16 = 1 << 6;
 
     /// Player is on a ladder.
-    pub const ON_LADDER: u16 = 1 << 6;
+    pub const ON_LADDER: u16 = 1 << 7;
 
     /// Player is dead.
-    pub const DEAD: u16 = 1 << 7;
+    pub const DEAD: u16 = 1 << 8;
 
     /// Player is frozen (can't move).
-    pub const FROZEN: u16 = 1 << 8;
+    pub const FROZEN: u16 = 1 << 9;
 
     /// Player is noclipping (ignores collision).
-    pub const NOCLIP: u16 = 1 << 9;
+    pub const NOCLIP: u16 = 1 << 10;
 
     /// Check if a flag is set.
     #[inline]
@@ -64,6 +69,12 @@ impl MovementFlags {
     #[inline]
     pub fn crouching(self) -> bool {
         self.has(Self::CROUCHING)
+    }
+
+    /// Check if player is prone.
+    #[inline]
+    pub fn prone(self) -> bool {
+        self.has(Self::PRONE)
     }
 
     /// Check if player is sprinting.
@@ -110,6 +121,9 @@ pub struct MovementState {
     /// Movement state flags.
     pub flags: MovementFlags,
 
+    /// Stance state machine (handles crouch/prone with toggle/hold).
+    pub stance: StanceState,
+
     /// Ground entity ID (-1 if airborne, 0 for world, >0 for moving platform).
     pub ground_entity: i32,
 
@@ -122,6 +136,10 @@ pub struct MovementState {
     /// Current crouch amount (0.0 = standing, 1.0 = fully crouched).
     /// Used for smooth crouch transitions.
     pub crouch_fraction: f32,
+
+    /// Current prone amount (0.0 = not prone, 1.0 = fully prone).
+    /// Used for smooth prone transitions.
+    pub prone_fraction: f32,
 }
 
 impl Default for MovementState {
@@ -131,10 +149,12 @@ impl Default for MovementState {
             velocity: Vec3::ZERO,
             view_angles: Vec3::ZERO,
             flags: MovementFlags::default(),
+            stance: StanceState::default(),
             ground_entity: -1,
             ground_normal: Vec3::Y,
             timer_ms: 0,
             crouch_fraction: 0.0,
+            prone_fraction: 0.0,
         }
     }
 }
@@ -148,14 +168,33 @@ impl MovementState {
         }
     }
 
+    /// Sync movement flags to match stance state.
+    /// Call this after updating stance to keep flags in sync.
+    pub fn sync_flags_from_stance(&mut self) {
+        self.flags.set(MovementFlags::CROUCHING, self.stance.is_crouching());
+        self.flags.set(MovementFlags::PRONE, self.stance.is_prone());
+    }
+
     /// Get the eye position (for camera placement).
-    pub fn eye_position(&self, standing_eye_height: f32, crouching_eye_height: f32) -> Vec3 {
-        let eye_height = if self.flags.crouching() {
-            // Interpolate for smooth crouch
-            let t = self.crouch_fraction;
-            standing_eye_height * (1.0 - t) + crouching_eye_height * t
-        } else {
-            standing_eye_height
+    pub fn eye_position(
+        &self,
+        standing_eye_height: f32,
+        crouching_eye_height: f32,
+        prone_eye_height: f32,
+    ) -> Vec3 {
+        // Use stance current_stance for authoritative state
+        let eye_height = match self.stance.current_stance {
+            Stance::Prone => {
+                // Interpolate for smooth prone transition
+                let t = self.prone_fraction;
+                crouching_eye_height * (1.0 - t) + prone_eye_height * t
+            }
+            Stance::Crouching => {
+                // Interpolate for smooth crouch
+                let t = self.crouch_fraction;
+                standing_eye_height * (1.0 - t) + crouching_eye_height * t
+            }
+            Stance::Standing => standing_eye_height,
         };
 
         self.position + Vec3::new(0.0, eye_height, 0.0)
@@ -235,17 +274,20 @@ impl CommandButtons {
     /// Crouch button.
     pub const CROUCH: u16 = 1 << 3;
 
+    /// Prone button.
+    pub const PRONE: u16 = 1 << 4;
+
     /// Sprint button.
-    pub const SPRINT: u16 = 1 << 4;
+    pub const SPRINT: u16 = 1 << 5;
 
     /// Use/interact button.
-    pub const USE: u16 = 1 << 5;
+    pub const USE: u16 = 1 << 6;
 
     /// Reload button.
-    pub const RELOAD: u16 = 1 << 6;
+    pub const RELOAD: u16 = 1 << 7;
 
     /// Walk (slow movement) button.
-    pub const WALK: u16 = 1 << 7;
+    pub const WALK: u16 = 1 << 8;
 
     /// Check if a button is pressed.
     #[inline]
@@ -277,6 +319,12 @@ impl PlayerCommand {
     #[inline]
     pub fn wants_crouch(&self) -> bool {
         self.buttons.pressed(CommandButtons::CROUCH)
+    }
+
+    /// Check if prone is requested.
+    #[inline]
+    pub fn wants_prone(&self) -> bool {
+        self.buttons.pressed(CommandButtons::PRONE)
     }
 
     /// Check if sprint is requested.

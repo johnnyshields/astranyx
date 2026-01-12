@@ -41,6 +41,7 @@ pub struct ActionInput {
     pub aim: bool,
     pub jump: bool,
     pub crouch: bool,
+    pub prone: bool,
     pub sprint: bool,
     pub use_item: bool,
     pub reload: bool,
@@ -96,6 +97,9 @@ impl PlayerInput {
         }
         if self.actions.crouch {
             cmd.buttons.press(CommandButtons::CROUCH);
+        }
+        if self.actions.prone {
+            cmd.buttons.press(CommandButtons::PRONE);
         }
         if self.actions.sprint {
             cmd.buttons.press(CommandButtons::SPRINT);

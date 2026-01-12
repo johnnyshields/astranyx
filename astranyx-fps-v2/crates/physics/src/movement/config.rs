@@ -22,11 +22,17 @@ pub struct MovementConfig {
     /// Crouching height (meters).
     pub crouching_height: f32,
 
+    /// Prone height (meters).
+    pub prone_height: f32,
+
     /// Eye height when standing (meters from feet).
     pub eye_height_standing: f32,
 
     /// Eye height when crouching (meters from feet).
     pub eye_height_crouching: f32,
+
+    /// Eye height when prone (meters from ground).
+    pub eye_height_prone: f32,
 
     // ========================================================================
     // Movement Speeds
@@ -39,6 +45,9 @@ pub struct MovementConfig {
 
     /// Crouching speed (meters/second).
     pub crouch_speed: f32,
+
+    /// Prone crawling speed (meters/second).
+    pub prone_speed: f32,
 
     /// Swimming speed (meters/second).
     pub swim_speed: f32,
@@ -97,6 +106,9 @@ pub struct MovementConfig {
 
     /// Time to transition from standing to crouching.
     pub crouch_time_ms: u32,
+
+    /// Time to transition to/from prone.
+    pub prone_time_ms: u32,
 }
 
 impl Default for MovementConfig {
@@ -106,13 +118,16 @@ impl Default for MovementConfig {
             player_radius: 0.4,
             standing_height: 1.8,
             crouching_height: 1.0,
+            prone_height: 0.4,
             eye_height_standing: 1.6,
             eye_height_crouching: 0.75,
+            eye_height_prone: 0.25,
 
             // Movement speeds (realistic-ish for tactical shooter)
             walk_speed: 4.5,      // ~16 km/h walking
             run_speed: 7.0,       // ~25 km/h sprinting
             crouch_speed: 2.0,    // ~7 km/h sneaking
+            prone_speed: 0.8,     // ~3 km/h crawling
             swim_speed: 3.0,      // Swimming
 
             // Physics
@@ -136,6 +151,7 @@ impl Default for MovementConfig {
             // Timers
             jump_cooldown_ms: 200,
             crouch_time_ms: 150,
+            prone_time_ms: 300,
         }
     }
 }
@@ -164,6 +180,7 @@ impl MovementConfig {
             walk_speed: 3.5,
             run_speed: 5.5,
             crouch_speed: 1.5,
+            prone_speed: 0.5,
             gravity: 12.0,
             jump_velocity: 4.5,
             friction: 8.0,
@@ -171,13 +188,16 @@ impl MovementConfig {
             ground_acceleration: 8.0,
             air_acceleration: 0.5,
             jump_cooldown_ms: 300,
+            prone_time_ms: 400,
             ..Default::default()
         }
     }
 
     /// Get the max speed for the current movement mode.
-    pub fn max_speed(&self, is_crouching: bool, is_sprinting: bool) -> f32 {
-        if is_crouching {
+    pub fn max_speed(&self, is_crouching: bool, is_sprinting: bool, is_prone: bool) -> f32 {
+        if is_prone {
+            self.prone_speed
+        } else if is_crouching {
             self.crouch_speed
         } else if is_sprinting {
             self.run_speed
@@ -187,8 +207,10 @@ impl MovementConfig {
     }
 
     /// Get player height for the current stance.
-    pub fn height(&self, is_crouching: bool) -> f32 {
-        if is_crouching {
+    pub fn height(&self, is_crouching: bool, is_prone: bool) -> f32 {
+        if is_prone {
+            self.prone_height
+        } else if is_crouching {
             self.crouching_height
         } else {
             self.standing_height
@@ -196,8 +218,10 @@ impl MovementConfig {
     }
 
     /// Get eye height for the current stance.
-    pub fn eye_height(&self, is_crouching: bool) -> f32 {
-        if is_crouching {
+    pub fn eye_height(&self, is_crouching: bool, is_prone: bool) -> f32 {
+        if is_prone {
+            self.eye_height_prone
+        } else if is_crouching {
             self.eye_height_crouching
         } else {
             self.eye_height_standing
@@ -221,10 +245,13 @@ mod tests {
     fn test_max_speed() {
         let config = MovementConfig::default();
 
-        assert_eq!(config.max_speed(true, false), config.crouch_speed);
-        assert_eq!(config.max_speed(false, true), config.run_speed);
-        assert_eq!(config.max_speed(false, false), config.walk_speed);
+        assert_eq!(config.max_speed(false, false, true), config.prone_speed);
+        assert_eq!(config.max_speed(true, false, false), config.crouch_speed);
+        assert_eq!(config.max_speed(false, true, false), config.run_speed);
+        assert_eq!(config.max_speed(false, false, false), config.walk_speed);
+        // Prone overrides everything
+        assert_eq!(config.max_speed(true, true, true), config.prone_speed);
         // Crouching overrides sprinting
-        assert_eq!(config.max_speed(true, true), config.crouch_speed);
+        assert_eq!(config.max_speed(true, true, false), config.crouch_speed);
     }
 }

@@ -9,7 +9,8 @@ use crate::collision::{CollisionWorld, ContentFlags, TraceShape};
 
 use super::config::MovementConfig;
 use super::slide_move::{clip_velocity, step_slide_move};
-use super::state::{CommandButtons, MovementFlags, MovementState, PlayerCommand};
+use super::stance::{Stance, StanceInput};
+use super::state::{MovementFlags, MovementState, PlayerCommand};
 
 /// Player movement controller.
 ///
@@ -73,8 +74,8 @@ impl PlayerController {
         // Update view angles
         self.update_view_angles(state, command);
 
-        // Handle crouching
-        self.update_crouch(state, command, world, delta_time);
+        // Handle stance (crouch/prone)
+        self.update_stance(state, command, world, delta_time);
 
         // Detect ground
         self.check_ground(state, world);
@@ -119,35 +120,88 @@ impl PlayerController {
     // Crouching
     // ========================================================================
 
-    fn update_crouch(
+    fn update_stance(
         &self,
         state: &mut MovementState,
         command: &PlayerCommand,
         world: &CollisionWorld,
         delta_time: f32,
     ) {
-        let wants_crouch = command.wants_crouch();
-        let is_crouching = state.flags.crouching();
+        // Build stance input from command
+        let delta_time_ms = (delta_time * 1000.0) as u32;
+        let stance_input = StanceInput {
+            crouch_pressed: command.wants_crouch(),
+            prone_pressed: command.wants_prone(),
+            // Jump stands up only if grounded and not jumping
+            stand_requested: command.wants_jump() && state.flags.on_ground() && !state.flags.jumping(),
+            delta_time_ms,
+        };
 
-        if wants_crouch && !is_crouching {
-            // Start crouching
-            state.flags.set(MovementFlags::CROUCHING, true);
-        } else if !wants_crouch && is_crouching {
-            // Try to stand up - check if there's room
-            if self.can_stand_up(state, world) {
-                state.flags.set(MovementFlags::CROUCHING, false);
+        // Update stance state machine
+        let result = state.stance.update(stance_input);
+
+        log::debug!(
+            "stance update: crouch={} prone={} delta_ms={} -> desired={:?} needs_stand={} needs_crouch={} base={:?}",
+            stance_input.crouch_pressed,
+            stance_input.prone_pressed,
+            stance_input.delta_time_ms,
+            result.desired_stance,
+            result.needs_stand_check,
+            result.needs_crouch_check,
+            state.stance.base_stance
+        );
+
+        // Apply desired stance, with collision checks for going higher
+        let mut actual_stance = result.desired_stance;
+
+        if result.needs_stand_check {
+            let can_stand = self.can_stand_up(state, world);
+            let can_crouch = self.can_crouch(state, world);
+            log::debug!(
+                "needs_stand_check: can_stand={} can_crouch={} pos={:?}",
+                can_stand,
+                can_crouch,
+                state.position
+            );
+            if !can_stand {
+                // Can't stand, try crouch
+                if can_crouch {
+                    actual_stance = Stance::Crouching;
+                } else {
+                    actual_stance = Stance::Prone;
+                }
             }
+        } else if result.needs_crouch_check && !self.can_crouch(state, world) {
+            // Can't crouch from prone
+            actual_stance = Stance::Prone;
         }
 
-        // Smooth crouch transition
-        let target_fraction = if state.flags.crouching() { 1.0 } else { 0.0 };
-        let crouch_speed = 1000.0 / self.config.crouch_time_ms as f32;
-        let change = crouch_speed * delta_time;
+        // Apply final stance
+        state.stance.apply_stance(actual_stance);
 
-        if state.crouch_fraction < target_fraction {
-            state.crouch_fraction = (state.crouch_fraction + change).min(target_fraction);
+        // Sync flags from stance state
+        state.sync_flags_from_stance();
+
+        // Smooth crouch transition
+        let crouch_target = if state.stance.is_crouching() { 1.0 } else { 0.0 };
+        let crouch_speed = 1000.0 / self.config.crouch_time_ms as f32;
+        let crouch_change = crouch_speed * delta_time;
+
+        if state.crouch_fraction < crouch_target {
+            state.crouch_fraction = (state.crouch_fraction + crouch_change).min(crouch_target);
         } else {
-            state.crouch_fraction = (state.crouch_fraction - change).max(target_fraction);
+            state.crouch_fraction = (state.crouch_fraction - crouch_change).max(crouch_target);
+        }
+
+        // Smooth prone transition
+        let prone_target = if state.stance.is_prone() { 1.0 } else { 0.0 };
+        let prone_speed = 1000.0 / self.config.prone_time_ms as f32;
+        let prone_change = prone_speed * delta_time;
+
+        if state.prone_fraction < prone_target {
+            state.prone_fraction = (state.prone_fraction + prone_change).min(prone_target);
+        } else {
+            state.prone_fraction = (state.prone_fraction - prone_change).max(prone_target);
         }
     }
 
@@ -158,6 +212,15 @@ impl PlayerController {
         };
 
         !world.point_in_solid(state.position, standing_shape, ContentFlags::MASK_PLAYER_SOLID)
+    }
+
+    fn can_crouch(&self, state: &MovementState, world: &CollisionWorld) -> bool {
+        let crouch_shape = TraceShape::Capsule {
+            radius: self.config.player_radius,
+            height: self.config.crouching_height,
+        };
+
+        !world.point_in_solid(state.position, crouch_shape, ContentFlags::MASK_PLAYER_SOLID)
     }
 
     // ========================================================================
@@ -182,6 +245,14 @@ impl PlayerController {
             if let Some(normal) = trace.hit_normal {
                 // Check if surface is walkable (not too steep)
                 if normal.y >= self.config.min_ground_normal {
+                    // Don't detect ground if we're moving upward (just jumped)
+                    if state.velocity.y > 0.1 {
+                        state.flags.set(MovementFlags::ON_GROUND, false);
+                        state.ground_entity = -1;
+                        state.ground_normal = Vec3::Y;
+                        return;
+                    }
+
                     state.flags.set(MovementFlags::ON_GROUND, true);
                     state.ground_entity = 0; // World
                     state.ground_normal = normal;
@@ -363,10 +434,11 @@ impl PlayerController {
 
         let wish_direction = wish_velocity / speed_squared.sqrt();
 
-        // Determine max speed based on state
-        let is_crouching = state.flags.crouching();
-        let is_sprinting = command.wants_sprint() && !is_crouching;
-        let max_speed = self.config.max_speed(is_crouching, is_sprinting);
+        // Determine max speed based on stance
+        let is_crouching = state.stance.is_crouching();
+        let is_prone = state.stance.is_prone();
+        let is_sprinting = command.wants_sprint() && !is_crouching && !is_prone;
+        let max_speed = self.config.max_speed(is_crouching, is_sprinting, is_prone);
 
         // Scale speed by input magnitude (for analog sticks)
         let input_magnitude = command.forward_move.abs().max(command.right_move.abs()).min(1.0);
@@ -408,7 +480,7 @@ impl PlayerController {
     // ========================================================================
 
     fn current_shape(&self, state: &MovementState) -> TraceShape {
-        let height = self.config.height(state.flags.crouching());
+        let height = self.config.height(state.stance.is_crouching(), state.stance.is_prone());
         TraceShape::Capsule {
             radius: self.config.player_radius,
             height,
@@ -423,6 +495,7 @@ impl PlayerController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::state::CommandButtons;
 
     fn create_test_world() -> CollisionWorld {
         let mut world = CollisionWorld::new();
@@ -494,10 +567,11 @@ mod tests {
         let world = create_test_world();
         let controller = PlayerController::with_default_config();
 
-        // Start on the ground - position at y=0 which is on top of the floor
-        let mut state = MovementState::new(Vec3::new(0.0, 0.0, 0.0));
+        // Start slightly above the ground - capsule bottom at y=0.1
+        // The ground surface is at y=0, so this ensures we're not embedded
+        let mut state = MovementState::new(Vec3::new(0.0, 0.1, 0.0));
 
-        // First update to detect ground
+        // First update to detect ground (will snap to ground)
         let command_idle = PlayerCommand::default();
         controller.update(&mut state, &command_idle, &world, 0.016);
         assert!(state.flags.on_ground(), "Should start on ground");

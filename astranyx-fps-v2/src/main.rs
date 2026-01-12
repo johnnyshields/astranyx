@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 
 use astranyx_game::{PlayerInput, Simulation};
+use astranyx_physics::movement::Stance;
 use astranyx_physics::MovementConfig;
 use astranyx_renderer::camera::FirstPersonCamera;
 use glam::Vec3;
@@ -17,7 +18,8 @@ struct InputState {
     left: bool,
     right: bool,
     jump: bool,
-    crouch: bool,
+    crouch_pressed: bool,
+    prone_pressed: bool,
     sprint: bool,
     fire: bool,
     mouse_delta: (f32, f32),
@@ -32,7 +34,8 @@ impl Default for InputState {
             left: false,
             right: false,
             jump: false,
-            crouch: false,
+            crouch_pressed: false,
+            prone_pressed: false,
             sprint: false,
             fire: false,
             mouse_delta: (0.0, 0.0),
@@ -55,7 +58,9 @@ impl InputState {
                 fire: self.fire,
                 aim: false,
                 jump: self.jump,
-                crouch: self.crouch,
+                // Pass raw button states - StanceState handles edge detection
+                crouch: self.crouch_pressed,
+                prone: self.prone_pressed,
                 sprint: self.sprint,
                 use_item: false,
                 reload: false,
@@ -77,7 +82,8 @@ impl InputState {
             Key::A => self.left = pressed,
             Key::D => self.right = pressed,
             Key::Space => self.jump = pressed,
-            Key::C => self.crouch = pressed,
+            Key::C => self.crouch_pressed = pressed,
+            Key::Z => self.prone_pressed = pressed,
             _ => {}
         }
     }
@@ -255,7 +261,7 @@ fn main() {
         let player_input = input_state.to_player_input();
         simulation.tick(&[player_input]);
 
-        // Clear mouse delta after processing
+        // Clear frame-specific input after processing
         input_state.clear_mouse_delta();
 
         // Update camera from player state
@@ -263,6 +269,31 @@ fn main() {
             let eye_pos = player.eye_position(&movement_config);
             fps_camera.position = eye_pos;
             fps_camera.angles = player.movement.view_angles;
+
+            // Debug: print stance when it changes or every 60 frames
+            static mut LAST_STANCE: Option<Stance> = None;
+            static mut LAST_BASE: Option<Stance> = None;
+            let stance_changed = unsafe {
+                let changed = LAST_STANCE != Some(player.movement.stance.current_stance)
+                    || LAST_BASE != Some(player.movement.stance.base_stance);
+                LAST_STANCE = Some(player.movement.stance.current_stance);
+                LAST_BASE = Some(player.movement.stance.base_stance);
+                changed
+            };
+
+            if stance_changed || simulation.frame % 60 == 0 {
+                println!(
+                    "[{}] eye_y: {:.2} stance: {:?} (base: {:?}) C:{} Z:{} crouch_f: {:.2} prone_f: {:.2}",
+                    simulation.frame,
+                    eye_pos.y,
+                    player.movement.stance.current_stance,
+                    player.movement.stance.base_stance,
+                    input_state.crouch_pressed,
+                    input_state.prone_pressed,
+                    player.movement.crouch_fraction,
+                    player.movement.prone_fraction,
+                );
+            }
         }
 
         // Create three-d camera

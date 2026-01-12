@@ -19,8 +19,10 @@
 mod config;
 mod controller;
 mod slide_move;
+mod stance;
 mod state;
 
 pub use config::MovementConfig;
 pub use controller::PlayerController;
+pub use stance::{Stance, StanceInput, StanceState, StanceUpdateResult};
 pub use state::{CommandButtons, MovementFlags, MovementState, PlayerCommand};

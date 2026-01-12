@@ -83,6 +83,7 @@ impl Player {
         self.movement.eye_position(
             config.eye_height_standing,
             config.eye_height_crouching,
+            config.eye_height_prone,
         )
     }
 
