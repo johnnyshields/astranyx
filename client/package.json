@@ -33,6 +33,6 @@
   },
   "dependencies": {
     "phoenix": "^1.8.3",
-    "three": "^0.182.0"
+    "three": "^0.183.1"
   }
 }
